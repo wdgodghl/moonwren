@@ -55,6 +55,43 @@ fn Interpreter::execute_block(
 }
 
 ///|
+fn Interpreter::execute_range_for(
+  self : Interpreter,
+  name : String,
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  body : Stmt,
+) -> EvaluationResult {
+  self.environment.push_scope()
+  ignore(self.environment.bind(name, Value::number(from)))
+  let step = if from <= to { 1.0 } else { -1.0 }
+  let mut current = from
+  let mut result = EvaluationSucceeded(Value::null())
+  while (if step > 0.0 {
+          if inclusive {
+            current <= to
+          } else {
+            current < to
+          }
+        } else if inclusive {
+          current >= to
+        } else {
+          current > to
+        }) {
+    ignore(self.environment.assign(name, Value::number(current)))
+    result = self.execute_statement(body)
+    match result {
+      EvaluationFailed(_) => break
+      EvaluationSucceeded(_) => ()
+    }
+    current = current + step
+  }
+  ignore(self.environment.pop_scope())
+  result
+}
+
+///|
 fn Interpreter::execute_statement(
   self : Interpreter,
   statement : Stmt,
@@ -117,6 +154,21 @@ fn Interpreter::execute_statement(
       }
       EvaluationSucceeded(last)
     }
+    ForStatement(name, sequence, body, span) =>
+      match evaluate_expression_in(sequence, self.environment, self.output) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(RangeValue(from, to, inclusive)) =>
+          self.execute_range_for(name, from, to, inclusive, body)
+        EvaluationSucceeded(value) =>
+          EvaluationFailed(
+            Diagnostic::new(
+              Runtime,
+              InvalidOperand,
+              "for loop expects a Range, received \{value.type_name()}",
+              span,
+            ),
+          )
+      }
   }
 }
 

@@ -83,6 +83,7 @@ pub(all) enum Stmt {
   BlockStatement(Array[Stmt], SourceSpan)
   IfStatement(Expr, Stmt, Stmt?, SourceSpan)
   WhileStatement(Expr, Stmt, SourceSpan)
+  ForStatement(String, Expr, Stmt, SourceSpan)
 } derive(Eq, Debug)
 
 ///|
@@ -98,6 +99,7 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | VariableStatement(_, _, span)
     | BlockStatement(_, span)
     | IfStatement(_, _, _, span)
-    | WhileStatement(_, _, span) => span
+    | WhileStatement(_, _, span)
+    | ForStatement(_, _, _, span) => span
   }
 }

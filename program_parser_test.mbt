@@ -42,6 +42,25 @@ test "program parser handles while statements" {
 }
 
 ///|
+test "program parser handles for statements" {
+  match @moonwren.parse_program("for (item in 1..3) {\n  item\n}\n") {
+    @moonwren.ProgramParsed(
+      [@moonwren.ForStatement("item", _, @moonwren.BlockStatement(_, _), _)]
+    ) => ()
+    _ => fail("for program should parse")
+  }
+}
+
+///|
+test "program parser requires in after a for variable" {
+  match @moonwren.parse_program("for (item 1..3) item\n") {
+    @moonwren.ProgramParsed(_) => fail("for program should fail")
+    @moonwren.ProgramParseFailed(diagnostics) =>
+      assert_eq(diagnostics[0].code, @moonwren.ExpectedToken)
+  }
+}
+
+///|
 test "program parser requires statement boundaries" {
   match @moonwren.parse_program("var first = 1 var second = 2") {
     @moonwren.ProgramParsed(_) => fail("program should fail")

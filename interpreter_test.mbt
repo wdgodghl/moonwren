@@ -98,3 +98,33 @@ test "unknown methods produce structured diagnostics" {
       assert_eq(issues[0].code, @moonwren.UndefinedMethod)
   }
 }
+
+///|
+test "for loops iterate inclusive ascending ranges" {
+  let source = "var total = 0\nfor (item in 1..5) {\n  total = total + item\n}\ntotal\n"
+  expect_program_value(source, @moonwren.Value::number(15.0))
+}
+
+///|
+test "for loops iterate exclusive descending ranges" {
+  let source = "var total = 0\nfor (item in 3...0) {\n  total = total + item\n}\ntotal\n"
+  expect_program_value(source, @moonwren.Value::number(6.0))
+}
+
+///|
+test "for loop variables remain scoped to the loop" {
+  match @moonwren.run("for (item in 1..1) {\n  item\n}\nitem\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedVariable)
+  }
+}
+
+///|
+test "for loops reject non-range values" {
+  match @moonwren.run("for (item in 3) {\n  item\n}\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+}

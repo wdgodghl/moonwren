@@ -588,6 +588,24 @@ fn Parser::while_statement(self : Parser, start : Token) -> Stmt {
 }
 
 ///|
+fn Parser::for_statement(self : Parser, start : Token) -> Stmt {
+  ignore(self.consume(LeftParen, "expected '(' after for"))
+  let name = self.consume(Identifier, "expected loop variable name")
+  ignore(self.consume(InKeyword, "expected 'in' after loop variable"))
+  let sequence = self.expression()
+  self.skip_newlines()
+  ignore(self.consume(RightParen, "expected ')' after loop sequence"))
+  self.skip_newlines()
+  let body = self.statement()
+  ForStatement(
+    name.lexeme,
+    sequence,
+    body,
+    SourceSpan::merge(start.span, body.span()),
+  )
+}
+
+///|
 fn Parser::statement(self : Parser) -> Stmt {
   let start = self.current_token()
   if self.take(LeftBrace) {
@@ -596,6 +614,8 @@ fn Parser::statement(self : Parser) -> Stmt {
     self.if_statement(start)
   } else if self.take(WhileKeyword) {
     self.while_statement(start)
+  } else if self.take(ForKeyword) {
+    self.for_statement(start)
   } else {
     let expression = self.expression()
     let span = expression.span()
