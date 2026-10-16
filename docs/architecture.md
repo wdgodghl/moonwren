@@ -40,12 +40,15 @@ syntax is rejected rather than ignored.
 
 Primitive values are represented by one tagged value type. An environment is
 a stack of lexical scopes, so lookup and assignment select the nearest visible
-binding. The interpreter applies a configurable execution-step budget to stop
-unbounded loops in embedded use.
+binding. Method receivers and arguments are evaluated from left to right before
+dispatch. The initial built-in receiver implements both `System.print`
+signatures and captures output as lines, keeping the library independent of a
+particular console. The interpreter also applies a configurable execution-step
+budget to stop unbounded loops in embedded use.
 
 ## Extension path
 
-The next runtime layer will add callable values and method dispatch. Classes,
-closures, modules, fibers, and foreign bindings can then build on the same
-source spans, diagnostics, environments, and execution limits without coupling
-those features to the scanner.
+The next runtime layer will generalize the method dispatcher for class methods
+and callable values. Classes, closures, modules, fibers, and foreign bindings
+can then build on the same source spans, diagnostics, environments, output
+capture, and execution limits without coupling those features to the scanner.

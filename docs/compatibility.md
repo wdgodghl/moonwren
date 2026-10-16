@@ -10,7 +10,8 @@ implementation idiomatic to MoonBit.
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
 | Branching and loops | Partial | `if` and `while`; `for` remains planned |
-| Method calls | Planned | Required for `System.print` and user methods |
+| Method calls | Partial | Chained calls and arguments parse; `System.print` executes |
+| Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Functions and closures | Planned | Arity checks and captured environments |
 | Classes | Planned | Methods, constructors, inheritance |
 | Fibers | Planned | Cooperative execution |

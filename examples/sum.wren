@@ -4,4 +4,4 @@ while (current <= 10) {
   total = total + current
   current = current + 1
 }
-total
+System.print(total)

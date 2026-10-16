@@ -6,8 +6,9 @@ standalone command-line runner, and behavior-focused compatibility tests.
 
 The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
-scope, assignment, conditionals, loops, and a minimal interpreter. Classes,
-fibers, modules, and foreign methods follow in later milestones.
+scope, assignment, conditionals, loops, method-call parsing, captured program
+output, and `System.print`. Classes, fibers, modules, and foreign methods follow
+in later milestones.
 
 ## Goals
 
@@ -32,25 +33,35 @@ Running the command without arguments executes the bundled summation example
 and prints `55`. A source string can also be supplied directly:
 
 ```text
-moon run cmd/main -- "var value = 40\nvalue = value + 2\nvalue"
+moon run cmd/main -- "var value = 40\nSystem.print(value + 2)"
 ```
 
 The library API exposes the same pipeline:
 
 ```moonbit
 match @moonwren.run("var answer = 6 * 7\nanswer\n") {
-  ProgramCompleted(value) => println(value.to_text())
-  ProgramFailed(diagnostics) =>
+  ProgramCompleted(value, output) => {
+    for line in output {
+      println(line)
+    }
+    println("result: \{value.to_text()}")
+  }
+  ProgramFailed(diagnostics, _) =>
     for diagnostic in diagnostics {
       println(diagnostic.render("example.wren"))
     }
 }
 ```
 
+`System.print` output is returned as an array of lines instead of being written
+directly by the library. Embedders can route those lines to a console, log,
+editor pane, or another host-provided destination.
+
 ## Project status
 
-MoonWren is not yet a complete Wren implementation. In particular, method
-calls and `System.print` are not available in the current milestone. See
+MoonWren is not yet a complete Wren implementation. The current method
+dispatcher implements the two `System.print` signatures; general object and
+user-defined method dispatch will arrive with the class runtime. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 
