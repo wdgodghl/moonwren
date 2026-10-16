@@ -145,3 +145,30 @@ test "unknown getters produce structured diagnostics" {
       assert_eq(issues[0].code, @moonwren.UndefinedMethod)
   }
 }
+
+///|
+test "closures retain and update captured variables" {
+  let source = "var count = 0\n" +
+    "var counter = Fn.new { count = count + 1 }\n" +
+    "System.print(counter.call())\n" +
+    "System.print(counter.call())\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["1", "2"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "nested closures preserve function parameters" {
+  let source = "var make = Fn.new { |value| Fn.new { value } }\n" +
+    "var get = make.call(42)\n" +
+    "get.call()\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "function variables support recursive expression bodies" {
+  let source = "var sum = Fn.new { |number| number <= 0 ? 0 : number + sum.call(number - 1) }\n" +
+    "sum.call(5)\n"
+  expect_program_value(source, @moonwren.Value::number(15.0))
+}

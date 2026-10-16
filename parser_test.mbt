@@ -129,3 +129,34 @@ test "parser chains getters after grouped expressions" {
     _ => fail("expected chained getter calls")
   }
 }
+
+///|
+test "parser recognizes expression-bodied function literals" {
+  match @moonwren.parse_expression("Fn.new { |left, right| left + right }") {
+    @moonwren.ExpressionParsed(
+      @moonwren.FunctionLiteral(
+        ["left", "right"],
+        @moonwren.Binary(_, @moonwren.Add, _, _),
+        span
+      )
+    ) => {
+      assert_eq(span.start.offset, 0)
+      assert_eq(span.end.offset, 37)
+    }
+    _ => fail("expected a function literal")
+  }
+}
+
+///|
+test "parser supports empty function bodies" {
+  match @moonwren.parse_expression("Fn.new {}") {
+    @moonwren.ExpressionParsed(
+      @moonwren.FunctionLiteral(
+        [],
+        @moonwren.Literal(@moonwren.NullValue, _),
+        _
+      )
+    ) => ()
+    _ => fail("expected an empty function literal")
+  }
+}

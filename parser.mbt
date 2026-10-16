@@ -212,11 +212,45 @@ fn Parser::primary(self : Parser) -> Expr {
 }
 
 ///|
+fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
+  let opening = self.consume(LeftBrace, "expected '{' after Fn.new")
+  self.skip_newlines()
+  let parameters : Array[String] = []
+  if self.take(Pipe) {
+    if !self.check(Pipe) {
+      while true {
+        let parameter = self.consume(Identifier, "expected parameter name")
+        parameters.push(parameter.lexeme)
+        if !self.take(Comma) {
+          break
+        }
+      }
+    }
+    ignore(self.consume(Pipe, "expected '|' after parameters"))
+    self.skip_newlines()
+  }
+  let body = if self.check(RightBrace) {
+    Literal(Value::null(), opening.span)
+  } else {
+    self.expression()
+  }
+  self.skip_newlines()
+  let closing = self.consume(RightBrace, "expected '}' after function body")
+  FunctionLiteral(parameters, body, SourceSpan::merge(start, closing.span))
+}
+
+///|
 fn Parser::method_call(self : Parser) -> Expr {
   let mut receiver = self.primary()
   while self.take(Dot) {
     let name = self.consume(Identifier, "expected method name after '.'")
-    if self.take(LeftParen) {
+    let is_function_literal = match receiver {
+      Variable("Fn", _) => name.lexeme == "new" && self.check(LeftBrace)
+      _ => false
+    }
+    if is_function_literal {
+      receiver = self.function_literal(receiver.span())
+    } else if self.take(LeftParen) {
       self.skip_newlines()
       let arguments : Array[Expr] = []
       if !self.check(RightParen) {

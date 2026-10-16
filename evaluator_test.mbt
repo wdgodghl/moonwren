@@ -73,3 +73,33 @@ test "evaluator reports invalid operands" {
     }
   }
 }
+
+///|
+test "functions bind parameters and evaluate their expression body" {
+  expect_value(
+    "Fn.new { |left, right| left + right }.call(20, 22)",
+    @moonwren.Value::number(42.0),
+  )
+}
+
+///|
+test "empty functions return null" {
+  expect_value("Fn.new {}.call()", @moonwren.Value::null())
+}
+
+///|
+test "function calls reject missing arguments" {
+  match @moonwren.evaluate("Fn.new { |value| value }.call()") {
+    @moonwren.EvaluationSucceeded(_) => fail("call should fail")
+    @moonwren.EvaluationFailed(issue) =>
+      assert_eq(issue.code, @moonwren.InvalidArity)
+  }
+}
+
+///|
+test "function calls ignore extra arguments like Wren" {
+  expect_value(
+    "Fn.new { |value| value }.call(42, 99)",
+    @moonwren.Value::number(42.0),
+  )
+}

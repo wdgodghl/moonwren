@@ -6,6 +6,7 @@ pub(all) enum Value {
   NumberValue(Double)
   StringValue(String)
   RangeValue(Double, Double, Bool)
+  FunctionValue(Int)
   SystemValue
 } derive(Eq, Debug)
 
@@ -41,6 +42,11 @@ pub fn Value::range(from : Double, to : Double, inclusive : Bool) -> Value {
 }
 
 ///|
+fn Value::function(identifier : Int) -> Value {
+  FunctionValue(identifier)
+}
+
+///|
 fn Value::system() -> Value {
   SystemValue
 }
@@ -62,6 +68,7 @@ pub fn Value::type_name(self : Value) -> String {
     NumberValue(_) => "Num"
     StringValue(_) => "String"
     RangeValue(_, _, _) => "Range"
+    FunctionValue(_) => "Fn"
     SystemValue => "System"
   }
 }
@@ -77,6 +84,7 @@ pub fn Value::to_text(self : Value) -> String {
     StringValue(text) => text
     RangeValue(from, to, true) => "\{from}..\{to}"
     RangeValue(from, to, false) => "\{from}...\{to}"
+    FunctionValue(_) => "<fn>"
     SystemValue => "System"
   }
 }

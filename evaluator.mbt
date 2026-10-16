@@ -5,6 +5,24 @@ pub(all) enum EvaluationResult {
 }
 
 ///|
+priv struct Closure {
+  parameters : Array[String]
+  body : Expr
+  environment : Environment
+}
+
+///|
+priv struct RuntimeContext {
+  output : Array[String]
+  closures : Array[Closure]
+}
+
+///|
+fn RuntimeContext::new() -> RuntimeContext {
+  { output: [], closures: [], }
+}
+
+///|
 fn evaluation_error(
   code : DiagnosticCode,
   message : String,
@@ -151,22 +169,54 @@ fn evaluate_binary_values(
 }
 
 ///|
+fn invoke_function(
+  identifier : Int,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if identifier < 0 || identifier >= context.closures.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "function is not available in this runtime",
+      span,
+    )
+  }
+  let closure = context.closures[identifier]
+  if arguments.length() < closure.parameters.length() {
+    return evaluation_error(
+      InvalidArity,
+      "function expects at least \{closure.parameters.length()} arguments, received \{arguments.length()}",
+      span,
+    )
+  }
+  let environment = closure.environment.capture()
+  environment.push_scope()
+  for index = 0; index < closure.parameters.length(); index = index + 1 {
+    ignore(environment.bind(closure.parameters[index], arguments[index]))
+  }
+  let result = evaluate_expression_in(closure.body, environment, context)
+  ignore(environment.pop_scope())
+  result
+}
+
+///|
 fn invoke_method(
   receiver : Value,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
-  output : Array[String],
+  context : RuntimeContext,
 ) -> EvaluationResult {
   match receiver {
     SystemValue =>
       if name == "print" {
         if arguments.length() == 0 {
-          output.push("")
+          context.output.push("")
           EvaluationSucceeded(Value::null())
         } else if arguments.length() == 1 {
           let value = arguments[0]
-          output.push(value.to_text())
+          context.output.push(value.to_text())
           EvaluationSucceeded(value)
         } else {
           evaluation_error(
@@ -179,6 +229,16 @@ fn invoke_method(
         evaluation_error(
           UndefinedMethod,
           "System does not implement method '\{name}'",
+          span,
+        )
+      }
+    FunctionValue(identifier) =>
+      if name == "call" {
+        invoke_function(identifier, arguments, span, context)
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "Fn does not implement method '\{name}'",
           span,
         )
       }
@@ -230,7 +290,7 @@ fn read_property(
 fn evaluate_expression_in(
   expression : Expr,
   environment : Environment,
-  output : Array[String],
+  context : RuntimeContext,
 ) -> EvaluationResult {
   match expression {
     Literal(value, _) => EvaluationSucceeded(value)
@@ -245,7 +305,7 @@ fn evaluate_expression_in(
           )
       }
     Assign(name, value, span) =>
-      match evaluate_expression_in(value, environment, output) {
+      match evaluate_expression_in(value, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(value) =>
           if environment.assign(name, value) {
@@ -259,68 +319,77 @@ fn evaluate_expression_in(
           }
       }
     PropertyGet(receiver, name, span) =>
-      match evaluate_expression_in(receiver, environment, output) {
+      match evaluate_expression_in(receiver, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(receiver) => read_property(receiver, name, span)
       }
     MethodCall(receiver, name, arguments, span) =>
-      match evaluate_expression_in(receiver, environment, output) {
+      match evaluate_expression_in(receiver, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(receiver) => {
           let values : Array[Value] = []
           for argument in arguments {
-            match evaluate_expression_in(argument, environment, output) {
+            match evaluate_expression_in(argument, environment, context) {
               EvaluationFailed(issue) => return EvaluationFailed(issue)
               EvaluationSucceeded(value) => values.push(value)
             }
           }
-          invoke_method(receiver, name, values, span, output)
+          invoke_method(receiver, name, values, span, context)
         }
       }
-    Grouping(inner, _) => evaluate_expression_in(inner, environment, output)
+    FunctionLiteral(parameters, body, _) => {
+      let identifier = context.closures.length()
+      context.closures.push({
+        parameters,
+        body,
+        environment: environment.capture(),
+      })
+      EvaluationSucceeded(Value::function(identifier))
+    }
+    Grouping(inner, _) => evaluate_expression_in(inner, environment, context)
     Unary(operator, right, span) =>
-      match evaluate_expression_in(right, environment, output) {
+      match evaluate_expression_in(right, environment, context) {
         EvaluationSucceeded(value) => evaluate_unary(operator, value, span)
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, LogicalAnd, right, _) =>
-      match evaluate_expression_in(left, environment, output) {
+      match evaluate_expression_in(left, environment, context) {
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
-            evaluate_expression_in(right, environment, output)
+            evaluate_expression_in(right, environment, context)
           } else {
             EvaluationSucceeded(value)
           }
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, LogicalOr, right, _) =>
-      match evaluate_expression_in(left, environment, output) {
+      match evaluate_expression_in(left, environment, context) {
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
             EvaluationSucceeded(value)
           } else {
-            evaluate_expression_in(right, environment, output)
+            evaluate_expression_in(right, environment, context)
           }
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, operator, right, span) =>
-      match evaluate_expression_in(left, environment, output) {
+      match evaluate_expression_in(left, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(left_value) =>
-          match evaluate_expression_in(right, environment, output) {
+          match evaluate_expression_in(right, environment, context) {
             EvaluationFailed(issue) => EvaluationFailed(issue)
             EvaluationSucceeded(right_value) =>
               evaluate_binary_values(operator, left_value, right_value, span)
           }
       }
     Conditional(condition, then_branch, else_branch, _) =>
-      match evaluate_expression_in(condition, environment, output) {
+      match evaluate_expression_in(condition, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
-            evaluate_expression_in(then_branch, environment, output)
+            evaluate_expression_in(then_branch, environment, context)
           } else {
-            evaluate_expression_in(else_branch, environment, output)
+            evaluate_expression_in(else_branch, environment, context)
           }
       }
   }
@@ -333,7 +402,7 @@ pub fn evaluate(source : String) -> EvaluationResult {
     ExpressionParsed(expression) => {
       let environment = Environment::new()
       ignore(environment.bind("System", Value::system()))
-      evaluate_expression_in(expression, environment, [])
+      evaluate_expression_in(expression, environment, RuntimeContext::new())
     }
     ExpressionParseFailed(diagnostics) => EvaluationFailed(diagnostics[0])
   }

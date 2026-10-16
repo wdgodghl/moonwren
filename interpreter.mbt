@@ -7,7 +7,7 @@ pub(all) enum ProgramRunResult {
 ///|
 priv struct Interpreter {
   environment : Environment
-  output : Array[String]
+  context : RuntimeContext
   mut steps : Int
   max_steps : Int
 }
@@ -16,7 +16,7 @@ priv struct Interpreter {
 fn Interpreter::new(max_steps : Int) -> Interpreter {
   let environment = Environment::new()
   ignore(environment.bind("System", Value::system()))
-  { environment, output: [], steps: 0, max_steps, }
+  { environment, context: RuntimeContext::new(), steps: 0, max_steps, }
 }
 
 ///|
@@ -102,21 +102,10 @@ fn Interpreter::execute_statement(
   }
   match statement {
     ExpressionStatement(expression, _) =>
-      evaluate_expression_in(expression, self.environment, self.output)
+      evaluate_expression_in(expression, self.environment, self.context)
     VariableStatement(name, initializer, span) => {
-      let value = match initializer {
-        None => Value::null()
-        Some(expression) =>
-          match
-            evaluate_expression_in(expression, self.environment, self.output) {
-            EvaluationFailed(issue) => return EvaluationFailed(issue)
-            EvaluationSucceeded(value) => value
-          }
-      }
-      if self.environment.bind(name, value) {
-        EvaluationSucceeded(value)
-      } else {
-        EvaluationFailed(
+      if !self.environment.bind(name, Value::null()) {
+        return EvaluationFailed(
           Diagnostic::new(
             Runtime,
             DuplicateVariable,
@@ -125,10 +114,21 @@ fn Interpreter::execute_statement(
           ),
         )
       }
+      let value = match initializer {
+        None => Value::null()
+        Some(expression) =>
+          match
+            evaluate_expression_in(expression, self.environment, self.context) {
+            EvaluationFailed(issue) => return EvaluationFailed(issue)
+            EvaluationSucceeded(value) => value
+          }
+      }
+      ignore(self.environment.assign(name, value))
+      EvaluationSucceeded(value)
     }
     BlockStatement(statements, _) => self.execute_block(statements)
     IfStatement(condition, then_branch, else_branch, _) =>
-      match evaluate_expression_in(condition, self.environment, self.output) {
+      match evaluate_expression_in(condition, self.environment, self.context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
@@ -143,7 +143,8 @@ fn Interpreter::execute_statement(
     WhileStatement(condition, body, _) => {
       let mut last = Value::null()
       while true {
-        match evaluate_expression_in(condition, self.environment, self.output) {
+        match
+          evaluate_expression_in(condition, self.environment, self.context) {
           EvaluationFailed(issue) => return EvaluationFailed(issue)
           EvaluationSucceeded(value) => if !value.is_truthy() { break }
         }
@@ -155,7 +156,7 @@ fn Interpreter::execute_statement(
       EvaluationSucceeded(last)
     }
     ForStatement(name, sequence, body, span) =>
-      match evaluate_expression_in(sequence, self.environment, self.output) {
+      match evaluate_expression_in(sequence, self.environment, self.context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(RangeValue(from, to, inclusive)) =>
           self.execute_range_for(name, from, to, inclusive, body)
@@ -181,10 +182,11 @@ fn Interpreter::execute(
   for statement in statements {
     match self.execute_statement(statement) {
       EvaluationSucceeded(value) => last = value
-      EvaluationFailed(issue) => return ProgramFailed([issue], self.output)
+      EvaluationFailed(issue) =>
+        return ProgramFailed([issue], self.context.output)
     }
   }
-  ProgramCompleted(last, self.output)
+  ProgramCompleted(last, self.context.output)
 }
 
 ///|
