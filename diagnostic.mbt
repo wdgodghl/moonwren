@@ -26,6 +26,8 @@ pub(all) enum DiagnosticCode {
   ExpectedToken
   DuplicateVariable
   UndefinedVariable
+  UndefinedMethod
+  InvalidArity
   InvalidOperand
   DivisionByZero
   ExecutionLimit

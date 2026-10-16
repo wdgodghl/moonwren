@@ -6,7 +6,7 @@ fn demo_source() -> String {
   "  total = total + current\n" +
   "  current = current + 1\n" +
   "}\n" +
-  "total\n"
+  "System.print(total)\n"
 }
 
 ///|
@@ -22,10 +22,17 @@ fn selected_source() -> String {
 ///|
 fn main {
   match @moonwren.run(selected_source()) {
-    ProgramCompleted(value) => println(value.to_text())
-    ProgramFailed(diagnostics) =>
+    ProgramCompleted(_, output) =>
+      for line in output {
+        println(line)
+      }
+    ProgramFailed(diagnostics, output) => {
+      for line in output {
+        println(line)
+      }
       for diagnostic in diagnostics {
         println(diagnostic.render("<source>"))
       }
+    }
   }
 }

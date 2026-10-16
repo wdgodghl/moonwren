@@ -1,19 +1,22 @@
 ///|
 pub(all) enum ProgramRunResult {
-  ProgramCompleted(Value)
-  ProgramFailed(Array[Diagnostic])
+  ProgramCompleted(Value, Array[String])
+  ProgramFailed(Array[Diagnostic], Array[String])
 }
 
 ///|
 priv struct Interpreter {
   environment : Environment
+  output : Array[String]
   mut steps : Int
   max_steps : Int
 }
 
 ///|
 fn Interpreter::new(max_steps : Int) -> Interpreter {
-  { environment: Environment::new(), steps: 0, max_steps, }
+  let environment = Environment::new()
+  ignore(environment.bind("System", Value::system()))
+  { environment, output: [], steps: 0, max_steps, }
 }
 
 ///|
@@ -62,12 +65,13 @@ fn Interpreter::execute_statement(
   }
   match statement {
     ExpressionStatement(expression, _) =>
-      evaluate_expression_in(expression, self.environment)
+      evaluate_expression_in(expression, self.environment, self.output)
     VariableStatement(name, initializer, span) => {
       let value = match initializer {
         None => Value::null()
         Some(expression) =>
-          match evaluate_expression_in(expression, self.environment) {
+          match
+            evaluate_expression_in(expression, self.environment, self.output) {
             EvaluationFailed(issue) => return EvaluationFailed(issue)
             EvaluationSucceeded(value) => value
           }
@@ -87,7 +91,7 @@ fn Interpreter::execute_statement(
     }
     BlockStatement(statements, _) => self.execute_block(statements)
     IfStatement(condition, then_branch, else_branch, _) =>
-      match evaluate_expression_in(condition, self.environment) {
+      match evaluate_expression_in(condition, self.environment, self.output) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
@@ -102,7 +106,7 @@ fn Interpreter::execute_statement(
     WhileStatement(condition, body, _) => {
       let mut last = Value::null()
       while true {
-        match evaluate_expression_in(condition, self.environment) {
+        match evaluate_expression_in(condition, self.environment, self.output) {
           EvaluationFailed(issue) => return EvaluationFailed(issue)
           EvaluationSucceeded(value) => if !value.is_truthy() { break }
         }
@@ -125,27 +129,30 @@ fn Interpreter::execute(
   for statement in statements {
     match self.execute_statement(statement) {
       EvaluationSucceeded(value) => last = value
-      EvaluationFailed(issue) => return ProgramFailed([issue])
+      EvaluationFailed(issue) => return ProgramFailed([issue], self.output)
     }
   }
-  ProgramCompleted(last)
+  ProgramCompleted(last, self.output)
 }
 
 ///|
 /// Run a source file with a configurable guard against unbounded loops.
 pub fn run_with_limit(source : String, max_steps : Int) -> ProgramRunResult {
   if max_steps <= 0 {
-    return ProgramFailed([
-      Diagnostic::new(
-        Runtime,
-        ExecutionLimit,
-        "execution step limit must be positive",
-        SourceSpan::empty(),
-      ),
-    ])
+    return ProgramFailed(
+      [
+        Diagnostic::new(
+          Runtime,
+          ExecutionLimit,
+          "execution step limit must be positive",
+          SourceSpan::empty(),
+        ),
+      ],
+      [],
+    )
   }
   match parse_program(source) {
-    ProgramParseFailed(diagnostics) => ProgramFailed(diagnostics)
+    ProgramParseFailed(diagnostics) => ProgramFailed(diagnostics, [])
     ProgramParsed(statements) => Interpreter::new(max_steps).execute(statements)
   }
 }

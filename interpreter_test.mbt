@@ -4,8 +4,8 @@ fn expect_program_value(
   expected : @moonwren.Value,
 ) -> Unit raise {
   match @moonwren.run(source) {
-    @moonwren.ProgramCompleted(value) => assert_eq(value, expected)
-    @moonwren.ProgramFailed(issues) => fail(issues[0].message)
+    @moonwren.ProgramCompleted(value, _) => assert_eq(value, expected)
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
   }
 }
 
@@ -44,8 +44,8 @@ test "while execution updates variables" {
 ///|
 test "duplicate variables fail in the same scope" {
   match @moonwren.run("var item = 1\nvar item = 2\n") {
-    @moonwren.ProgramCompleted(_) => fail("program should fail")
-    @moonwren.ProgramFailed(issues) =>
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
       assert_eq(issues[0].code, @moonwren.DuplicateVariable)
   }
 }
@@ -53,8 +53,48 @@ test "duplicate variables fail in the same scope" {
 ///|
 test "execution limit stops unbounded loops" {
   match @moonwren.run_with_limit("while (true) {\n  1\n}\n", 10) {
-    @moonwren.ProgramCompleted(_) => fail("program should stop")
-    @moonwren.ProgramFailed(issues) =>
+    @moonwren.ProgramCompleted(_, _) => fail("program should stop")
+    @moonwren.ProgramFailed(issues, _) =>
       assert_eq(issues[0].code, @moonwren.ExecutionLimit)
+  }
+}
+
+///|
+test "System.print captures values and returns its argument" {
+  match @moonwren.run("var result = System.print(40 + 2)\nresult\n") {
+    @moonwren.ProgramCompleted(value, output) => {
+      assert_eq(value, @moonwren.Value::number(42.0))
+      assert_eq(output, ["42"])
+    }
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "System.print supports its zero argument overload" {
+  match @moonwren.run("System.print()\n") {
+    @moonwren.ProgramCompleted(value, output) => {
+      assert_eq(value, @moonwren.Value::null())
+      assert_eq(output, [""])
+    }
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "System.print reports unsupported arity" {
+  match @moonwren.run("System.print(1, 2)\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidArity)
+  }
+}
+
+///|
+test "unknown methods produce structured diagnostics" {
+  match @moonwren.run("1.missing()\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
   }
 }

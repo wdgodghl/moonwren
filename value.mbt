@@ -5,6 +5,7 @@ pub(all) enum Value {
   BoolValue(Bool)
   NumberValue(Double)
   StringValue(String)
+  SystemValue
 } derive(Eq, Debug)
 
 ///|
@@ -34,6 +35,11 @@ pub fn Value::string(value : String) -> Value {
 }
 
 ///|
+fn Value::system() -> Value {
+  SystemValue
+}
+
+///|
 /// Wren considers `false` and `null` falsey; every other value is truthy.
 pub fn Value::is_truthy(self : Value) -> Bool {
   match self {
@@ -49,6 +55,7 @@ pub fn Value::type_name(self : Value) -> String {
     BoolValue(_) => "Bool"
     NumberValue(_) => "Num"
     StringValue(_) => "String"
+    SystemValue => "System"
   }
 }
 
@@ -61,5 +68,6 @@ pub fn Value::to_text(self : Value) -> String {
     BoolValue(false) => "false"
     NumberValue(number) => "\{number}"
     StringValue(text) => text
+    SystemValue => "System"
   }
 }
