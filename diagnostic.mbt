@@ -18,6 +18,7 @@ pub extend DiagnosticPhase with Debug::{to_repr}
 pub(all) enum DiagnosticCode {
   UnexpectedCharacter
   UnterminatedString
+  UnterminatedComment
   InvalidEscape
   InvalidNumber
   UnexpectedToken
