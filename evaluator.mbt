@@ -154,6 +154,8 @@ fn evaluate_expression(expression : Expr) -> EvaluationResult {
     Literal(value, _) => EvaluationSucceeded(value)
     Variable(name, span) =>
       evaluation_error(UndefinedVariable, "undefined variable '\{name}'", span)
+    Assign(name, _, span) =>
+      evaluation_error(UndefinedVariable, "undefined variable '\{name}'", span)
     Grouping(inner, _) => evaluate_expression(inner)
     Unary(operator, right, span) =>
       match evaluate_expression(right) {

@@ -47,6 +47,7 @@ pub extend BinaryOperator with Debug::{to_repr}
 pub(all) enum Expr {
   Literal(Value, SourceSpan)
   Variable(String, SourceSpan)
+  Assign(String, Expr, SourceSpan)
   Unary(UnaryOperator, Expr, SourceSpan)
   Binary(Expr, BinaryOperator, Expr, SourceSpan)
   Conditional(Expr, Expr, Expr, SourceSpan)
@@ -64,9 +65,37 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
   match self {
     Literal(_, span)
     | Variable(_, span)
+    | Assign(_, _, span)
     | Unary(_, _, span)
     | Binary(_, _, _, span)
     | Conditional(_, _, _, span)
     | Grouping(_, span) => span
+  }
+}
+
+///|
+/// Statements for the first executable subset of the language.
+pub(all) enum Stmt {
+  ExpressionStatement(Expr, SourceSpan)
+  VariableStatement(String, Expr?, SourceSpan)
+  BlockStatement(Array[Stmt], SourceSpan)
+  IfStatement(Expr, Stmt, Stmt?, SourceSpan)
+  WhileStatement(Expr, Stmt, SourceSpan)
+} derive(Eq, Debug)
+
+///|
+pub extend Stmt with Eq::{equal, not_equal}
+
+///|
+pub extend Stmt with Debug::{to_repr}
+
+///|
+pub fn Stmt::span(self : Stmt) -> SourceSpan {
+  match self {
+    ExpressionStatement(_, span)
+    | VariableStatement(_, _, span)
+    | BlockStatement(_, span)
+    | IfStatement(_, _, _, span)
+    | WhileStatement(_, _, span) => span
   }
 }

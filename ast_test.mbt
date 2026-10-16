@@ -17,3 +17,17 @@ test "expression nodes retain complete source ranges" {
   assert_eq(expression.span().start.offset, 0)
   assert_eq(expression.span().end.offset, 5)
 }
+
+///|
+test "statement nodes retain their enclosing range" {
+  let span : @moonwren.SourceSpan = {
+    start: { offset: 0, line: 1, column: 1, },
+    end: { offset: 9, line: 1, column: 10, },
+  }
+  let statement = @moonwren.VariableStatement(
+    "answer",
+    Some(@moonwren.Literal(@moonwren.Value::number(42.0), span)),
+    span,
+  )
+  assert_eq(statement.span(), span)
+}

@@ -5,6 +5,12 @@ pub(all) enum ExpressionParseResult {
 }
 
 ///|
+pub(all) enum ProgramParseResult {
+  ProgramParsed(Array[Stmt])
+  ProgramParseFailed(Array[Diagnostic])
+}
+
+///|
 priv struct Parser {
   tokens : Array[Token]
   diagnostics : Array[Diagnostic]
@@ -434,8 +440,164 @@ fn Parser::conditional(self : Parser) -> Expr {
 }
 
 ///|
+fn Parser::assignment(self : Parser) -> Expr {
+  let target = self.conditional()
+  if self.take(Equal) {
+    let value = self.assignment()
+    match target {
+      Variable(name, target_span) =>
+        Assign(name, value, SourceSpan::merge(target_span, value.span()))
+      _ => {
+        self.report(
+          UnexpectedToken,
+          "assignment target must be a variable",
+          target.span(),
+        )
+        target
+      }
+    }
+  } else {
+    target
+  }
+}
+
+///|
 fn Parser::expression(self : Parser) -> Expr {
-  self.conditional()
+  self.assignment()
+}
+
+///|
+fn Parser::finish_statement(self : Parser) -> Unit {
+  if self.take(Newline) {
+    self.skip_newlines()
+  } else if !self.check(RightBrace) && !self.check(Eof) {
+    self.report(
+      ExpectedToken,
+      "expected newline after statement",
+      self.current_token().span,
+    )
+    while !self.check(Newline) && !self.check(RightBrace) && !self.check(Eof) {
+      ignore(self.advance())
+    }
+    self.skip_newlines()
+  }
+}
+
+///|
+fn Parser::variable_declaration(self : Parser, start : Token) -> Stmt {
+  let name = self.consume(Identifier, "expected variable name")
+  let initializer = if self.take(Equal) {
+    Some(self.expression())
+  } else {
+    None
+  }
+  let end_span = match initializer {
+    Some(expression) => expression.span()
+    None => name.span
+  }
+  self.finish_statement()
+  VariableStatement(
+    name.lexeme,
+    initializer,
+    SourceSpan::merge(start.span, end_span),
+  )
+}
+
+///|
+fn Parser::block_statement(self : Parser, opening : Token) -> Stmt {
+  self.skip_newlines()
+  let statements : Array[Stmt] = []
+  while !self.check(RightBrace) && !self.check(Eof) {
+    statements.push(self.declaration())
+    self.skip_newlines()
+  }
+  let closing = self.consume(RightBrace, "expected '}' after block")
+  BlockStatement(statements, SourceSpan::merge(opening.span, closing.span))
+}
+
+///|
+fn Parser::condition_in_parentheses(self : Parser, owner : String) -> Expr {
+  ignore(self.consume(LeftParen, "expected '(' after \{owner}"))
+  self.skip_newlines()
+  let condition = self.expression()
+  self.skip_newlines()
+  ignore(self.consume(RightParen, "expected ')' after condition"))
+  condition
+}
+
+///|
+fn Parser::if_statement(self : Parser, start : Token) -> Stmt {
+  let condition = self.condition_in_parentheses("if")
+  self.skip_newlines()
+  let then_branch = self.statement()
+  self.skip_newlines()
+  let else_branch = if self.take(ElseKeyword) {
+    self.skip_newlines()
+    Some(self.statement())
+  } else {
+    None
+  }
+  let end_span = match else_branch {
+    Some(branch) => branch.span()
+    None => then_branch.span()
+  }
+  IfStatement(
+    condition,
+    then_branch,
+    else_branch,
+    SourceSpan::merge(start.span, end_span),
+  )
+}
+
+///|
+fn Parser::while_statement(self : Parser, start : Token) -> Stmt {
+  let condition = self.condition_in_parentheses("while")
+  self.skip_newlines()
+  let body = self.statement()
+  let span = SourceSpan::merge(start.span, body.span())
+  WhileStatement(condition, body, span)
+}
+
+///|
+fn Parser::statement(self : Parser) -> Stmt {
+  let start = self.current_token()
+  if self.take(LeftBrace) {
+    self.block_statement(start)
+  } else if self.take(IfKeyword) {
+    self.if_statement(start)
+  } else if self.take(WhileKeyword) {
+    self.while_statement(start)
+  } else {
+    let expression = self.expression()
+    let span = expression.span()
+    self.finish_statement()
+    ExpressionStatement(expression, span)
+  }
+}
+
+///|
+fn Parser::declaration(self : Parser) -> Stmt {
+  let start = self.current_token()
+  if self.take(VarKeyword) {
+    self.variable_declaration(start)
+  } else {
+    self.statement()
+  }
+}
+
+///|
+fn Parser::parse_program(self : Parser) -> ProgramParseResult {
+  let statements : Array[Stmt] = []
+  self.skip_newlines()
+  while !self.check(Eof) {
+    statements.push(self.declaration())
+    self.skip_newlines()
+  }
+  if self.diagnostics.is_empty() {
+    ProgramParsed(statements)
+  } else {
+    ProgramParseFailed(self.diagnostics)
+  }
 }
 
 ///|
@@ -465,5 +627,16 @@ pub fn parse_expression(source : String) -> ExpressionParseResult {
     ExpressionParseFailed(scanned.diagnostics)
   } else {
     Parser::new(scanned.tokens).parse()
+  }
+}
+
+///|
+/// Parse a complete source file containing declarations and statements.
+pub fn parse_program(source : String) -> ProgramParseResult {
+  let scanned = scan(source)
+  if !scanned.diagnostics.is_empty() {
+    ProgramParseFailed(scanned.diagnostics)
+  } else {
+    Parser::new(scanned.tokens).parse_program()
   }
 }

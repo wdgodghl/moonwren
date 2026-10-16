@@ -28,6 +28,7 @@ pub(all) enum DiagnosticCode {
   UndefinedVariable
   InvalidOperand
   DivisionByZero
+  ExecutionLimit
   UnsupportedFeature
 } derive(Eq, Debug)
 
