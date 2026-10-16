@@ -8,8 +8,9 @@ The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
 scope, assignment, conditionals, `while` loops, numeric range `for` loops,
 method and getter calls, captured program output, `System.print`, universal
-`toString`, and range metadata getters. Classes, fibers, modules, and foreign
-methods follow in later milestones.
+`toString`, range metadata getters, and expression-bodied functions with
+lexical closures. Multiline function bodies, classes, fibers, modules, and
+foreign methods follow in later milestones.
 
 ## Goals
 
@@ -35,6 +36,12 @@ and prints `55`. A source string can also be supplied directly:
 
 ```text
 moon run cmd/main -- "var value = 40\nSystem.print(value + 2)"
+```
+
+Functions are values and capture surrounding variables by reference:
+
+```text
+moon run cmd/main -- "var count = 0\nvar next = Fn.new { count = count + 1 }\nSystem.print(next.call())\nSystem.print(next.call())"
 ```
 
 The library API exposes the same pipeline:

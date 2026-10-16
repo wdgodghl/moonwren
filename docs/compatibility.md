@@ -13,7 +13,7 @@ implementation idiomatic to MoonBit.
 | Method and getter calls | Partial | Chaining, arguments, `toString`, range getters, `System.print` |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Functions and closures | Planned | Arity checks and captured environments |
+| Functions and closures | Partial | Expression bodies, parameters, calls, recursion, captured cells |
 | Classes | Planned | Methods, constructors, inheritance |
 | Fibers | Planned | Cooperative execution |
 | Modules | Planned | Imports and module loading hooks |

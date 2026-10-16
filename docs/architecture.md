@@ -50,9 +50,17 @@ loops in embedded use. Numeric range values preserve their direction and
 endpoint mode, allowing `for` statements to support both ascending and
 descending inclusive or exclusive iteration.
 
+Function values store a runtime-local closure identifier. The closure registry
+retains the expression body, parameter list, and a captured environment.
+Captured environments copy the scope structure while sharing mutable variable
+cells, so state changes remain visible across calls and nested closures can
+outlive the call that created them. Function variables are predeclared before
+their initializer runs, which also enables recursive expression closures.
+
 ## Extension path
 
-The next runtime layer will generalize the method dispatcher for class methods
-and callable values. Classes, closures, modules, fibers, and foreign bindings
-can then build on the same source spans, diagnostics, environments, output
-capture, and execution limits without coupling those features to the scanner.
+The next runtime layer will add multiline function bodies and `return`, then
+generalize the dispatcher for classes and instances. Modules, fibers, and
+foreign bindings can build on the same source spans, diagnostics, environments,
+output capture, and execution limits without coupling those features to the
+scanner.
