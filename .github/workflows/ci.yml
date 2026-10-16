@@ -11,6 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.1.20260920
       - name: Check formatting
         run: moon fmt --check
       - name: Check packages
