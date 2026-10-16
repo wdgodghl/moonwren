@@ -107,10 +107,25 @@ test "parser supports chained and multiline method calls" {
 }
 
 ///|
-test "parser reports a missing method argument list" {
-  match @moonwren.parse_expression("System.print") {
-    @moonwren.ExpressionParsed(_) => fail("method call should fail")
-    @moonwren.ExpressionParseFailed(diagnostics) =>
-      assert_eq(diagnostics[0].code, @moonwren.ExpectedToken)
+test "parser recognizes getter calls" {
+  match @moonwren.parse_expression("value.toString") {
+    @moonwren.ExpressionParsed(
+      @moonwren.PropertyGet(@moonwren.Variable("value", _), "toString", span)
+    ) => assert_eq(span.end.offset, 14)
+    _ => fail("expected a getter call")
+  }
+}
+
+///|
+test "parser chains getters after grouped expressions" {
+  match @moonwren.parse_expression("(1..3).max.toString") {
+    @moonwren.ExpressionParsed(
+      @moonwren.PropertyGet(
+        @moonwren.PropertyGet(@moonwren.Grouping(_, _), "max", _),
+        "toString",
+        _
+      )
+    ) => ()
+    _ => fail("expected chained getter calls")
   }
 }

@@ -128,3 +128,20 @@ test "for loops reject non-range values" {
       assert_eq(issues[0].code, @moonwren.InvalidOperand)
   }
 }
+
+///|
+test "getter results can be passed to System.print" {
+  match @moonwren.run("System.print((4..2).min)\n") {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["2"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "unknown getters produce structured diagnostics" {
+  match @moonwren.run("1.missing\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+}

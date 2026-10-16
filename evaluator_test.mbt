@@ -49,6 +49,21 @@ test "range operands must be numbers" {
 }
 
 ///|
+test "range getters expose bounds and endpoint mode" {
+  expect_value("(4...2).from", @moonwren.Value::number(4.0))
+  expect_value("(4...2).to", @moonwren.Value::number(2.0))
+  expect_value("(4...2).min", @moonwren.Value::number(2.0))
+  expect_value("(4...2).max", @moonwren.Value::number(4.0))
+  expect_value("(4...2).isInclusive", @moonwren.Value::bool(false))
+}
+
+///|
+test "all values provide a toString getter" {
+  expect_value("(1...3).toString", @moonwren.Value::string("1...3"))
+  expect_value("true.toString", @moonwren.Value::string("true"))
+}
+
+///|
 test "evaluator reports invalid operands" {
   match @moonwren.evaluate("\"one\" - 1") {
     @moonwren.EvaluationSucceeded(_) => fail("operation should fail")

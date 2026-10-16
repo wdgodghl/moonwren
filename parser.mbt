@@ -216,26 +216,33 @@ fn Parser::method_call(self : Parser) -> Expr {
   let mut receiver = self.primary()
   while self.take(Dot) {
     let name = self.consume(Identifier, "expected method name after '.'")
-    ignore(self.consume(LeftParen, "expected '(' after method name"))
-    self.skip_newlines()
-    let arguments : Array[Expr] = []
-    if !self.check(RightParen) {
-      while true {
-        arguments.push(self.expression())
-        self.skip_newlines()
-        if !self.take(Comma) {
-          break
+    if self.take(LeftParen) {
+      self.skip_newlines()
+      let arguments : Array[Expr] = []
+      if !self.check(RightParen) {
+        while true {
+          arguments.push(self.expression())
+          self.skip_newlines()
+          if !self.take(Comma) {
+            break
+          }
+          self.skip_newlines()
         }
-        self.skip_newlines()
       }
+      let closing = self.consume(RightParen, "expected ')' after arguments")
+      receiver = MethodCall(
+        receiver,
+        name.lexeme,
+        arguments,
+        SourceSpan::merge(receiver.span(), closing.span),
+      )
+    } else {
+      receiver = PropertyGet(
+        receiver,
+        name.lexeme,
+        SourceSpan::merge(receiver.span(), name.span),
+      )
     }
-    let closing = self.consume(RightParen, "expected ')' after arguments")
-    receiver = MethodCall(
-      receiver,
-      name.lexeme,
-      arguments,
-      SourceSpan::merge(receiver.span(), closing.span),
-    )
   }
   receiver
 }

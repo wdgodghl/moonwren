@@ -192,6 +192,41 @@ fn invoke_method(
 }
 
 ///|
+fn read_property(
+  receiver : Value,
+  name : String,
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name == "toString" {
+    return EvaluationSucceeded(Value::string(receiver.to_text()))
+  }
+  match receiver {
+    RangeValue(from, to, inclusive) =>
+      match name {
+        "from" => EvaluationSucceeded(Value::number(from))
+        "to" => EvaluationSucceeded(Value::number(to))
+        "min" =>
+          EvaluationSucceeded(Value::number(if from < to { from } else { to }))
+        "max" =>
+          EvaluationSucceeded(Value::number(if from > to { from } else { to }))
+        "isInclusive" => EvaluationSucceeded(Value::bool(inclusive))
+        _ =>
+          evaluation_error(
+            UndefinedMethod,
+            "Range does not implement getter '\{name}'",
+            span,
+          )
+      }
+    value =>
+      evaluation_error(
+        UndefinedMethod,
+        "\{value.type_name()} does not implement getter '\{name}'",
+        span,
+      )
+  }
+}
+
+///|
 fn evaluate_expression_in(
   expression : Expr,
   environment : Environment,
@@ -222,6 +257,11 @@ fn evaluate_expression_in(
               span,
             )
           }
+      }
+    PropertyGet(receiver, name, span) =>
+      match evaluate_expression_in(receiver, environment, output) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(receiver) => read_property(receiver, name, span)
       }
     MethodCall(receiver, name, arguments, span) =>
       match evaluate_expression_in(receiver, environment, output) {
