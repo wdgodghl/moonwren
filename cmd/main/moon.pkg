@@ -1,5 +1,6 @@
-// import {
-//   "wdgodghl/moonwren" @lib,
-// }
+import {
+  "moonbitlang/core/env",
+  "wdgodghl/moonwren",
+}
 
 pkgtype(kind: "executable")
