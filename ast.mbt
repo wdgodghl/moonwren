@@ -50,7 +50,7 @@ pub(all) enum Expr {
   Assign(String, Expr, SourceSpan)
   PropertyGet(Expr, String, SourceSpan)
   MethodCall(Expr, String, Array[Expr], SourceSpan)
-  FunctionLiteral(Array[String], Expr, SourceSpan)
+  FunctionLiteral(Array[String], Array[Stmt], SourceSpan)
   Unary(UnaryOperator, Expr, SourceSpan)
   Binary(Expr, BinaryOperator, Expr, SourceSpan)
   Conditional(Expr, Expr, Expr, SourceSpan)
@@ -88,6 +88,7 @@ pub(all) enum Stmt {
   IfStatement(Expr, Stmt, Stmt?, SourceSpan)
   WhileStatement(Expr, Stmt, SourceSpan)
   ForStatement(String, Expr, Stmt, SourceSpan)
+  ReturnStatement(Expr?, SourceSpan)
 } derive(Eq, Debug)
 
 ///|
@@ -104,6 +105,7 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | BlockStatement(_, span)
     | IfStatement(_, _, _, span)
     | WhileStatement(_, _, span)
-    | ForStatement(_, _, _, span) => span
+    | ForStatement(_, _, _, span)
+    | ReturnStatement(_, span) => span
   }
 }

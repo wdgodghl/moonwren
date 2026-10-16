@@ -213,7 +213,7 @@ fn Parser::primary(self : Parser) -> Expr {
 
 ///|
 fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
-  let opening = self.consume(LeftBrace, "expected '{' after Fn.new")
+  ignore(self.consume(LeftBrace, "expected '{' after Fn.new"))
   self.skip_newlines()
   let parameters : Array[String] = []
   if self.take(Pipe) {
@@ -229,12 +229,11 @@ fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
     ignore(self.consume(Pipe, "expected '|' after parameters"))
     self.skip_newlines()
   }
-  let body = if self.check(RightBrace) {
-    Literal(Value::null(), opening.span)
-  } else {
-    self.expression()
+  let body : Array[Stmt] = []
+  while !self.check(RightBrace) && !self.check(Eof) {
+    body.push(self.declaration())
+    self.skip_newlines()
   }
-  self.skip_newlines()
   let closing = self.consume(RightBrace, "expected '}' after function body")
   FunctionLiteral(parameters, body, SourceSpan::merge(start, closing.span))
 }
@@ -647,6 +646,23 @@ fn Parser::for_statement(self : Parser, start : Token) -> Stmt {
 }
 
 ///|
+fn Parser::return_statement(self : Parser, start : Token) -> Stmt {
+  let value = if self.check(Newline) ||
+    self.check(RightBrace) ||
+    self.check(Eof) {
+    None
+  } else {
+    Some(self.expression())
+  }
+  let end_span = match value {
+    Some(expression) => expression.span()
+    None => start.span
+  }
+  self.finish_statement()
+  ReturnStatement(value, SourceSpan::merge(start.span, end_span))
+}
+
+///|
 fn Parser::statement(self : Parser) -> Stmt {
   let start = self.current_token()
   if self.take(LeftBrace) {
@@ -657,6 +673,8 @@ fn Parser::statement(self : Parser) -> Stmt {
     self.while_statement(start)
   } else if self.take(ForKeyword) {
     self.for_statement(start)
+  } else if self.take(ReturnKeyword) {
+    self.return_statement(start)
   } else {
     let expression = self.expression()
     let span = expression.span()

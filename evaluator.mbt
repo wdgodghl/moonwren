@@ -7,7 +7,7 @@ pub(all) enum EvaluationResult {
 ///|
 priv struct Closure {
   parameters : Array[String]
-  body : Expr
+  body : Array[Stmt]
   environment : Environment
 }
 
@@ -15,11 +15,49 @@ priv struct Closure {
 priv struct RuntimeContext {
   output : Array[String]
   closures : Array[Closure]
+  mut steps : Int
+  max_steps : Int
+  mut call_depth : Int
+  max_call_depth : Int
 }
 
 ///|
-fn RuntimeContext::new() -> RuntimeContext {
-  { output: [], closures: [], }
+fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
+  {
+    output: [],
+    closures: [],
+    steps: 0,
+    max_steps,
+    call_depth: 0,
+    max_call_depth: 256,
+  }
+}
+
+///|
+priv enum StatementResult {
+  StatementCompleted(Value)
+  StatementReturned(Value, SourceSpan)
+  StatementFailed(Diagnostic)
+}
+
+///|
+fn RuntimeContext::step(
+  self : RuntimeContext,
+  span : SourceSpan,
+) -> Diagnostic? {
+  self.steps = self.steps + 1
+  if self.steps > self.max_steps {
+    Some(
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "execution step limit exceeded",
+        span,
+      ),
+    )
+  } else {
+    None
+  }
 }
 
 ///|
@@ -190,14 +228,27 @@ fn invoke_function(
       span,
     )
   }
+  if context.call_depth >= context.max_call_depth {
+    return evaluation_error(
+      CallStackLimit,
+      "function call depth limit exceeded",
+      span,
+    )
+  }
   let environment = closure.environment.capture()
   environment.push_scope()
   for index = 0; index < closure.parameters.length(); index = index + 1 {
     ignore(environment.bind(closure.parameters[index], arguments[index]))
   }
-  let result = evaluate_expression_in(closure.body, environment, context)
+  context.call_depth = context.call_depth + 1
+  let result = execute_statements_in(closure.body, environment, context)
+  context.call_depth = context.call_depth - 1
   ignore(environment.pop_scope())
-  result
+  match result {
+    StatementCompleted(value) | StatementReturned(value, _) =>
+      EvaluationSucceeded(value)
+    StatementFailed(issue) => EvaluationFailed(issue)
+  }
 }
 
 ///|
@@ -396,13 +447,188 @@ fn evaluate_expression_in(
 }
 
 ///|
+fn execute_statements_in(
+  statements : Array[Stmt],
+  environment : Environment,
+  context : RuntimeContext,
+) -> StatementResult {
+  let mut last = Value::null()
+  for statement in statements {
+    match execute_statement_in(statement, environment, context) {
+      StatementCompleted(value) => last = value
+      StatementReturned(value, span) => return StatementReturned(value, span)
+      StatementFailed(issue) => return StatementFailed(issue)
+    }
+  }
+  StatementCompleted(last)
+}
+
+///|
+fn execute_block_in(
+  statements : Array[Stmt],
+  environment : Environment,
+  context : RuntimeContext,
+) -> StatementResult {
+  environment.push_scope()
+  let result = execute_statements_in(statements, environment, context)
+  ignore(environment.pop_scope())
+  result
+}
+
+///|
+fn execute_range_for_in(
+  name : String,
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  body : Stmt,
+  environment : Environment,
+  context : RuntimeContext,
+) -> StatementResult {
+  environment.push_scope()
+  ignore(environment.bind(name, Value::number(from)))
+  let step = if from <= to { 1.0 } else { -1.0 }
+  let mut current = from
+  let mut last = Value::null()
+  while (if step > 0.0 {
+          if inclusive {
+            current <= to
+          } else {
+            current < to
+          }
+        } else if inclusive {
+          current >= to
+        } else {
+          current > to
+        }) {
+    ignore(environment.assign(name, Value::number(current)))
+    match execute_statement_in(body, environment, context) {
+      StatementCompleted(value) => last = value
+      StatementReturned(value, span) => {
+        ignore(environment.pop_scope())
+        return StatementReturned(value, span)
+      }
+      StatementFailed(issue) => {
+        ignore(environment.pop_scope())
+        return StatementFailed(issue)
+      }
+    }
+    current = current + step
+  }
+  ignore(environment.pop_scope())
+  StatementCompleted(last)
+}
+
+///|
+fn execute_statement_in(
+  statement : Stmt,
+  environment : Environment,
+  context : RuntimeContext,
+) -> StatementResult {
+  match context.step(statement.span()) {
+    Some(issue) => return StatementFailed(issue)
+    None => ()
+  }
+  match statement {
+    ExpressionStatement(expression, _) =>
+      match evaluate_expression_in(expression, environment, context) {
+        EvaluationSucceeded(value) => StatementCompleted(value)
+        EvaluationFailed(issue) => StatementFailed(issue)
+      }
+    VariableStatement(name, initializer, span) => {
+      if !environment.bind(name, Value::null()) {
+        return StatementFailed(
+          Diagnostic::new(
+            Runtime,
+            DuplicateVariable,
+            "variable '\{name}' is already declared in this scope",
+            span,
+          ),
+        )
+      }
+      let value = match initializer {
+        None => Value::null()
+        Some(expression) =>
+          match evaluate_expression_in(expression, environment, context) {
+            EvaluationSucceeded(value) => value
+            EvaluationFailed(issue) => return StatementFailed(issue)
+          }
+      }
+      ignore(environment.assign(name, value))
+      StatementCompleted(value)
+    }
+    BlockStatement(statements, _) =>
+      execute_block_in(statements, environment, context)
+    IfStatement(condition, then_branch, else_branch, _) =>
+      match evaluate_expression_in(condition, environment, context) {
+        EvaluationFailed(issue) => StatementFailed(issue)
+        EvaluationSucceeded(value) =>
+          if value.is_truthy() {
+            execute_statement_in(then_branch, environment, context)
+          } else {
+            match else_branch {
+              Some(branch) => execute_statement_in(branch, environment, context)
+              None => StatementCompleted(Value::null())
+            }
+          }
+      }
+    WhileStatement(condition, body, _) => {
+      let mut last = Value::null()
+      while true {
+        match evaluate_expression_in(condition, environment, context) {
+          EvaluationFailed(issue) => return StatementFailed(issue)
+          EvaluationSucceeded(value) => if !value.is_truthy() { break }
+        }
+        match execute_statement_in(body, environment, context) {
+          StatementCompleted(value) => last = value
+          StatementReturned(value, span) =>
+            return StatementReturned(value, span)
+          StatementFailed(issue) => return StatementFailed(issue)
+        }
+      }
+      StatementCompleted(last)
+    }
+    ForStatement(name, sequence, body, span) =>
+      match evaluate_expression_in(sequence, environment, context) {
+        EvaluationFailed(issue) => StatementFailed(issue)
+        EvaluationSucceeded(RangeValue(from, to, inclusive)) =>
+          execute_range_for_in(
+            name, from, to, inclusive, body, environment, context,
+          )
+        EvaluationSucceeded(value) =>
+          StatementFailed(
+            Diagnostic::new(
+              Runtime,
+              InvalidOperand,
+              "for loop expects a Range, received \{value.type_name()}",
+              span,
+            ),
+          )
+      }
+    ReturnStatement(value, span) =>
+      match value {
+        None => StatementReturned(Value::null(), span)
+        Some(expression) =>
+          match evaluate_expression_in(expression, environment, context) {
+            EvaluationSucceeded(value) => StatementReturned(value, span)
+            EvaluationFailed(issue) => StatementFailed(issue)
+          }
+      }
+  }
+}
+
+///|
 /// Parse and evaluate one standalone expression.
 pub fn evaluate(source : String) -> EvaluationResult {
   match parse_expression(source) {
     ExpressionParsed(expression) => {
       let environment = Environment::new()
       ignore(environment.bind("System", Value::system()))
-      evaluate_expression_in(expression, environment, RuntimeContext::new())
+      evaluate_expression_in(
+        expression,
+        environment,
+        RuntimeContext::new(100000),
+      )
     }
     ExpressionParseFailed(diagnostics) => EvaluationFailed(diagnostics[0])
   }

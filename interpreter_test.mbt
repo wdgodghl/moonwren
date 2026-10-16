@@ -172,3 +172,96 @@ test "function variables support recursive expression bodies" {
     "sum.call(5)\n"
   expect_program_value(source, @moonwren.Value::number(15.0))
 }
+
+///|
+test "multi-statement functions return explicit values" {
+  let source = "var double = Fn.new { |value|\n" +
+    "  var result = value * 2\n" +
+    "  return result\n" +
+    "}\n" +
+    "double.call(21)\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "bare return produces null" {
+  let source = "var stop = Fn.new {\n  return\n  42\n}\nstop.call()\n"
+  expect_program_value(source, @moonwren.Value::null())
+}
+
+///|
+test "return escapes nested blocks and skips later statements" {
+  let source = "var choose = Fn.new {\n" +
+    "  if (true) {\n" +
+    "    return 42\n" +
+    "  }\n" +
+    "  System.print(\"unreachable\")\n" +
+    "}\n" +
+    "System.print(choose.call())\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["42"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "return escapes loops" {
+  let source = "var first = Fn.new {\n" +
+    "  for (item in 4..8) {\n" +
+    "    return item\n" +
+    "  }\n" +
+    "  return 0\n" +
+    "}\n" +
+    "first.call()\n"
+  expect_program_value(source, @moonwren.Value::number(4.0))
+}
+
+///|
+test "return outside a function reports its source location" {
+  match @moonwren.run("return 42\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("program should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.ReturnOutsideFunction)
+      assert_eq(issues[0].span.start.line, 1)
+      assert_eq(issues[0].span.start.column, 1)
+    }
+  }
+}
+
+///|
+test "returned closures retain function-local mutable state" {
+  let source = "var makeCounter = Fn.new {\n" +
+    "  var count = 0\n" +
+    "  return Fn.new {\n" +
+    "    count = count + 1\n" +
+    "    return count\n" +
+    "  }\n" +
+    "}\n" +
+    "var counter = makeCounter.call()\n" +
+    "System.print(counter.call())\n" +
+    "System.print(counter.call())\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["1", "2"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "recursive function calls share the execution budget" {
+  let source = "var forever = Fn.new { forever.call() }\nforever.call()\n"
+  match @moonwren.run_with_limit(source, 20) {
+    @moonwren.ProgramCompleted(_, _) => fail("program should stop")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.ExecutionLimit)
+  }
+}
+
+///|
+test "default runtime stops runaway recursion before exhausting the host stack" {
+  let source = "var forever = Fn.new { forever.call() }\nforever.call()\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("program should stop")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.CallStackLimit)
+  }
+}

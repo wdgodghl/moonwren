@@ -131,12 +131,17 @@ test "parser chains getters after grouped expressions" {
 }
 
 ///|
-test "parser recognizes expression-bodied function literals" {
+test "parser recognizes single-expression function literals" {
   match @moonwren.parse_expression("Fn.new { |left, right| left + right }") {
     @moonwren.ExpressionParsed(
       @moonwren.FunctionLiteral(
         ["left", "right"],
-        @moonwren.Binary(_, @moonwren.Add, _, _),
+        [
+          @moonwren.ExpressionStatement(
+            @moonwren.Binary(_, @moonwren.Add, _, _),
+            _
+          ),
+        ],
         span
       )
     ) => {
@@ -150,13 +155,25 @@ test "parser recognizes expression-bodied function literals" {
 ///|
 test "parser supports empty function bodies" {
   match @moonwren.parse_expression("Fn.new {}") {
+    @moonwren.ExpressionParsed(@moonwren.FunctionLiteral([], [], _)) => ()
+    _ => fail("expected an empty function literal")
+  }
+}
+
+///|
+test "parser recognizes multi-statement functions and return" {
+  let source = "Fn.new { |value|\n  var doubled = value * 2\n  return doubled\n}"
+  match @moonwren.parse_expression(source) {
     @moonwren.ExpressionParsed(
       @moonwren.FunctionLiteral(
-        [],
-        @moonwren.Literal(@moonwren.NullValue, _),
+        ["value"],
+        [
+          @moonwren.VariableStatement("doubled", Some(_), _),
+          @moonwren.ReturnStatement(Some(@moonwren.Variable("doubled", _)), _),
+        ],
         _
       )
     ) => ()
-    _ => fail("expected an empty function literal")
+    _ => fail("expected a multi-statement function")
   }
 }

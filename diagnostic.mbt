@@ -31,6 +31,8 @@ pub(all) enum DiagnosticCode {
   InvalidOperand
   DivisionByZero
   ExecutionLimit
+  CallStackLimit
+  ReturnOutsideFunction
   UnsupportedFeature
 } derive(Eq, Debug)
 
