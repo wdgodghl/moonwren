@@ -1,0 +1,74 @@
+///|
+test "parser applies multiplication before addition" {
+  match @moonwren.parse_expression("1 + 2 * 3") {
+    @moonwren.ExpressionParsed(expression) =>
+      match expression {
+        @moonwren.Binary(_, @moonwren.Add, right, _) =>
+          match right {
+            @moonwren.Binary(_, @moonwren.Multiply, _, _) => ()
+            _ => fail("expected multiplication on the right")
+          }
+        _ => fail("expected addition at the root")
+      }
+    @moonwren.ExpressionParseFailed(_) => fail("expression should parse")
+  }
+}
+
+///|
+test "parser handles primitive literals" {
+  match @moonwren.parse_expression("true ? \"yes\" : null") {
+    @moonwren.ExpressionParsed(expression) =>
+      match expression {
+        @moonwren.Conditional(
+          @moonwren.Literal(@moonwren.BoolValue(true), _),
+          @moonwren.Literal(@moonwren.StringValue("yes"), _),
+          @moonwren.Literal(@moonwren.NullValue, _),
+          _
+        ) => ()
+        _ => fail("expected conditional literals")
+      }
+    @moonwren.ExpressionParseFailed(_) => fail("expression should parse")
+  }
+}
+
+///|
+test "parser supports hexadecimal and exponent numbers" {
+  match @moonwren.parse_expression("0x10 + 2.5e2") {
+    @moonwren.ExpressionParsed(expression) =>
+      match expression {
+        @moonwren.Binary(
+          @moonwren.Literal(@moonwren.NumberValue(left), _),
+          @moonwren.Add,
+          @moonwren.Literal(@moonwren.NumberValue(right), _),
+          _
+        ) => {
+          assert_eq(left, 16.0)
+          assert_eq(right, 250.0)
+        }
+        _ => fail("expected two number literals")
+      }
+    @moonwren.ExpressionParseFailed(_) => fail("expression should parse")
+  }
+}
+
+///|
+test "parser reports a missing operand" {
+  match @moonwren.parse_expression("1 +") {
+    @moonwren.ExpressionParsed(_) => fail("expression should fail")
+    @moonwren.ExpressionParseFailed(diagnostics) => {
+      assert_eq(diagnostics.length(), 1)
+      assert_eq(diagnostics[0].code, @moonwren.ExpectedExpression)
+    }
+  }
+}
+
+///|
+test "parser accepts multiline grouped expressions" {
+  match @moonwren.parse_expression("(\n  1 + 2\n)") {
+    @moonwren.ExpressionParsed(@moonwren.Grouping(_, span)) => {
+      assert_eq(span.start.line, 1)
+      assert_eq(span.end.line, 3)
+    }
+    _ => fail("grouped expression should parse")
+  }
+}
