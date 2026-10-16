@@ -1,0 +1,9 @@
+MoonWren
+Copyright 2026 MoonWren contributors
+
+MoonWren is an independent MoonBit implementation of the Wren language. The
+public language documentation and compatibility behavior of Wren are used as
+references; upstream source files are not included in this repository.
+
+Wren is available at https://github.com/wren-lang/wren and is distributed
+under the MIT License by Robert Nystrom and contributors.

@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hustcer/setup-moonbit@v1
+      - name: Check formatting
+        run: moon fmt --check
+      - name: Check packages
+        run: moon check
+      - name: Run tests
+        run: moon test
