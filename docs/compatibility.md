@@ -7,9 +7,9 @@ implementation idiomatic to MoonBit.
 | --- | --- | --- |
 | Source spans and diagnostics | Implemented | Line and column tracking |
 | Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
-| Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic |
+| Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
-| Branching and loops | Partial | `if` and `while`; `for` remains planned |
+| Branching and loops | Partial | `if`, `while`, and numeric range `for`; general sequences planned |
 | Method calls | Partial | Chained calls and arguments parse; `System.print` executes |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Functions and closures | Planned | Arity checks and captured environments |

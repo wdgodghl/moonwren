@@ -6,9 +6,9 @@ standalone command-line runner, and behavior-focused compatibility tests.
 
 The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
-scope, assignment, conditionals, loops, method-call parsing, captured program
-output, and `System.print`. Classes, fibers, modules, and foreign methods follow
-in later milestones.
+scope, assignment, conditionals, `while` loops, numeric range `for` loops,
+method-call parsing, captured program output, and `System.print`. Classes,
+fibers, modules, and foreign methods follow in later milestones.
 
 ## Goals
 

@@ -44,7 +44,9 @@ binding. Method receivers and arguments are evaluated from left to right before
 dispatch. The initial built-in receiver implements both `System.print`
 signatures and captures output as lines, keeping the library independent of a
 particular console. The interpreter also applies a configurable execution-step
-budget to stop unbounded loops in embedded use.
+budget to stop unbounded loops in embedded use. Numeric range values preserve
+their direction and endpoint mode, allowing `for` statements to support both
+ascending and descending inclusive or exclusive iteration.
 
 ## Extension path
 

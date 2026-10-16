@@ -1,7 +1,5 @@
-var current = 1
 var total = 0
-while (current <= 10) {
+for (current in 1..10) {
   total = total + current
-  current = current + 1
 }
 System.print(total)

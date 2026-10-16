@@ -1,10 +1,8 @@
 ///|
 fn demo_source() -> String {
-  "var current = 1\n" +
   "var total = 0\n" +
-  "while (current <= 10) {\n" +
+  "for (current in 1..10) {\n" +
   "  total = total + current\n" +
-  "  current = current + 1\n" +
   "}\n" +
   "System.print(total)\n"
 }
