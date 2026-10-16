@@ -1,7 +1,7 @@
 ///|
 pub(all) struct Binding {
   name : String
-  mut value : Value
+  value : Ref[Value]
 }
 
 ///|
@@ -53,7 +53,7 @@ pub fn Environment::bind(
       return false
     }
   }
-  scope.bindings.push({ name, value, })
+  scope.bindings.push({ name, value: Ref(value), })
   true
 }
 
@@ -63,7 +63,7 @@ pub fn Environment::get(self : Environment, name : String) -> Value? {
   while scope_index >= 0 {
     for binding in self.scopes[scope_index].bindings {
       if binding.name == name {
-        return Some(binding.value)
+        return Some(binding.value.val)
       }
     }
     scope_index = scope_index - 1
@@ -82,11 +82,25 @@ pub fn Environment::assign(
   while scope_index >= 0 {
     for binding in self.scopes[scope_index].bindings {
       if binding.name == name {
-        binding.value = value
+        binding.value.val = value
         return true
       }
     }
     scope_index = scope_index - 1
   }
   false
+}
+
+///|
+/// Snapshot visible scopes while retaining shared variable cells.
+pub fn Environment::capture(self : Environment) -> Environment {
+  let scopes : Array[Scope] = []
+  for scope in self.scopes {
+    let bindings : Array[Binding] = []
+    for binding in scope.bindings {
+      bindings.push({ name: binding.name, value: binding.value, })
+    }
+    scopes.push({ bindings, })
+  }
+  { scopes, }
 }
