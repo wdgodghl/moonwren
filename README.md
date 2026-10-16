@@ -54,6 +54,9 @@ calls and `System.print` are not available in the current milestone. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 
+The implementation pipeline and package boundaries are documented in
+[`docs/architecture.md`](docs/architecture.md).
+
 ## License and references
 
 MoonWren is licensed under Apache-2.0. The implementation uses the public Wren

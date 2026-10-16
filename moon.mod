@@ -19,7 +19,7 @@ repository = "https://github.com/wdgodghl/moonwren"
 
 license = "Apache-2.0"
 
-keywords = ["wren", "interpreter", "scripting", "language"]
+keywords = [ "wren", "interpreter", "scripting", "language" ]
 
 preferred_target = "wasm"
 
