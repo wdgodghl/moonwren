@@ -7,8 +7,9 @@ standalone command-line runner, and behavior-focused compatibility tests.
 The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
 scope, assignment, conditionals, `while` loops, numeric range `for` loops,
-method-call parsing, captured program output, and `System.print`. Classes,
-fibers, modules, and foreign methods follow in later milestones.
+method and getter calls, captured program output, `System.print`, universal
+`toString`, and range metadata getters. Classes, fibers, modules, and foreign
+methods follow in later milestones.
 
 ## Goals
 
@@ -61,7 +62,9 @@ editor pane, or another host-provided destination.
 
 MoonWren is not yet a complete Wren implementation. The current method
 dispatcher implements the two `System.print` signatures; general object and
-user-defined method dispatch will arrive with the class runtime. See
+user-defined method dispatch will arrive with the class runtime. Getter
+dispatch currently covers `toString` on every runtime value and the standard
+`from`, `to`, `min`, `max`, and `isInclusive` range properties. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 

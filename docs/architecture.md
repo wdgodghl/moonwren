@@ -41,12 +41,14 @@ syntax is rejected rather than ignored.
 Primitive values are represented by one tagged value type. An environment is
 a stack of lexical scopes, so lookup and assignment select the nearest visible
 binding. Method receivers and arguments are evaluated from left to right before
-dispatch. The initial built-in receiver implements both `System.print`
-signatures and captures output as lines, keeping the library independent of a
-particular console. The interpreter also applies a configurable execution-step
-budget to stop unbounded loops in embedded use. Numeric range values preserve
-their direction and endpoint mode, allowing `for` statements to support both
-ascending and descending inclusive or exclusive iteration.
+dispatch. Getter calls use a separate syntax node so `value.toString` remains
+distinct from a zero-argument method such as `System.print()`. The initial
+built-in receiver implements both `System.print` signatures and captures output
+as lines, keeping the library independent of a particular console. The
+interpreter also applies a configurable execution-step budget to stop unbounded
+loops in embedded use. Numeric range values preserve their direction and
+endpoint mode, allowing `for` statements to support both ascending and
+descending inclusive or exclusive iteration.
 
 ## Extension path
 
