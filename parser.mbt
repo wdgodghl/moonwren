@@ -212,6 +212,35 @@ fn Parser::primary(self : Parser) -> Expr {
 }
 
 ///|
+fn Parser::method_call(self : Parser) -> Expr {
+  let mut receiver = self.primary()
+  while self.take(Dot) {
+    let name = self.consume(Identifier, "expected method name after '.'")
+    ignore(self.consume(LeftParen, "expected '(' after method name"))
+    self.skip_newlines()
+    let arguments : Array[Expr] = []
+    if !self.check(RightParen) {
+      while true {
+        arguments.push(self.expression())
+        self.skip_newlines()
+        if !self.take(Comma) {
+          break
+        }
+        self.skip_newlines()
+      }
+    }
+    let closing = self.consume(RightParen, "expected ')' after arguments")
+    receiver = MethodCall(
+      receiver,
+      name.lexeme,
+      arguments,
+      SourceSpan::merge(receiver.span(), closing.span),
+    )
+  }
+  receiver
+}
+
+///|
 fn Parser::unary(self : Parser) -> Expr {
   let token = self.current_token()
   let operator = if self.take(Bang) {
@@ -228,7 +257,7 @@ fn Parser::unary(self : Parser) -> Expr {
       let right = self.unary()
       Unary(operator, right, SourceSpan::merge(token.span, right.span()))
     }
-    None => self.primary()
+    None => self.method_call()
   }
 }
 

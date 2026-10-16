@@ -72,3 +72,45 @@ test "parser accepts multiline grouped expressions" {
     _ => fail("grouped expression should parse")
   }
 }
+
+///|
+test "parser recognizes method calls and arguments" {
+  match @moonwren.parse_expression("System.print(1 + 2)") {
+    @moonwren.ExpressionParsed(
+      @moonwren.MethodCall(
+        @moonwren.Variable("System", _),
+        "print",
+        [@moonwren.Binary(_, @moonwren.Add, _, _)],
+        span
+      )
+    ) => {
+      assert_eq(span.start.offset, 0)
+      assert_eq(span.end.offset, 19)
+    }
+    _ => fail("expected a method call")
+  }
+}
+
+///|
+test "parser supports chained and multiline method calls" {
+  match @moonwren.parse_expression("value.first().second(\n  1,\n  2\n)") {
+    @moonwren.ExpressionParsed(
+      @moonwren.MethodCall(
+        @moonwren.MethodCall(_, "first", [], _),
+        "second",
+        [_, _],
+        _
+      )
+    ) => ()
+    _ => fail("expected chained method calls")
+  }
+}
+
+///|
+test "parser reports a missing method argument list" {
+  match @moonwren.parse_expression("System.print") {
+    @moonwren.ExpressionParsed(_) => fail("method call should fail")
+    @moonwren.ExpressionParseFailed(diagnostics) =>
+      assert_eq(diagnostics[0].code, @moonwren.ExpectedToken)
+  }
+}

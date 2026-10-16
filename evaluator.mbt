@@ -179,6 +179,12 @@ fn evaluate_expression_in(
             )
           }
       }
+    MethodCall(_, name, _, span) =>
+      evaluation_error(
+        UnsupportedFeature,
+        "method '\{name}' is not available yet",
+        span,
+      )
     Grouping(inner, _) => evaluate_expression_in(inner, environment)
     Unary(operator, right, span) =>
       match evaluate_expression_in(right, environment) {
