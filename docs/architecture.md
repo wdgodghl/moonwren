@@ -45,22 +45,26 @@ dispatch. Getter calls use a separate syntax node so `value.toString` remains
 distinct from a zero-argument method such as `System.print()`. The initial
 built-in receiver implements both `System.print` signatures and captures output
 as lines, keeping the library independent of a particular console. The
-interpreter also applies a configurable execution-step budget to stop unbounded
-loops in embedded use. Numeric range values preserve their direction and
-endpoint mode, allowing `for` statements to support both ascending and
-descending inclusive or exclusive iteration.
+interpreter applies a configurable execution-step budget and a separate
+function call-depth guard. Both limits are shared by the complete runtime, so
+function calls cannot bypass resource accounting. Numeric range values
+preserve their direction and endpoint mode, allowing `for` statements to
+support both ascending and descending inclusive or exclusive iteration.
 
 Function values store a runtime-local closure identifier. The closure registry
-retains the expression body, parameter list, and a captured environment.
+retains the statement body, parameter list, and a captured environment.
 Captured environments copy the scope structure while sharing mutable variable
 cells, so state changes remain visible across calls and nested closures can
 outlive the call that created them. Function variables are predeclared before
-their initializer runs, which also enables recursive expression closures.
+their initializer runs, which also enables recursive closures. Statement
+execution distinguishes normal completion, early return, and runtime failure;
+this lets `return` unwind nested blocks and loops without conflating control
+flow with errors.
 
 ## Extension path
 
-The next runtime layer will add multiline function bodies and `return`, then
-generalize the dispatcher for classes and instances. Modules, fibers, and
+The next runtime layer will generalize the dispatcher for classes and
+instances. Modules, fibers, and
 foreign bindings can build on the same source spans, diagnostics, environments,
 output capture, and execution limits without coupling those features to the
 scanner.

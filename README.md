@@ -8,9 +8,9 @@ The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
 scope, assignment, conditionals, `while` loops, numeric range `for` loops,
 method and getter calls, captured program output, `System.print`, universal
-`toString`, range metadata getters, and expression-bodied functions with
-lexical closures. Multiline function bodies, classes, fibers, modules, and
-foreign methods follow in later milestones.
+`toString`, range metadata getters, and multiline functions with lexical
+closures and early `return`. Classes, fibers, modules, and foreign methods
+follow in later milestones.
 
 ## Goals
 
@@ -44,6 +44,23 @@ Functions are values and capture surrounding variables by reference:
 moon run cmd/main -- "var count = 0\nvar next = Fn.new { count = count + 1 }\nSystem.print(next.call())\nSystem.print(next.call())"
 ```
 
+Function bodies may contain declarations and control flow. A `return` exits
+through nested blocks and loops, while a bare `return` produces `null`:
+
+```wren
+var makeCounter = Fn.new {
+  var count = 0
+  return Fn.new {
+    count = count + 1
+    return count
+  }
+}
+
+var counter = makeCounter.call()
+System.print(counter.call()) // 1
+System.print(counter.call()) // 2
+```
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -74,6 +91,10 @@ dispatch currently covers `toString` on every runtime value and the standard
 `from`, `to`, `min`, `max`, and `isInclusive` range properties. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
+
+Program execution has both a configurable statement-step budget and a call
+depth guard. These limits turn unbounded loops and runaway recursion into
+structured diagnostics instead of allowing them to consume host resources.
 
 The implementation pipeline and package boundaries are documented in
 [`docs/architecture.md`](docs/architecture.md).

@@ -13,7 +13,7 @@ implementation idiomatic to MoonBit.
 | Method and getter calls | Partial | Chaining, arguments, `toString`, range getters, `System.print` |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Functions and closures | Partial | Expression bodies, parameters, calls, recursion, captured cells |
+| Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
 | Classes | Planned | Methods, constructors, inheritance |
 | Fibers | Planned | Cooperative execution |
 | Modules | Planned | Imports and module loading hooks |
@@ -21,3 +21,8 @@ implementation idiomatic to MoonBit.
 
 Unsupported syntax must produce a structured diagnostic. The parser and
 runtime should never report success after discarding an unsupported construct.
+
+Function execution currently supports implicit last-expression results for
+compact closures as well as explicit value and bare `return` statements.
+Returns propagate through nested blocks, conditionals, and loops. A top-level
+`return` is rejected with a source-located runtime diagnostic.
