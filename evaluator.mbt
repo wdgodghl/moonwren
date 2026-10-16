@@ -149,57 +149,80 @@ fn evaluate_binary_values(
 }
 
 ///|
-fn evaluate_expression(expression : Expr) -> EvaluationResult {
+fn evaluate_expression_in(
+  expression : Expr,
+  environment : Environment,
+) -> EvaluationResult {
   match expression {
     Literal(value, _) => EvaluationSucceeded(value)
     Variable(name, span) =>
-      evaluation_error(UndefinedVariable, "undefined variable '\{name}'", span)
-    Assign(name, _, span) =>
-      evaluation_error(UndefinedVariable, "undefined variable '\{name}'", span)
-    Grouping(inner, _) => evaluate_expression(inner)
+      match environment.get(name) {
+        Some(value) => EvaluationSucceeded(value)
+        None =>
+          evaluation_error(
+            UndefinedVariable,
+            "undefined variable '\{name}'",
+            span,
+          )
+      }
+    Assign(name, value, span) =>
+      match evaluate_expression_in(value, environment) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(value) =>
+          if environment.assign(name, value) {
+            EvaluationSucceeded(value)
+          } else {
+            evaluation_error(
+              UndefinedVariable,
+              "undefined variable '\{name}'",
+              span,
+            )
+          }
+      }
+    Grouping(inner, _) => evaluate_expression_in(inner, environment)
     Unary(operator, right, span) =>
-      match evaluate_expression(right) {
+      match evaluate_expression_in(right, environment) {
         EvaluationSucceeded(value) => evaluate_unary(operator, value, span)
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, LogicalAnd, right, _) =>
-      match evaluate_expression(left) {
+      match evaluate_expression_in(left, environment) {
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
-            evaluate_expression(right)
+            evaluate_expression_in(right, environment)
           } else {
             EvaluationSucceeded(value)
           }
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, LogicalOr, right, _) =>
-      match evaluate_expression(left) {
+      match evaluate_expression_in(left, environment) {
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
             EvaluationSucceeded(value)
           } else {
-            evaluate_expression(right)
+            evaluate_expression_in(right, environment)
           }
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, operator, right, span) =>
-      match evaluate_expression(left) {
+      match evaluate_expression_in(left, environment) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(left_value) =>
-          match evaluate_expression(right) {
+          match evaluate_expression_in(right, environment) {
             EvaluationFailed(issue) => EvaluationFailed(issue)
             EvaluationSucceeded(right_value) =>
               evaluate_binary_values(operator, left_value, right_value, span)
           }
       }
     Conditional(condition, then_branch, else_branch, _) =>
-      match evaluate_expression(condition) {
+      match evaluate_expression_in(condition, environment) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(value) =>
           if value.is_truthy() {
-            evaluate_expression(then_branch)
+            evaluate_expression_in(then_branch, environment)
           } else {
-            evaluate_expression(else_branch)
+            evaluate_expression_in(else_branch, environment)
           }
       }
   }
@@ -209,7 +232,8 @@ fn evaluate_expression(expression : Expr) -> EvaluationResult {
 /// Parse and evaluate one standalone expression.
 pub fn evaluate(source : String) -> EvaluationResult {
   match parse_expression(source) {
-    ExpressionParsed(expression) => evaluate_expression(expression)
+    ExpressionParsed(expression) =>
+      evaluate_expression_in(expression, Environment::new())
     ExpressionParseFailed(diagnostics) => EvaluationFailed(diagnostics[0])
   }
 }
