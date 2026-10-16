@@ -128,11 +128,13 @@ fn evaluate_binary_values(
         _ => invalid_binary("+", left, right, span)
       }
     InclusiveRange | ExclusiveRange =>
-      evaluation_error(
-        UnsupportedFeature,
-        "range values are not implemented yet",
-        span,
-      )
+      match (left, right) {
+        (NumberValue(from), NumberValue(to)) =>
+          EvaluationSucceeded(
+            Value::range(from, to, operator == InclusiveRange),
+          )
+        _ => invalid_binary("range", left, right, span)
+      }
     IsType =>
       evaluation_error(
         UnsupportedFeature,

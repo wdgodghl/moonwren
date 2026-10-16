@@ -34,6 +34,21 @@ test "evaluator applies numeric bit operations" {
 }
 
 ///|
+test "evaluator constructs inclusive and exclusive ranges" {
+  expect_value("1..3", @moonwren.Value::range(1.0, 3.0, true))
+  expect_value("3...1", @moonwren.Value::range(3.0, 1.0, false))
+}
+
+///|
+test "range operands must be numbers" {
+  match @moonwren.evaluate("1..\"end\"") {
+    @moonwren.EvaluationSucceeded(_) => fail("range should fail")
+    @moonwren.EvaluationFailed(issue) =>
+      assert_eq(issue.code, @moonwren.InvalidOperand)
+  }
+}
+
+///|
 test "evaluator reports invalid operands" {
   match @moonwren.evaluate("\"one\" - 1") {
     @moonwren.EvaluationSucceeded(_) => fail("operation should fail")
