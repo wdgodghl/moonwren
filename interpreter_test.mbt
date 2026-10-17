@@ -686,3 +686,113 @@ test "loop control cannot escape a called method" {
       assert_eq(issues[0].code, @moonwren.ContinueOutsideLoop)
   }
 }
+
+///|
+test "list literals support indexed reads writes and count" {
+  let source = "var values = [10, 20, 30]\n" +
+    "values[1] = 12\n" +
+    "values[0] + values[1] + values.count\n"
+  expect_program_value(source, @moonwren.Value::number(25.0))
+}
+
+///|
+test "list methods add insert remove contains and clear" {
+  let source = "var values = [1, 3]\n" +
+    "values.insert(1, 2)\n" +
+    "values.add(4)\n" +
+    "var removed = values.removeAt(0)\n" +
+    "var found = values.contains(3)\n" +
+    "values.clear()\n" +
+    "removed + (found ? 10 : 0) + values.count\n"
+  expect_program_value(source, @moonwren.Value::number(11.0))
+}
+
+///|
+test "map literals support lookup update and duplicate keys" {
+  let source = "var values = {\"answer\": 1, \"answer\": 40}\n" +
+    "values[\"answer\"] = values[\"answer\"] + 2\n" +
+    "values[\"missing\"] = 7\n" +
+    "values[\"answer\"] + values.count\n"
+  expect_program_value(source, @moonwren.Value::number(44.0))
+}
+
+///|
+test "map methods inspect remove and clear entries" {
+  let source = "var values = {\"one\": 1, \"two\": 2}\n" +
+    "var hadTwo = values.containsKey(\"two\")\n" +
+    "var removed = values.remove(\"one\")\n" +
+    "var absent = values.remove(\"missing\")\n" +
+    "values.clear()\n" +
+    "removed + (hadTwo ? 10 : 0) + (absent == null ? 30 : 0) + values.count\n"
+  expect_program_value(source, @moonwren.Value::number(41.0))
+}
+
+///|
+test "missing map keys read as null" {
+  expect_program_value(
+    "var values = {}\nvalues[\"missing\"]\n",
+    @moonwren.Value::null(),
+  )
+}
+
+///|
+test "for loops iterate over a stable list snapshot" {
+  let source = "var values = [1, 2, 3, 4]\n" +
+    "var total = 0\n" +
+    "for (item in values) {\n" +
+    "  values.add(99)\n" +
+    "  if (item == 2) continue\n" +
+    "  if (item == 4) break\n" +
+    "  total = total + item\n" +
+    "}\n" +
+    "total + values.count\n"
+  expect_program_value(source, @moonwren.Value::number(12.0))
+}
+
+///|
+test "collections preserve identity equality" {
+  let source = "var left = [1]\n" +
+    "var same = left\n" +
+    "var other = [1]\n" +
+    "(left == same) && (left != other)\n"
+  expect_program_value(source, @moonwren.Value::bool(true))
+}
+
+///|
+test "nested collections have readable output" {
+  let source = "var values = [1, {\"two\": 2}]\n" +
+    "System.print(values)\n" +
+    "values.toString\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(@moonwren.StringValue(text), output) => {
+      assert_eq(text, "[1, {two: 2}]")
+      assert_eq(output, ["[1, {two: 2}]"])
+    }
+    _ => fail("collection output should succeed")
+  }
+}
+
+///|
+test "self-referential collections have bounded output" {
+  let source = "var values = []\n" +
+    "values.add(values)\n" +
+    "System.print(values)\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, [text]) => assert_true(text.length() < 100)
+    _ => fail("recursive collection output should succeed")
+  }
+}
+
+///|
+test "list indexes produce structured diagnostics" {
+  match @moonwren.run("[1][1.5]\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("fractional index should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidIndex)
+  }
+  match @moonwren.run("[1][2]\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("large index should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.IndexOutOfBounds)
+  }
+}

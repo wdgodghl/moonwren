@@ -52,6 +52,10 @@ pub(all) enum Expr {
   FieldAssign(String, Expr, SourceSpan)
   StaticFieldGet(String, SourceSpan)
   StaticFieldAssign(String, Expr, SourceSpan)
+  ListLiteral(Array[Expr], SourceSpan)
+  MapLiteral(Array[MapEntryExpr], SourceSpan)
+  SubscriptGet(Expr, Expr, SourceSpan)
+  SubscriptSet(Expr, Expr, Expr, SourceSpan)
   PropertyGet(Expr, String, SourceSpan)
   MethodCall(Expr, String, Array[Expr], SourceSpan)
   SuperConstructorCall(Array[Expr], SourceSpan)
@@ -78,6 +82,10 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | FieldAssign(_, _, span)
     | StaticFieldGet(_, span)
     | StaticFieldAssign(_, _, span)
+    | ListLiteral(_, span)
+    | MapLiteral(_, span)
+    | SubscriptGet(_, _, span)
+    | SubscriptSet(_, _, _, span)
     | PropertyGet(_, _, span)
     | MethodCall(_, _, _, span)
     | SuperConstructorCall(_, span)
@@ -88,6 +96,19 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | Grouping(_, span) => span
   }
 }
+
+///|
+/// One key-value expression pair retained by a map literal.
+pub(all) struct MapEntryExpr {
+  key : Expr
+  value : Expr
+} derive(Eq, Debug)
+
+///|
+pub extend MapEntryExpr with Eq::{equal, not_equal}
+
+///|
+pub extend MapEntryExpr with Debug::{to_repr}
 
 ///|
 /// Statements for the first executable subset of the language.

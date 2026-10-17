@@ -6,6 +6,8 @@ pub(all) enum Value {
   NumberValue(Double)
   StringValue(String)
   RangeValue(Double, Double, Bool)
+  ListValue(Int)
+  MapValue(Int)
   FunctionValue(Int)
   ClassValue(Int)
   InstanceValue(Int)
@@ -46,6 +48,16 @@ pub fn Value::range(from : Double, to : Double, inclusive : Bool) -> Value {
 }
 
 ///|
+fn Value::list(identifier : Int) -> Value {
+  ListValue(identifier)
+}
+
+///|
+fn Value::map(identifier : Int) -> Value {
+  MapValue(identifier)
+}
+
+///|
 fn Value::function(identifier : Int) -> Value {
   FunctionValue(identifier)
 }
@@ -82,6 +94,8 @@ pub fn Value::type_name(self : Value) -> String {
     NumberValue(_) => "Num"
     StringValue(_) => "String"
     RangeValue(_, _, _) => "Range"
+    ListValue(_) => "List"
+    MapValue(_) => "Map"
     FunctionValue(_) => "Fn"
     ClassValue(_) => "Class"
     InstanceValue(_) => "Instance"
@@ -102,6 +116,8 @@ pub fn Value::to_text(self : Value) -> String {
     StringValue(text) => text
     RangeValue(from, to, true) => "\{from}..\{to}"
     RangeValue(from, to, false) => "\{from}...\{to}"
+    ListValue(_) => "<list>"
+    MapValue(_) => "<map>"
     FunctionValue(_) => "<fn>"
     ClassValue(_) => "<class>"
     InstanceValue(_) => "<instance>"

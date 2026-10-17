@@ -117,6 +117,45 @@ test "parser recognizes getter calls" {
 }
 
 ///|
+test "parser recognizes list and map literals" {
+  match @moonwren.parse_expression("[1, {\"answer\": 42},]") {
+    @moonwren.ExpressionParsed(
+      @moonwren.ListLiteral(
+        [
+          @moonwren.Literal(@moonwren.NumberValue(1.0), _),
+          @moonwren.MapLiteral(
+            [
+              {
+                key: @moonwren.Literal(@moonwren.StringValue("answer"), _),
+                value: @moonwren.Literal(@moonwren.NumberValue(42.0), _),
+              },
+            ],
+            _
+          ),
+        ],
+        _
+      )
+    ) => ()
+    _ => fail("expected nested collection literals")
+  }
+}
+
+///|
+test "parser recognizes chained subscript assignment" {
+  match @moonwren.parse_expression("matrix[1][2] = 42") {
+    @moonwren.ExpressionParsed(
+      @moonwren.SubscriptSet(
+        @moonwren.SubscriptGet(@moonwren.Variable("matrix", _), _, _),
+        _,
+        @moonwren.Literal(@moonwren.NumberValue(42.0), _),
+        _
+      )
+    ) => ()
+    _ => fail("expected subscript assignment")
+  }
+}
+
+///|
 test "parser chains getters after grouped expressions" {
   match @moonwren.parse_expression("(1..3).max.toString") {
     @moonwren.ExpressionParsed(

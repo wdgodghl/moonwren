@@ -202,6 +202,47 @@ fn Parser::primary(self : Parser) -> Expr {
     Variable("this", token.span)
   } else if self.take(SuperKeyword) {
     Variable("$super", token.span)
+  } else if self.take(LeftBracket) {
+    self.skip_newlines()
+    let items : Array[Expr] = []
+    if !self.check(RightBracket) {
+      while true {
+        items.push(self.expression())
+        self.skip_newlines()
+        if !self.take(Comma) {
+          break
+        }
+        self.skip_newlines()
+        if self.check(RightBracket) {
+          break
+        }
+      }
+    }
+    let closing = self.consume(RightBracket, "expected ']' after list literal")
+    ListLiteral(items, SourceSpan::merge(token.span, closing.span))
+  } else if self.take(LeftBrace) {
+    self.skip_newlines()
+    let entries : Array[MapEntryExpr] = []
+    if !self.check(RightBrace) {
+      while true {
+        let key = self.expression()
+        self.skip_newlines()
+        ignore(self.consume(Colon, "expected ':' after map key"))
+        self.skip_newlines()
+        let value = self.expression()
+        entries.push({ key, value, })
+        self.skip_newlines()
+        if !self.take(Comma) {
+          break
+        }
+        self.skip_newlines()
+        if self.check(RightBrace) {
+          break
+        }
+      }
+    }
+    let closing = self.consume(RightBrace, "expected '}' after map literal")
+    MapLiteral(entries, SourceSpan::merge(token.span, closing.span))
   } else if self.take(LeftParen) {
     self.skip_newlines()
     let inner = self.expression()
@@ -277,40 +318,54 @@ fn Parser::method_call(self : Parser) -> Expr {
       }
     None => ()
   }
-  while self.take(Dot) {
-    let name = self.consume(Identifier, "expected method name after '.'")
-    let is_function_literal = match receiver {
-      Variable("Fn", _) => name.lexeme == "new" && self.check(LeftBrace)
-      _ => false
-    }
-    if is_function_literal {
-      receiver = self.function_literal(receiver.span())
-    } else if self.take(LeftParen) {
-      self.skip_newlines()
-      let arguments : Array[Expr] = []
-      if !self.check(RightParen) {
-        while true {
-          arguments.push(self.expression())
-          self.skip_newlines()
-          if !self.take(Comma) {
-            break
-          }
-          self.skip_newlines()
-        }
+  while true {
+    if self.take(Dot) {
+      let name = self.consume(Identifier, "expected method name after '.'")
+      let is_function_literal = match receiver {
+        Variable("Fn", _) => name.lexeme == "new" && self.check(LeftBrace)
+        _ => false
       }
-      let closing = self.consume(RightParen, "expected ')' after arguments")
-      receiver = MethodCall(
+      if is_function_literal {
+        receiver = self.function_literal(receiver.span())
+      } else if self.take(LeftParen) {
+        self.skip_newlines()
+        let arguments : Array[Expr] = []
+        if !self.check(RightParen) {
+          while true {
+            arguments.push(self.expression())
+            self.skip_newlines()
+            if !self.take(Comma) {
+              break
+            }
+            self.skip_newlines()
+          }
+        }
+        let closing = self.consume(RightParen, "expected ')' after arguments")
+        receiver = MethodCall(
+          receiver,
+          name.lexeme,
+          arguments,
+          SourceSpan::merge(receiver.span(), closing.span),
+        )
+      } else {
+        receiver = PropertyGet(
+          receiver,
+          name.lexeme,
+          SourceSpan::merge(receiver.span(), name.span),
+        )
+      }
+    } else if self.take(LeftBracket) {
+      self.skip_newlines()
+      let index = self.expression()
+      self.skip_newlines()
+      let closing = self.consume(RightBracket, "expected ']' after subscript")
+      receiver = SubscriptGet(
         receiver,
-        name.lexeme,
-        arguments,
+        index,
         SourceSpan::merge(receiver.span(), closing.span),
       )
     } else {
-      receiver = PropertyGet(
-        receiver,
-        name.lexeme,
-        SourceSpan::merge(receiver.span(), name.span),
-      )
+      break
     }
   }
   receiver
@@ -560,10 +615,17 @@ fn Parser::assignment(self : Parser) -> Expr {
           value,
           SourceSpan::merge(target_span, value.span()),
         )
+      SubscriptGet(receiver, index, target_span) =>
+        SubscriptSet(
+          receiver,
+          index,
+          value,
+          SourceSpan::merge(target_span, value.span()),
+        )
       _ => {
         self.report(
           UnexpectedToken,
-          "assignment target must be a variable or field",
+          "assignment target must be a variable, field, or subscript",
           target.span(),
         )
         target

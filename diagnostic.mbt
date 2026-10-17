@@ -31,6 +31,8 @@ pub(all) enum DiagnosticCode {
   UndefinedMethod
   InvalidArity
   InvalidOperand
+  InvalidIndex
+  IndexOutOfBounds
   DivisionByZero
   ExecutionLimit
   CallStackLimit
