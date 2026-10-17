@@ -41,6 +41,30 @@ pub fn run_with_limit(source : String, max_steps : Int) -> ProgramRunResult {
             ],
             context.output,
           )
+        StatementBroken(span) =>
+          ProgramFailed(
+            [
+              Diagnostic::new(
+                Runtime,
+                BreakOutsideLoop,
+                "break can only be used inside a loop",
+                span,
+              ),
+            ],
+            context.output,
+          )
+        StatementContinued(span) =>
+          ProgramFailed(
+            [
+              Diagnostic::new(
+                Runtime,
+                ContinueOutsideLoop,
+                "continue can only be used inside a loop",
+                span,
+              ),
+            ],
+            context.output,
+          )
       }
     }
   }

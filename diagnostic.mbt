@@ -35,6 +35,8 @@ pub(all) enum DiagnosticCode {
   ExecutionLimit
   CallStackLimit
   ReturnOutsideFunction
+  BreakOutsideLoop
+  ContinueOutsideLoop
   UnsupportedFeature
 } derive(Eq, Debug)
 

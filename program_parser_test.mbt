@@ -167,3 +167,26 @@ test "parser records static methods getters and fields" {
     _ => fail("expected static declarations")
   }
 }
+
+///|
+test "program parser recognizes break and continue statements" {
+  let source = "while (true) {\n  if (false) continue\n  break\n}\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [
+        @moonwren.WhileStatement(
+          _,
+          @moonwren.BlockStatement(
+            [
+              @moonwren.IfStatement(_, @moonwren.ContinueStatement(_), None, _),
+              @moonwren.BreakStatement(_),
+            ],
+            _
+          ),
+          _
+        ),
+      ]
+    ) => ()
+    _ => fail("expected loop control statements")
+  }
+}

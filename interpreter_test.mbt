@@ -608,3 +608,81 @@ test "constructors cannot be declared static" {
       assert_eq(issues[0].code, @moonwren.UnexpectedToken)
   }
 }
+
+///|
+test "while loops support continue and break through nested blocks" {
+  let source = "var count = 0\n" +
+    "var total = 0\n" +
+    "while (count < 6) {\n" +
+    "  count = count + 1\n" +
+    "  if (count == 3) { continue }\n" +
+    "  if (count > 4) { break }\n" +
+    "  total = total + count\n" +
+    "}\n" +
+    "total\n"
+  expect_program_value(source, @moonwren.Value::number(7.0))
+}
+
+///|
+test "range loops consume their own continue and break" {
+  let source = "var total = 0\n" +
+    "for (item in 1..10) {\n" +
+    "  if (item % 2 == 0) continue\n" +
+    "  if (item > 7) break\n" +
+    "  total = total + item\n" +
+    "}\n" +
+    "total\n"
+  expect_program_value(source, @moonwren.Value::number(16.0))
+}
+
+///|
+test "break exits only the innermost loop" {
+  let source = "var visits = 0\n" +
+    "for (outer in 1..3) {\n" +
+    "  for (inner in 1..3) {\n" +
+    "    if (inner == 2) break\n" +
+    "    visits = visits + 1\n" +
+    "  }\n" +
+    "}\n" +
+    "visits\n"
+  expect_program_value(source, @moonwren.Value::number(3.0))
+}
+
+///|
+test "top-level break and continue produce structured diagnostics" {
+  match @moonwren.run("break\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("break should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.BreakOutsideLoop)
+  }
+  match @moonwren.run("continue\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("continue should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.ContinueOutsideLoop)
+  }
+}
+
+///|
+test "loop control cannot escape a called function" {
+  let source = "var stop = Fn.new { break }\n" +
+    "while (true) { stop.call() }\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("function should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.BreakOutsideLoop)
+  }
+}
+
+///|
+test "loop control cannot escape a called method" {
+  let source = "class Invalid {\n" +
+    "  construct new() {}\n" +
+    "  skip() { continue }\n" +
+    "}\n" +
+    "while (true) { Invalid.new().skip() }\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("method should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.ContinueOutsideLoop)
+  }
+}

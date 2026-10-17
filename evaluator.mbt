@@ -144,6 +144,8 @@ fn RuntimeContext::set_static_field(
 priv enum StatementResult {
   StatementCompleted(Value)
   StatementReturned(Value, SourceSpan)
+  StatementBroken(SourceSpan)
+  StatementContinued(SourceSpan)
   StatementFailed(Diagnostic)
 }
 
@@ -417,6 +419,18 @@ fn invoke_function(
   match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
+    StatementBroken(span) =>
+      evaluation_error(
+        BreakOutsideLoop,
+        "break cannot cross a function boundary",
+        span,
+      )
+    StatementContinued(span) =>
+      evaluation_error(
+        ContinueOutsideLoop,
+        "continue cannot cross a function boundary",
+        span,
+      )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
 }
@@ -520,6 +534,18 @@ fn invoke_user_method(
   match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
+    StatementBroken(span) =>
+      evaluation_error(
+        BreakOutsideLoop,
+        "break cannot cross a method boundary",
+        span,
+      )
+    StatementContinued(span) =>
+      evaluation_error(
+        ContinueOutsideLoop,
+        "continue cannot cross a method boundary",
+        span,
+      )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
 }
@@ -574,6 +600,18 @@ fn invoke_static_method(
   match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
+    StatementBroken(span) =>
+      evaluation_error(
+        BreakOutsideLoop,
+        "break cannot cross a method boundary",
+        span,
+      )
+    StatementContinued(span) =>
+      evaluation_error(
+        ContinueOutsideLoop,
+        "continue cannot cross a method boundary",
+        span,
+      )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
 }
@@ -1166,6 +1204,8 @@ fn execute_statements_in(
     match execute_statement_in(statement, environment, context) {
       StatementCompleted(value) => last = value
       StatementReturned(value, span) => return StatementReturned(value, span)
+      StatementBroken(span) => return StatementBroken(span)
+      StatementContinued(span) => return StatementContinued(span)
       StatementFailed(issue) => return StatementFailed(issue)
     }
   }
@@ -1217,6 +1257,11 @@ fn execute_range_for_in(
         ignore(environment.pop_scope())
         return StatementReturned(value, span)
       }
+      StatementBroken(_) => {
+        ignore(environment.pop_scope())
+        return StatementCompleted(last)
+      }
+      StatementContinued(_) => ()
       StatementFailed(issue) => {
         ignore(environment.pop_scope())
         return StatementFailed(issue)
@@ -1292,6 +1337,8 @@ fn execute_statement_in(
           StatementCompleted(value) => last = value
           StatementReturned(value, span) =>
             return StatementReturned(value, span)
+          StatementBroken(_) => break
+          StatementContinued(_) => continue
           StatementFailed(issue) => return StatementFailed(issue)
         }
       }
@@ -1323,6 +1370,8 @@ fn execute_statement_in(
             EvaluationFailed(issue) => StatementFailed(issue)
           }
       }
+    BreakStatement(span) => StatementBroken(span)
+    ContinueStatement(span) => StatementContinued(span)
     ClassStatement(name, superclass_name, methods, span) => {
       for index = 0; index < methods.length(); index = index + 1 {
         for other = index + 1; other < methods.length(); other = other + 1 {

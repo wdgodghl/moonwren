@@ -801,6 +801,12 @@ fn Parser::statement(self : Parser) -> Stmt {
     self.for_statement(start)
   } else if self.take(ReturnKeyword) {
     self.return_statement(start)
+  } else if self.take(BreakKeyword) {
+    self.finish_statement()
+    BreakStatement(start.span)
+  } else if self.take(ContinueKeyword) {
+    self.finish_statement()
+    ContinueStatement(start.span)
   } else {
     let expression = self.expression()
     let span = expression.span()

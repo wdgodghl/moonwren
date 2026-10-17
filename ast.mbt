@@ -99,6 +99,8 @@ pub(all) enum Stmt {
   WhileStatement(Expr, Stmt, SourceSpan)
   ForStatement(String, Expr, Stmt, SourceSpan)
   ReturnStatement(Expr?, SourceSpan)
+  BreakStatement(SourceSpan)
+  ContinueStatement(SourceSpan)
   ClassStatement(String, String?, Array[MethodDecl], SourceSpan)
 } derive(Eq, Debug)
 
@@ -118,6 +120,8 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | WhileStatement(_, _, span)
     | ForStatement(_, _, _, span)
     | ReturnStatement(_, span)
+    | BreakStatement(span)
+    | ContinueStatement(span)
     | ClassStatement(_, _, _, span) => span
   }
 }
