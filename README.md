@@ -8,9 +8,10 @@ The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
 scope, assignment, conditionals, `while` loops, numeric range `for` loops,
 method and getter calls, captured program output, `System.print`, universal
-`toString`, range metadata getters, and multiline functions with lexical
-closures and early `return`. Classes, fibers, modules, and foreign methods
-follow in later milestones.
+`toString`, range metadata getters, multiline functions with lexical closures,
+early `return`, classes, constructors, instances, fields, methods, getters, and
+`this`. Inheritance, fibers, modules, and foreign methods follow in later
+milestones.
 
 ## Goals
 
@@ -61,6 +62,32 @@ System.print(counter.call()) // 1
 System.print(counter.call()) // 2
 ```
 
+Classes combine persistent instance fields with constructor, method, and getter
+dispatch:
+
+```wren
+class Point {
+  construct new(x, y) {
+    _x = x
+    _y = y
+  }
+
+  move(dx, dy) {
+    _x = _x + dx
+    _y = _y + dy
+  }
+
+  sum { return _x + _y }
+}
+
+var point = Point.new(10, 20)
+point.move(5, 7)
+System.print(point.sum) // 42
+```
+
+The complete version is available in
+[`examples/classes.wren`](examples/classes.wren).
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -84,11 +111,11 @@ editor pane, or another host-provided destination.
 
 ## Project status
 
-MoonWren is not yet a complete Wren implementation. The current method
-dispatcher implements the two `System.print` signatures; general object and
-user-defined method dispatch will arrive with the class runtime. Getter
-dispatch currently covers `toString` on every runtime value and the standard
-`from`, `to`, `min`, `max`, and `isInclusive` range properties. See
+MoonWren is not yet a complete Wren implementation. The method dispatcher
+supports constructor signatures, overloaded instance methods by arity,
+user-defined getters, the two `System.print` signatures, and the standard
+`from`, `to`, `min`, `max`, and `isInclusive` range properties. Static fields,
+static methods, inheritance, and `super` are not implemented yet. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 

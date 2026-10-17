@@ -33,8 +33,10 @@ diagnostic accumulated during the pass.
 
 The expression parser follows precedence levels from unary operators through
 conditional and assignment expressions. Program parsing adds variable
-declarations, blocks, `if` statements, and `while` statements. Unsupported
-syntax is rejected rather than ignored.
+declarations, blocks, `if` statements, `while` statements, functions, and class
+members. Instance fields have dedicated syntax nodes so field access cannot be
+confused with a lexical variable. Unsupported syntax is rejected rather than
+ignored.
 
 ## Runtime
 
@@ -61,10 +63,17 @@ execution distinguishes normal completion, early return, and runtime failure;
 this lets `return` unwind nested blocks and loops without conflating control
 flow with errors.
 
+Class values refer to runtime-local class definitions containing parsed method
+declarations and a captured lexical environment. Each instance has an
+independent field table and a reference to its class. Constructor and method
+calls select a declaration by name and arity, bind `this` and parameters in a
+fresh call scope, and reuse the same return propagation and resource guards as
+functions. Because closures capture that call scope, a closure returned by a
+method can continue to read and update its receiving instance.
+
 ## Extension path
 
-The next runtime layer will generalize the dispatcher for classes and
-instances. Modules, fibers, and
-foreign bindings can build on the same source spans, diagnostics, environments,
-output capture, and execution limits without coupling those features to the
-scanner.
+The next runtime layer will add superclass links, inherited lookup, and
+`super`, followed by static members. Modules, fibers, and foreign bindings can
+build on the same source spans, diagnostics, environments, output capture, and
+execution limits without coupling those features to the scanner.
