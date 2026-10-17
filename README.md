@@ -10,8 +10,8 @@ scope, assignment, conditionals, `while` loops, numeric range `for` loops,
 method and getter calls, captured program output, `System.print`, universal
 `toString`, range metadata getters, multiline functions with lexical closures,
 early `return`, classes, constructors, instances, fields, methods, getters, and
-`this`. Inheritance, fibers, modules, and foreign methods follow in later
-milestones.
+`this`, inheritance, method overriding, `super`, and class relationship checks.
+Static members, fibers, modules, and foreign methods follow in later milestones.
 
 ## Goals
 
@@ -88,6 +88,26 @@ System.print(point.sum) // 42
 The complete version is available in
 [`examples/classes.wren`](examples/classes.wren).
 
+Subclass lookup supports inherited methods and getters, explicit superclass
+constructor calls, overriding, and `super` dispatch:
+
+```wren
+class NamedPoint is Point {
+  construct new(x, y) { super(x, y) }
+
+  sum {
+    return super.sum + 2
+  }
+}
+
+var point = NamedPoint.new(19, 21)
+System.print(point.sum)       // 42
+System.print(point is Point)  // true
+```
+
+See [`examples/inheritance.wren`](examples/inheritance.wren) for a complete
+multi-level example.
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -114,8 +134,9 @@ editor pane, or another host-provided destination.
 MoonWren is not yet a complete Wren implementation. The method dispatcher
 supports constructor signatures, overloaded instance methods by arity,
 user-defined getters, the two `System.print` signatures, and the standard
-`from`, `to`, `min`, `max`, and `isInclusive` range properties. Static fields,
-static methods, inheritance, and `super` are not implemented yet. See
+`from`, `to`, `min`, `max`, and `isInclusive` range properties. Inherited
+lookup advances from each method's declaring class, so multi-level `super`
+calls remain correct. Static fields and static methods are not implemented yet. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 

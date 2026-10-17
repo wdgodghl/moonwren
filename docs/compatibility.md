@@ -14,7 +14,7 @@ implementation idiomatic to MoonBit.
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
 | Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
-| Classes | Partial | Constructors, instances, fields, methods, getters, `this`; inheritance planned |
+| Classes | Partial | Constructors, instances, fields, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
 | Modules | Planned | Imports and module loading hooks |
 | Foreign methods | Planned | Embedding boundary |
@@ -32,4 +32,11 @@ environments. Constructors allocate independent instances, instance fields are
 created on first assignment and default to `null` when unread, and dispatch
 selects methods by name and arity. Closures returned from methods retain both
 the receiving `this` value and access to its fields. Duplicate signatures are
-rejected. Static members, inheritance, and `super` remain unsupported.
+rejected.
+
+Subclass declarations resolve their superclass when executed. Instance method
+and getter lookup walks the superclass chain, constructors call a matching
+parent constructor explicitly through `super(...)`, and overridden members can
+use `super.member`. The `is` operator recognizes both instance and class
+inheritance relationships. Constructors are intentionally not inherited.
+Static members remain unsupported.

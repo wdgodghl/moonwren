@@ -35,8 +35,10 @@ The expression parser follows precedence levels from unary operators through
 conditional and assignment expressions. Program parsing adds variable
 declarations, blocks, `if` statements, `while` statements, functions, and class
 members. Instance fields have dedicated syntax nodes so field access cannot be
-confused with a lexical variable. Unsupported syntax is rejected rather than
-ignored.
+confused with a lexical variable. Class declarations retain an optional
+superclass name, while `super(...)` has a dedicated expression node so it can
+only invoke the matching parent constructor. Unsupported syntax is rejected
+rather than ignored.
 
 ## Runtime
 
@@ -71,9 +73,17 @@ fresh call scope, and reuse the same return propagation and resource guards as
 functions. Because closures capture that call scope, a closure returned by a
 method can continue to read and update its receiving instance.
 
+Class definitions form an acyclic superclass chain because a superclass must
+already resolve to a class value when its subclass is declared. Method lookup
+returns both the declaration and its owning class. Calls bind a `super` handle
+from that owner, rather than from the instance's most-derived class; this keeps
+successive `super` calls correct across three or more inheritance levels.
+Constructors use local-only lookup and explicitly initialize the same instance
+through `super(...)`.
+
 ## Extension path
 
-The next runtime layer will add superclass links, inherited lookup, and
-`super`, followed by static members. Modules, fibers, and foreign bindings can
+The next runtime layer will add static methods and static fields. Modules,
+fibers, and foreign bindings can
 build on the same source spans, diagnostics, environments, output capture, and
 execution limits without coupling those features to the scanner.
