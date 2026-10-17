@@ -12,9 +12,30 @@ priv struct Closure {
 }
 
 ///|
+priv struct ClassDefinition {
+  name : String
+  methods : Array[MethodDecl]
+  environment : Environment
+}
+
+///|
+priv struct InstanceField {
+  name : String
+  mut value : Value
+}
+
+///|
+priv struct Instance {
+  class_identifier : Int
+  fields : Array[InstanceField]
+}
+
+///|
 priv struct RuntimeContext {
   output : Array[String]
   closures : Array[Closure]
+  classes : Array[ClassDefinition]
+  instances : Array[Instance]
   mut steps : Int
   max_steps : Int
   mut call_depth : Int
@@ -26,11 +47,51 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
   {
     output: [],
     closures: [],
+    classes: [],
+    instances: [],
     steps: 0,
     max_steps,
     call_depth: 0,
     max_call_depth: 256,
   }
+}
+
+///|
+fn RuntimeContext::get_instance_field(
+  self : RuntimeContext,
+  identifier : Int,
+  name : String,
+) -> Value? {
+  if identifier < 0 || identifier >= self.instances.length() {
+    return None
+  }
+  for field in self.instances[identifier].fields {
+    if field.name == name {
+      return Some(field.value)
+    }
+  }
+  Some(Value::null())
+}
+
+///|
+fn RuntimeContext::set_instance_field(
+  self : RuntimeContext,
+  identifier : Int,
+  name : String,
+  value : Value,
+) -> Bool {
+  if identifier < 0 || identifier >= self.instances.length() {
+    return false
+  }
+  let fields = self.instances[identifier].fields
+  for field in fields {
+    if field.name == name {
+      field.value = value
+      return true
+    }
+  }
+  fields.push({ name, value, })
+  true
 }
 
 ///|
@@ -252,6 +313,151 @@ fn invoke_function(
 }
 
 ///|
+fn find_method(
+  methods : Array[MethodDecl],
+  name : String,
+  arity : Int,
+  is_constructor : Bool,
+  is_getter : Bool,
+) -> MethodDecl? {
+  for declaration in methods {
+    if declaration.name == name &&
+      declaration.parameters.length() == arity &&
+      declaration.is_constructor == is_constructor &&
+      declaration.is_getter == is_getter {
+      return Some(declaration)
+    }
+  }
+  None
+}
+
+///|
+fn invoke_user_method(
+  instance_identifier : Int,
+  declaration : MethodDecl,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if instance_identifier < 0 ||
+    instance_identifier >= context.instances.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "instance is not available in this runtime",
+      span,
+    )
+  }
+  if context.call_depth >= context.max_call_depth {
+    return evaluation_error(
+      CallStackLimit,
+      "method call depth limit exceeded",
+      span,
+    )
+  }
+  let class_identifier = context.instances[instance_identifier].class_identifier
+  if class_identifier < 0 || class_identifier >= context.classes.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "instance class is not available in this runtime",
+      span,
+    )
+  }
+  let environment = context.classes[class_identifier].environment.capture()
+  environment.push_scope()
+  ignore(environment.bind("this", Value::instance(instance_identifier)))
+  for index = 0; index < declaration.parameters.length(); index = index + 1 {
+    ignore(environment.bind(declaration.parameters[index], arguments[index]))
+  }
+  context.call_depth = context.call_depth + 1
+  let result = execute_statements_in(declaration.body, environment, context)
+  context.call_depth = context.call_depth - 1
+  ignore(environment.pop_scope())
+  match result {
+    StatementCompleted(value) | StatementReturned(value, _) =>
+      EvaluationSucceeded(value)
+    StatementFailed(issue) => EvaluationFailed(issue)
+  }
+}
+
+///|
+fn construct_instance(
+  class_identifier : Int,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if class_identifier < 0 || class_identifier >= context.classes.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "class is not available in this runtime",
+      span,
+    )
+  }
+  let class_definition = context.classes[class_identifier]
+  match
+    find_method(class_definition.methods, name, arguments.length(), true, false) {
+    None =>
+      evaluation_error(
+        UndefinedMethod,
+        "class '\{class_definition.name}' does not implement constructor '\{name}' with \{arguments.length()} arguments",
+        span,
+      )
+    Some(declaration) => {
+      let instance_identifier = context.instances.length()
+      context.instances.push({ class_identifier, fields: [], })
+      match
+        invoke_user_method(
+          instance_identifier, declaration, arguments, span, context,
+        ) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(_) =>
+          EvaluationSucceeded(Value::instance(instance_identifier))
+      }
+    }
+  }
+}
+
+///|
+fn invoke_instance_method(
+  instance_identifier : Int,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if instance_identifier < 0 ||
+    instance_identifier >= context.instances.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "instance is not available in this runtime",
+      span,
+    )
+  }
+  let class_identifier = context.instances[instance_identifier].class_identifier
+  let class_definition = context.classes[class_identifier]
+  match
+    find_method(
+      class_definition.methods,
+      name,
+      arguments.length(),
+      false,
+      false,
+    ) {
+    Some(declaration) =>
+      invoke_user_method(
+        instance_identifier, declaration, arguments, span, context,
+      )
+    None =>
+      evaluation_error(
+        UndefinedMethod,
+        "\{class_definition.name} does not implement method '\{name}' with \{arguments.length()} arguments",
+        span,
+      )
+  }
+}
+
+///|
 fn invoke_method(
   receiver : Value,
   name : String,
@@ -293,6 +499,10 @@ fn invoke_method(
           span,
         )
       }
+    ClassValue(identifier) =>
+      construct_instance(identifier, name, arguments, span, context)
+    InstanceValue(identifier) =>
+      invoke_instance_method(identifier, name, arguments, span, context)
     value =>
       evaluation_error(
         UndefinedMethod,
@@ -307,13 +517,39 @@ fn read_property(
   receiver : Value,
   name : String,
   span : SourceSpan,
+  context : RuntimeContext,
 ) -> EvaluationResult {
-  if name == "toString" {
-    return EvaluationSucceeded(Value::string(receiver.to_text()))
-  }
   match receiver {
+    InstanceValue(identifier) => {
+      if identifier < 0 || identifier >= context.instances.length() {
+        return evaluation_error(
+          UndefinedMethod,
+          "instance is not available in this runtime",
+          span,
+        )
+      }
+      let class_identifier = context.instances[identifier].class_identifier
+      let class_definition = context.classes[class_identifier]
+      match find_method(class_definition.methods, name, 0, false, true) {
+        Some(declaration) =>
+          invoke_user_method(identifier, declaration, [], span, context)
+        None =>
+          if name == "toString" {
+            EvaluationSucceeded(
+              Value::string("\{class_definition.name} instance"),
+            )
+          } else {
+            evaluation_error(
+              UndefinedMethod,
+              "\{class_definition.name} does not implement getter '\{name}'",
+              span,
+            )
+          }
+      }
+    }
     RangeValue(from, to, inclusive) =>
       match name {
+        "toString" => EvaluationSucceeded(Value::string(receiver.to_text()))
         "from" => EvaluationSucceeded(Value::number(from))
         "to" => EvaluationSucceeded(Value::number(to))
         "min" =>
@@ -329,11 +565,15 @@ fn read_property(
           )
       }
     value =>
-      evaluation_error(
-        UndefinedMethod,
-        "\{value.type_name()} does not implement getter '\{name}'",
-        span,
-      )
+      if name == "toString" {
+        EvaluationSucceeded(Value::string(value.to_text()))
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "\{value.type_name()} does not implement getter '\{name}'",
+          span,
+        )
+      }
   }
 }
 
@@ -369,10 +609,53 @@ fn evaluate_expression_in(
             )
           }
       }
+    FieldGet(name, span) =>
+      match environment.get("this") {
+        Some(InstanceValue(identifier)) =>
+          match context.get_instance_field(identifier, name) {
+            Some(value) => EvaluationSucceeded(value)
+            None =>
+              evaluation_error(
+                UndefinedVariable,
+                "instance field '\{name}' is not available",
+                span,
+              )
+          }
+        _ =>
+          evaluation_error(
+            UndefinedVariable,
+            "instance field '\{name}' can only be used inside a method",
+            span,
+          )
+      }
+    FieldAssign(name, expression, span) =>
+      match evaluate_expression_in(expression, environment, context) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(value) =>
+          match environment.get("this") {
+            Some(InstanceValue(identifier)) =>
+              if context.set_instance_field(identifier, name, value) {
+                EvaluationSucceeded(value)
+              } else {
+                evaluation_error(
+                  UndefinedVariable,
+                  "instance field '\{name}' is not available",
+                  span,
+                )
+              }
+            _ =>
+              evaluation_error(
+                UndefinedVariable,
+                "instance field '\{name}' can only be assigned inside a method",
+                span,
+              )
+          }
+      }
     PropertyGet(receiver, name, span) =>
       match evaluate_expression_in(receiver, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
-        EvaluationSucceeded(receiver) => read_property(receiver, name, span)
+        EvaluationSucceeded(receiver) =>
+          read_property(receiver, name, span, context)
       }
     MethodCall(receiver, name, arguments, span) =>
       match evaluate_expression_in(receiver, environment, context) {
@@ -614,6 +897,46 @@ fn execute_statement_in(
             EvaluationFailed(issue) => StatementFailed(issue)
           }
       }
+    ClassStatement(name, methods, span) => {
+      for index = 0; index < methods.length(); index = index + 1 {
+        for other = index + 1; other < methods.length(); other = other + 1 {
+          let left = methods[index]
+          let right = methods[other]
+          if left.name == right.name &&
+            left.parameters.length() == right.parameters.length() &&
+            left.is_constructor == right.is_constructor &&
+            left.is_getter == right.is_getter {
+            return StatementFailed(
+              Diagnostic::new(
+                Runtime,
+                DuplicateMethod,
+                "duplicate method '\{left.name}' with \{left.parameters.length()} parameters",
+                right.span,
+              ),
+            )
+          }
+        }
+      }
+      if !environment.bind(name, Value::null()) {
+        return StatementFailed(
+          Diagnostic::new(
+            Runtime,
+            DuplicateVariable,
+            "variable '\{name}' is already declared in this scope",
+            span,
+          ),
+        )
+      }
+      let identifier = context.classes.length()
+      context.classes.push({
+        name,
+        methods,
+        environment: environment.capture(),
+      })
+      let value = Value::class_value(identifier)
+      ignore(environment.assign(name, value))
+      StatementCompleted(value)
+    }
   }
 }
 

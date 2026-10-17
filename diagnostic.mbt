@@ -25,6 +25,7 @@ pub(all) enum DiagnosticCode {
   ExpectedExpression
   ExpectedToken
   DuplicateVariable
+  DuplicateMethod
   UndefinedVariable
   UndefinedMethod
   InvalidArity

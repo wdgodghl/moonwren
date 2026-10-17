@@ -265,3 +265,156 @@ test "default runtime stops runaway recursion before exhausting the host stack" 
       assert_eq(issues[0].code, @moonwren.CallStackLimit)
   }
 }
+
+///|
+test "classes construct instances and expose state through getters" {
+  let source = "class Point {\n" +
+    "  construct new(x, y) {\n" +
+    "    _x = x\n" +
+    "    _y = y\n" +
+    "  }\n" +
+    "  sum { return _x + _y }\n" +
+    "}\n" +
+    "var point = Point.new(19, 23)\n" +
+    "point.sum\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "instance methods update persistent fields" {
+  let source = "class Counter {\n" +
+    "  construct new(start) { _value = start }\n" +
+    "  add(amount) { _value = _value + amount }\n" +
+    "  value { return _value }\n" +
+    "}\n" +
+    "var counter = Counter.new(40)\n" +
+    "counter.add(2)\n" +
+    "counter.value\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "instances keep independent field storage" {
+  let source = "class Box {\n" +
+    "  construct new(value) { _value = value }\n" +
+    "  value { return _value }\n" +
+    "}\n" +
+    "var first = Box.new(20)\n" +
+    "var second = Box.new(22)\n" +
+    "first.value + second.value\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "this refers to the receiving instance" {
+  let source = "class Identity {\n" +
+    "  construct new() {}\n" +
+    "  self { return this }\n" +
+    "}\n" +
+    "var value = Identity.new()\n" +
+    "value.self == value\n"
+  expect_program_value(source, @moonwren.Value::bool(true))
+}
+
+///|
+test "uninitialized instance fields read as null" {
+  let source = "class Empty {\n" +
+    "  construct new() {}\n" +
+    "  value { return _value }\n" +
+    "}\n" +
+    "Empty.new().value\n"
+  expect_program_value(source, @moonwren.Value::null())
+}
+
+///|
+test "class methods capture their declaration environment" {
+  let source = "var offset = 40\n" +
+    "class Calculator {\n" +
+    "  construct new() {}\n" +
+    "  add(value) { return offset + value }\n" +
+    "}\n" +
+    "Calculator.new().add(2)\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "duplicate method signatures are rejected" {
+  let source = "class Invalid {\n" +
+    "  value { return 1 }\n" +
+    "  value { return 2 }\n" +
+    "}\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("class should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.DuplicateMethod)
+  }
+}
+
+///|
+test "missing constructors and method arities are diagnosed" {
+  match @moonwren.run("class Empty {}\nEmpty.new()\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("construction should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+  let source = "class Box {\n" +
+    "  construct new() {}\n" +
+    "  set(value) { return value }\n" +
+    "}\n" +
+    "Box.new().set()\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("method call should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+}
+
+///|
+test "instance fields are unavailable outside methods" {
+  match @moonwren.run("_value\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("field access should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedVariable)
+  }
+}
+
+///|
+test "instance methods can recurse through this" {
+  let source = "class Counter {\n" +
+    "  construct new() {}\n" +
+    "  count(value) {\n" +
+    "    return value <= 0 ? 0 : 1 + this.count(value - 1)\n" +
+    "  }\n" +
+    "}\n" +
+    "Counter.new().count(42)\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "closures returned by methods retain their receiving instance" {
+  let source = "class Counter {\n" +
+    "  construct new() { _value = 0 }\n" +
+    "  callback {\n" +
+    "    return Fn.new {\n" +
+    "      _value = _value + 1\n" +
+    "      return _value\n" +
+    "    }\n" +
+    "  }\n" +
+    "}\n" +
+    "var callback = Counter.new().callback\n" +
+    "callback.call()\n" +
+    "callback.call()\n"
+  expect_program_value(source, @moonwren.Value::number(2.0))
+}
+
+///|
+test "method dispatch distinguishes signatures by arity" {
+  let source = "class Select {\n" +
+    "  construct new() {}\n" +
+    "  value() { return 20 }\n" +
+    "  value(extra) { return 20 + extra }\n" +
+    "}\n" +
+    "var select = Select.new()\n" +
+    "select.value() + select.value(2)\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}

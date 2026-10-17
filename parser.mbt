@@ -192,7 +192,16 @@ fn Parser::primary(self : Parser) -> Expr {
     Literal(Value::number(parse_number_value(token.lexeme)), token.span)
   } else if self.take(StringLiteral) {
     Literal(Value::string(decode_string(token.lexeme)), token.span)
-  } else if self.take(Identifier) || self.take(Field) || self.take(StaticField) {
+  } else if self.take(Identifier) {
+    Variable(token.lexeme, token.span)
+  } else if self.take(Field) {
+    FieldGet(token.lexeme, token.span)
+  } else if self.take(StaticField) {
+    self.report(
+      UnsupportedFeature,
+      "static fields are not implemented yet",
+      token.span,
+    )
     Variable(token.lexeme, token.span)
   } else if self.take(ThisKeyword) {
     Variable("this", token.span)
@@ -516,10 +525,12 @@ fn Parser::assignment(self : Parser) -> Expr {
     match target {
       Variable(name, target_span) =>
         Assign(name, value, SourceSpan::merge(target_span, value.span()))
+      FieldGet(name, target_span) =>
+        FieldAssign(name, value, SourceSpan::merge(target_span, value.span()))
       _ => {
         self.report(
           UnexpectedToken,
-          "assignment target must be a variable",
+          "assignment target must be a variable or field",
           target.span(),
         )
         target
@@ -663,6 +674,75 @@ fn Parser::return_statement(self : Parser, start : Token) -> Stmt {
 }
 
 ///|
+fn Parser::parameter_list(self : Parser) -> Array[String] {
+  let parameters : Array[String] = []
+  self.skip_newlines()
+  if !self.check(RightParen) {
+    while true {
+      let parameter = self.consume(Identifier, "expected parameter name")
+      parameters.push(parameter.lexeme)
+      self.skip_newlines()
+      if !self.take(Comma) {
+        break
+      }
+      self.skip_newlines()
+    }
+  }
+  ignore(self.consume(RightParen, "expected ')' after parameters"))
+  parameters
+}
+
+///|
+fn Parser::method_declaration(self : Parser) -> MethodDecl {
+  let start = self.current_token()
+  let is_constructor = self.take(ConstructKeyword)
+  let name = self.consume(Identifier, "expected method name")
+  let has_parameters = self.take(LeftParen)
+  let parameters = if has_parameters { self.parameter_list() } else { [] }
+  if is_constructor && !has_parameters {
+    self.report(
+      ExpectedToken,
+      "expected '(' after constructor name",
+      self.current_token().span,
+    )
+  }
+  self.skip_newlines()
+  let opening = self.consume(LeftBrace, "expected '{' before method body")
+  let block = self.block_statement(opening)
+  match block {
+    BlockStatement(body, span) =>
+      {
+        name: name.lexeme,
+        parameters,
+        body,
+        is_constructor,
+        is_getter: !is_constructor && !has_parameters,
+        span: SourceSpan::merge(start.span, span),
+      }
+    _ => abort("method body must be a block")
+  }
+}
+
+///|
+fn Parser::class_declaration(self : Parser, start : Token) -> Stmt {
+  let name = self.consume(Identifier, "expected class name")
+  self.skip_newlines()
+  ignore(self.consume(LeftBrace, "expected '{' after class name"))
+  self.skip_newlines()
+  let methods : Array[MethodDecl] = []
+  while !self.check(RightBrace) && !self.check(Eof) {
+    methods.push(self.method_declaration())
+    self.skip_newlines()
+  }
+  let closing = self.consume(RightBrace, "expected '}' after class body")
+  ClassStatement(
+    name.lexeme,
+    methods,
+    SourceSpan::merge(start.span, closing.span),
+  )
+}
+
+///|
 fn Parser::statement(self : Parser) -> Stmt {
   let start = self.current_token()
   if self.take(LeftBrace) {
@@ -686,7 +766,9 @@ fn Parser::statement(self : Parser) -> Stmt {
 ///|
 fn Parser::declaration(self : Parser) -> Stmt {
   let start = self.current_token()
-  if self.take(VarKeyword) {
+  if self.take(ClassKeyword) {
+    self.class_declaration(start)
+  } else if self.take(VarKeyword) {
     self.variable_declaration(start)
   } else {
     self.statement()

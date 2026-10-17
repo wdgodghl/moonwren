@@ -68,3 +68,43 @@ test "program parser requires statement boundaries" {
       assert_eq(diagnostics[0].code, @moonwren.ExpectedToken)
   }
 }
+
+///|
+test "program parser recognizes classes constructors methods and getters" {
+  let source = "class Point {\n" +
+    "  construct new(x, y) {\n" +
+    "    _x = x\n" +
+    "    _y = y\n" +
+    "  }\n" +
+    "  sum { return _x + _y }\n" +
+    "  move(dx, dy) {\n" +
+    "    _x = _x + dx\n" +
+    "    _y = _y + dy\n" +
+    "  }\n" +
+    "}\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [@moonwren.ClassStatement("Point", declarations, _)]
+    ) => {
+      assert_eq(declarations.length(), 3)
+      assert_true(declarations[0].is_constructor)
+      assert_true(declarations[1].is_getter)
+      assert_eq(declarations[2].parameters, ["dx", "dy"])
+    }
+    _ => fail("expected a class declaration")
+  }
+}
+
+///|
+test "parser distinguishes field access and assignment" {
+  match @moonwren.parse_expression("_value = _value + 1") {
+    @moonwren.ExpressionParsed(
+      @moonwren.FieldAssign(
+        "_value",
+        @moonwren.Binary(@moonwren.FieldGet("_value", _), _, _, _),
+        _
+      )
+    ) => ()
+    _ => fail("expected field assignment")
+  }
+}
