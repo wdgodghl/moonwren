@@ -9,10 +9,12 @@ implementation idiomatic to MoonBit.
 | Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
-| Branching and loops | Partial | `if`, `while`, numeric range `for`, `break`, `continue`; general sequences planned |
+| Branching and loops | Partial | `if`, `while`, range and List `for`, `break`, `continue` |
 | Method and getter calls | Partial | Chaining, signatures by arity, user getters, range getters, `System.print` |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
+| Core `List` class | Partial | Literals, subscripts, mutation methods, count, text, iteration |
+| Core `Map` class | Partial | Literals, subscripts, arbitrary keys, mutation methods, count, text |
 | Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
@@ -48,3 +50,11 @@ through subclasses. Instance and static signatures may coexist.
 `break` and `continue` propagate through nested blocks and conditionals until
 the nearest loop consumes them. Function and method calls form hard control-flow
 boundaries, preventing a callee from changing its caller's loop state.
+
+List and Map values use runtime identity, so two separately allocated
+collections are not equal even when their contents match. Map lookup is
+deterministic and returns `null` for a missing key. A repeated literal key
+replaces the earlier value. List iteration snapshots the elements present when
+the loop begins, which prevents mutation during a loop from silently extending
+that loop. Collection text conversion has a depth bound so recursive structures
+remain printable.

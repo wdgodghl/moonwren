@@ -55,6 +55,15 @@ function calls cannot bypass resource accounting. Numeric range values
 preserve their direction and endpoint mode, allowing `for` statements to
 support both ascending and descending inclusive or exclusive iteration.
 
+List and Map values also carry runtime-local identifiers. Their registries own
+the mutable element arrays and map-entry tables, preserving reference identity
+when a collection is assigned or passed to a function. Map lookup currently
+uses a compact linear table, which keeps equality behavior explicit and is a
+good fit for small script-level maps. Subscript operations validate list
+indexes before mutation and return structured diagnostics for fractional or
+out-of-range indexes. List loops take a shallow snapshot at loop entry, while
+collection text conversion limits nesting depth to handle cycles safely.
+
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.
 Captured environments copy the scope structure while sharing mutable variable
@@ -90,7 +99,7 @@ boundaries convert escaped loop control into structured diagnostics.
 
 ## Extension path
 
-The next runtime layer will add List and Map collection values, literals,
-subscripts, and general sequence iteration. Modules, fibers, and foreign bindings can
-build on the same source spans, diagnostics, environments, output capture, and
-execution limits without coupling those features to the scanner.
+The next runtime layer can extend collection iteration and add more core-class
+methods. Modules, fibers, and foreign bindings can build on the same source
+spans, diagnostics, environments, output capture, and execution limits without
+coupling those features to the scanner.

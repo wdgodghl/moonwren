@@ -11,8 +11,10 @@ method and getter calls, captured program output, `System.print`, universal
 `toString`, range metadata getters, multiline functions with lexical closures,
 early `return`, classes, constructors, instances, fields, methods, getters, and
 `this`, inheritance, method overriding, `super`, class relationship checks,
-static members, and structured `break`/`continue` control flow. Collections,
-fibers, modules, and foreign methods follow in later milestones.
+static members, and structured `break`/`continue` control flow. Collections
+now include List and Map literals, indexed access, mutation, common methods,
+and List iteration. Fibers, modules, and foreign methods follow in later
+milestones.
 
 ## Goals
 
@@ -118,6 +120,26 @@ can cross nested blocks and conditionals, but a called function or method cannot
 accidentally break or continue its caller's loop. See
 [`examples/loop_control.wren`](examples/loop_control.wren).
 
+Lists and maps are mutable reference values. Lists support indexed access,
+`add`, `insert`, `removeAt`, `contains`, `clear`, `count`, and `for` iteration.
+Maps support arbitrary value keys, indexed lookup and update, `containsKey`,
+`remove`, `clear`, and `count`:
+
+```wren
+var scores = {"Ada": 38, "Lin": 40}
+scores["Ada"] = scores["Ada"] + 4
+
+var values = [scores["Ada"], scores["Lin"]]
+values.add(0)
+
+var total = 0
+for (value in values) total = total + value
+System.print(total) // 82
+```
+
+See [`examples/collections.wren`](examples/collections.wren) for a complete
+example including nested collections and removal.
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -144,7 +166,8 @@ editor pane, or another host-provided destination.
 MoonWren is not yet a complete Wren implementation. The method dispatcher
 supports constructor signatures, overloaded instance methods by arity,
 user-defined getters, the two `System.print` signatures, and the standard
-`from`, `to`, `min`, `max`, and `isInclusive` range properties. Inherited
+`from`, `to`, `min`, `max`, and `isInclusive` range properties. Collection
+subscripts produce structured invalid-index and bounds diagnostics. Inherited
 lookup advances from each method's declaring class, so multi-level `super`
 calls remain correct. Static methods, getters, and class-owned fields use the
 same signature and superclass lookup model. See
