@@ -79,11 +79,18 @@ returns both the declaration and its owning class. Calls bind a `super` handle
 from that owner, rather than from the instance's most-derived class; this keeps
 successive `super` calls correct across three or more inheritance levels.
 Constructors use local-only lookup and explicitly initialize the same instance
-through `super(...)`.
+through `super(...)`. Static members use the same resolved-owner model, with a
+field table on each class definition and a separate superclass handle for
+static dispatch.
+
+Statement execution represents normal completion, return, break, continue, and
+failure as distinct results. Blocks propagate those results without guessing
+their destination. Loops consume only break and continue; function and method
+boundaries convert escaped loop control into structured diagnostics.
 
 ## Extension path
 
-The next runtime layer will add static methods and static fields. Modules,
-fibers, and foreign bindings can
+The next runtime layer will add List and Map collection values, literals,
+subscripts, and general sequence iteration. Modules, fibers, and foreign bindings can
 build on the same source spans, diagnostics, environments, output capture, and
 execution limits without coupling those features to the scanner.

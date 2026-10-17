@@ -9,12 +9,12 @@ implementation idiomatic to MoonBit.
 | Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
-| Branching and loops | Partial | `if`, `while`, and numeric range `for`; general sequences planned |
+| Branching and loops | Partial | `if`, `while`, numeric range `for`, `break`, `continue`; general sequences planned |
 | Method and getter calls | Partial | Chaining, signatures by arity, user getters, range getters, `System.print` |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
 | Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
-| Classes | Partial | Constructors, instances, fields, inheritance, overriding, `this`, `super` |
+| Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
 | Modules | Planned | Imports and module loading hooks |
 | Foreign methods | Planned | Embedding boundary |
@@ -39,4 +39,12 @@ and getter lookup walks the superclass chain, constructors call a matching
 parent constructor explicitly through `super(...)`, and overridden members can
 use `super.member`. The `is` operator recognizes both instance and class
 inheritance relationships. Constructors are intentionally not inherited.
-Static members remain unsupported.
+
+Static methods and getters dispatch on class values and support inheritance,
+overriding, dynamic `this`, and `super`. Static `__fields` are owned by the
+method's declaring class, initialized on first assignment, and shared by calls
+through subclasses. Instance and static signatures may coexist.
+
+`break` and `continue` propagate through nested blocks and conditionals until
+the nearest loop consumes them. Function and method calls form hard control-flow
+boundaries, preventing a callee from changing its caller's loop state.

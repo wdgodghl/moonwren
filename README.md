@@ -10,8 +10,9 @@ scope, assignment, conditionals, `while` loops, numeric range `for` loops,
 method and getter calls, captured program output, `System.print`, universal
 `toString`, range metadata getters, multiline functions with lexical closures,
 early `return`, classes, constructors, instances, fields, methods, getters, and
-`this`, inheritance, method overriding, `super`, and class relationship checks.
-Static members, fibers, modules, and foreign methods follow in later milestones.
+`this`, inheritance, method overriding, `super`, class relationship checks,
+static members, and structured `break`/`continue` control flow. Collections,
+fibers, modules, and foreign methods follow in later milestones.
 
 ## Goals
 
@@ -108,6 +109,15 @@ System.print(point is Point)  // true
 See [`examples/inheritance.wren`](examples/inheritance.wren) for a complete
 multi-level example.
 
+Static methods and getters share class-owned `__fields`, participate in
+inheritance, and support dynamic `this` plus declaring-class `super` dispatch.
+See [`examples/static_members.wren`](examples/static_members.wren).
+
+Both `while` and range `for` loops support `break` and `continue`. Loop control
+can cross nested blocks and conditionals, but a called function or method cannot
+accidentally break or continue its caller's loop. See
+[`examples/loop_control.wren`](examples/loop_control.wren).
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -136,7 +146,8 @@ supports constructor signatures, overloaded instance methods by arity,
 user-defined getters, the two `System.print` signatures, and the standard
 `from`, `to`, `min`, `max`, and `isInclusive` range properties. Inherited
 lookup advances from each method's declaring class, so multi-level `super`
-calls remain correct. Static fields and static methods are not implemented yet. See
+calls remain correct. Static methods, getters, and class-owned fields use the
+same signature and superclass lookup model. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
 matrix and planned order of implementation.
 
