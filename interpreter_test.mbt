@@ -528,3 +528,83 @@ test "missing superclass members produce structured diagnostics" {
       assert_eq(issues[0].code, @moonwren.UndefinedMethod)
   }
 }
+
+///|
+test "static methods and getters retain class state" {
+  let source = "class Registry {\n" +
+    "  static put(value) { __value = value }\n" +
+    "  static value { return __value }\n" +
+    "}\n" +
+    "Registry.put(42)\n" +
+    "Registry.value\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "uninitialized static fields read as null" {
+  let source = "class Registry {\n" +
+    "  static value { return __value }\n" +
+    "}\n" +
+    "Registry.value\n"
+  expect_program_value(source, @moonwren.Value::null())
+}
+
+///|
+test "static methods are inherited and can be overridden" {
+  let source = "class Base {\n" +
+    "  static value() { return 20 }\n" +
+    "  static total() { return this.value() }\n" +
+    "}\n" +
+    "class Child is Base {\n" +
+    "  static value() { return super.value() + 2 }\n" +
+    "}\n" +
+    "Child.total()\n"
+  expect_program_value(source, @moonwren.Value::number(22.0))
+}
+
+///|
+test "inherited static fields belong to their declaring class" {
+  let source = "class Base {\n" +
+    "  static increment() { __count = __count == null ? 1 : __count + 1 }\n" +
+    "  static count { return __count }\n" +
+    "}\n" +
+    "class Child is Base {}\n" +
+    "Base.increment()\n" +
+    "Child.increment()\n" +
+    "Base.count\n"
+  expect_program_value(source, @moonwren.Value::number(2.0))
+}
+
+///|
+test "instance and static signatures can coexist" {
+  let source = "class Both {\n" +
+    "  construct new() {}\n" +
+    "  value() { return 20 }\n" +
+    "  static value() { return 22 }\n" +
+    "}\n" +
+    "Both.new().value() + Both.value()\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "static fields are rejected outside static methods" {
+  let source = "class Invalid {\n" +
+    "  construct new() {}\n" +
+    "  value { return __value }\n" +
+    "}\n" +
+    "Invalid.new().value\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("field access should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedVariable)
+  }
+}
+
+///|
+test "constructors cannot be declared static" {
+  match @moonwren.run("class Invalid { static construct new() {} }\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("class should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UnexpectedToken)
+  }
+}

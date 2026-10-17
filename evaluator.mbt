@@ -17,6 +17,7 @@ priv struct ClassDefinition {
   superclass : Int?
   methods : Array[MethodDecl]
   environment : Environment
+  static_fields : Array[InstanceField]
 }
 
 ///|
@@ -59,7 +60,7 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
     steps: 0,
     max_steps,
     call_depth: 0,
-    max_call_depth: 256,
+    max_call_depth: 64,
   }
 }
 
@@ -91,6 +92,44 @@ fn RuntimeContext::set_instance_field(
     return false
   }
   let fields = self.instances[identifier].fields
+  for field in fields {
+    if field.name == name {
+      field.value = value
+      return true
+    }
+  }
+  fields.push({ name, value, })
+  true
+}
+
+///|
+fn RuntimeContext::get_static_field(
+  self : RuntimeContext,
+  class_identifier : Int,
+  name : String,
+) -> Value? {
+  if class_identifier < 0 || class_identifier >= self.classes.length() {
+    return None
+  }
+  for field in self.classes[class_identifier].static_fields {
+    if field.name == name {
+      return Some(field.value)
+    }
+  }
+  Some(Value::null())
+}
+
+///|
+fn RuntimeContext::set_static_field(
+  self : RuntimeContext,
+  class_identifier : Int,
+  name : String,
+  value : Value,
+) -> Bool {
+  if class_identifier < 0 || class_identifier >= self.classes.length() {
+    return false
+  }
+  let fields = self.classes[class_identifier].static_fields
   for field in fields {
     if field.name == name {
       field.value = value
@@ -390,6 +429,7 @@ fn find_method_in_class(
   arity : Int,
   is_constructor : Bool,
   is_getter : Bool,
+  is_static : Bool,
 ) -> ResolvedMethod? {
   if class_identifier < 0 || class_identifier >= context.classes.length() {
     return None
@@ -399,7 +439,8 @@ fn find_method_in_class(
     if declaration.name == name &&
       declaration.parameters.length() == arity &&
       declaration.is_constructor == is_constructor &&
-      declaration.is_getter == is_getter {
+      declaration.is_getter == is_getter &&
+      declaration.is_static == is_static {
       return Some({ declaration, owner_identifier: class_identifier, })
     }
   }
@@ -407,7 +448,7 @@ fn find_method_in_class(
     match class_definition.superclass {
       Some(superclass) =>
         return find_method_in_class(
-          context, superclass, name, arity, false, is_getter,
+          context, superclass, name, arity, false, is_getter, is_static,
         )
       None => ()
     }
@@ -484,6 +525,60 @@ fn invoke_user_method(
 }
 
 ///|
+fn invoke_static_method(
+  receiver_class : Int,
+  resolved : ResolvedMethod,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if receiver_class < 0 ||
+    receiver_class >= context.classes.length() ||
+    resolved.owner_identifier < 0 ||
+    resolved.owner_identifier >= context.classes.length() {
+    return evaluation_error(
+      UndefinedMethod,
+      "class is not available in this runtime",
+      span,
+    )
+  }
+  if context.call_depth >= context.max_call_depth {
+    return evaluation_error(
+      CallStackLimit,
+      "static method call depth limit exceeded",
+      span,
+    )
+  }
+  let declaration = resolved.declaration
+  let owner = context.classes[resolved.owner_identifier]
+  let environment = owner.environment.capture()
+  environment.push_scope()
+  ignore(environment.bind("this", Value::class_value(receiver_class)))
+  ignore(
+    environment.bind("$class", Value::class_value(resolved.owner_identifier)),
+  )
+  match owner.superclass {
+    Some(superclass) =>
+      ignore(
+        environment.bind("$super", SuperClassValue(superclass, receiver_class)),
+      )
+    None => ()
+  }
+  for index = 0; index < declaration.parameters.length(); index = index + 1 {
+    ignore(environment.bind(declaration.parameters[index], arguments[index]))
+  }
+  context.call_depth = context.call_depth + 1
+  let result = execute_statements_in(declaration.body, environment, context)
+  context.call_depth = context.call_depth - 1
+  ignore(environment.pop_scope())
+  match result {
+    StatementCompleted(value) | StatementReturned(value, _) =>
+      EvaluationSucceeded(value)
+    StatementFailed(issue) => EvaluationFailed(issue)
+  }
+}
+
+///|
 fn construct_instance(
   class_identifier : Int,
   name : String,
@@ -506,6 +601,7 @@ fn construct_instance(
       name,
       arguments.length(),
       true,
+      false,
       false,
     ) {
     None =>
@@ -553,6 +649,7 @@ fn invoke_super_constructor(
       arguments.length(),
       true,
       false,
+      false,
     ) {
     Some(resolved) =>
       match
@@ -596,6 +693,7 @@ fn invoke_instance_method(
       class_identifier,
       name,
       arguments.length(),
+      false,
       false,
       false,
     ) {
@@ -655,7 +753,20 @@ fn invoke_method(
         )
       }
     ClassValue(identifier) =>
-      construct_instance(identifier, name, arguments, span, context)
+      match
+        find_method_in_class(
+          context,
+          identifier,
+          name,
+          arguments.length(),
+          false,
+          false,
+          true,
+        ) {
+        Some(resolved) =>
+          invoke_static_method(identifier, resolved, arguments, span, context)
+        None => construct_instance(identifier, name, arguments, span, context)
+      }
     InstanceValue(identifier) =>
       invoke_instance_method(identifier, name, arguments, span, context)
     SuperValue(superclass, instance_identifier, _) =>
@@ -667,6 +778,7 @@ fn invoke_method(
           arguments.length(),
           false,
           false,
+          false,
         ) {
         Some(resolved) =>
           invoke_user_method(
@@ -676,6 +788,28 @@ fn invoke_method(
           evaluation_error(
             UndefinedMethod,
             "superclass does not implement method '\{name}' with \{arguments.length()} arguments",
+            span,
+          )
+      }
+    SuperClassValue(superclass, receiver_class) =>
+      match
+        find_method_in_class(
+          context,
+          superclass,
+          name,
+          arguments.length(),
+          false,
+          false,
+          true,
+        ) {
+        Some(resolved) =>
+          invoke_static_method(
+            receiver_class, resolved, arguments, span, context,
+          )
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "superclass does not implement static method '\{name}' with \{arguments.length()} arguments",
             span,
           )
       }
@@ -707,7 +841,9 @@ fn read_property(
       let class_identifier = context.instances[identifier].class_identifier
       let class_definition = context.classes[class_identifier]
       match
-        find_method_in_class(context, class_identifier, name, 0, false, true) {
+        find_method_in_class(
+          context, class_identifier, name, 0, false, true, false,
+        ) {
         Some(resolved) =>
           invoke_user_method(identifier, resolved, [], span, context)
         None =>
@@ -725,13 +861,42 @@ fn read_property(
       }
     }
     SuperValue(superclass, instance_identifier, _) =>
-      match find_method_in_class(context, superclass, name, 0, false, true) {
+      match
+        find_method_in_class(context, superclass, name, 0, false, true, false) {
         Some(resolved) =>
           invoke_user_method(instance_identifier, resolved, [], span, context)
         None =>
           evaluation_error(
             UndefinedMethod,
             "superclass does not implement getter '\{name}'",
+            span,
+          )
+      }
+    ClassValue(identifier) =>
+      match
+        find_method_in_class(context, identifier, name, 0, false, true, true) {
+        Some(resolved) =>
+          invoke_static_method(identifier, resolved, [], span, context)
+        None =>
+          if name == "toString" {
+            EvaluationSucceeded(Value::string(context.classes[identifier].name))
+          } else {
+            evaluation_error(
+              UndefinedMethod,
+              "\{context.classes[identifier].name} does not implement static getter '\{name}'",
+              span,
+            )
+          }
+      }
+    SuperClassValue(superclass, receiver_class) =>
+      match
+        find_method_in_class(context, superclass, name, 0, false, true, true) {
+        Some(resolved) =>
+          invoke_static_method(receiver_class, resolved, [], span, context)
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "superclass does not implement static getter '\{name}'",
             span,
           )
       }
@@ -835,6 +1000,48 @@ fn evaluate_expression_in(
               evaluation_error(
                 UndefinedVariable,
                 "instance field '\{name}' can only be assigned inside a method",
+                span,
+              )
+          }
+      }
+    StaticFieldGet(name, span) =>
+      match environment.get("$class") {
+        Some(ClassValue(identifier)) =>
+          match context.get_static_field(identifier, name) {
+            Some(value) => EvaluationSucceeded(value)
+            None =>
+              evaluation_error(
+                UndefinedVariable,
+                "static field '\{name}' is not available",
+                span,
+              )
+          }
+        _ =>
+          evaluation_error(
+            UndefinedVariable,
+            "static field '\{name}' can only be used inside a static method",
+            span,
+          )
+      }
+    StaticFieldAssign(name, expression, span) =>
+      match evaluate_expression_in(expression, environment, context) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(value) =>
+          match environment.get("$class") {
+            Some(ClassValue(identifier)) =>
+              if context.set_static_field(identifier, name, value) {
+                EvaluationSucceeded(value)
+              } else {
+                evaluation_error(
+                  UndefinedVariable,
+                  "static field '\{name}' is not available",
+                  span,
+                )
+              }
+            _ =>
+              evaluation_error(
+                UndefinedVariable,
+                "static field '\{name}' can only be assigned inside a static method",
                 span,
               )
           }
@@ -1124,7 +1331,8 @@ fn execute_statement_in(
           if left.name == right.name &&
             left.parameters.length() == right.parameters.length() &&
             left.is_constructor == right.is_constructor &&
-            left.is_getter == right.is_getter {
+            left.is_getter == right.is_getter &&
+            left.is_static == right.is_static {
             return StatementFailed(
               Diagnostic::new(
                 Runtime,
@@ -1177,6 +1385,7 @@ fn execute_statement_in(
         superclass,
         methods,
         environment: environment.capture(),
+        static_fields: [],
       })
       let value = Value::class_value(identifier)
       ignore(environment.assign(name, value))

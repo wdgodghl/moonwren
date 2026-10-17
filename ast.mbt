@@ -50,6 +50,8 @@ pub(all) enum Expr {
   Assign(String, Expr, SourceSpan)
   FieldGet(String, SourceSpan)
   FieldAssign(String, Expr, SourceSpan)
+  StaticFieldGet(String, SourceSpan)
+  StaticFieldAssign(String, Expr, SourceSpan)
   PropertyGet(Expr, String, SourceSpan)
   MethodCall(Expr, String, Array[Expr], SourceSpan)
   SuperConstructorCall(Array[Expr], SourceSpan)
@@ -74,6 +76,8 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | Assign(_, _, span)
     | FieldGet(_, span)
     | FieldAssign(_, _, span)
+    | StaticFieldGet(_, span)
+    | StaticFieldAssign(_, _, span)
     | PropertyGet(_, _, span)
     | MethodCall(_, _, _, span)
     | SuperConstructorCall(_, span)
@@ -126,6 +130,7 @@ pub(all) struct MethodDecl {
   body : Array[Stmt]
   is_constructor : Bool
   is_getter : Bool
+  is_static : Bool
   span : SourceSpan
 } derive(Eq, Debug)
 

@@ -197,12 +197,7 @@ fn Parser::primary(self : Parser) -> Expr {
   } else if self.take(Field) {
     FieldGet(token.lexeme, token.span)
   } else if self.take(StaticField) {
-    self.report(
-      UnsupportedFeature,
-      "static fields are not implemented yet",
-      token.span,
-    )
-    Variable(token.lexeme, token.span)
+    StaticFieldGet(token.lexeme, token.span)
   } else if self.take(ThisKeyword) {
     Variable("this", token.span)
   } else if self.take(SuperKeyword) {
@@ -559,6 +554,12 @@ fn Parser::assignment(self : Parser) -> Expr {
         Assign(name, value, SourceSpan::merge(target_span, value.span()))
       FieldGet(name, target_span) =>
         FieldAssign(name, value, SourceSpan::merge(target_span, value.span()))
+      StaticFieldGet(name, target_span) =>
+        StaticFieldAssign(
+          name,
+          value,
+          SourceSpan::merge(target_span, value.span()),
+        )
       _ => {
         self.report(
           UnexpectedToken,
@@ -727,7 +728,11 @@ fn Parser::parameter_list(self : Parser) -> Array[String] {
 ///|
 fn Parser::method_declaration(self : Parser) -> MethodDecl {
   let start = self.current_token()
+  let is_static = self.take(StaticKeyword)
   let is_constructor = self.take(ConstructKeyword)
+  if is_static && is_constructor {
+    self.report(UnexpectedToken, "constructors cannot be static", start.span)
+  }
   let name = self.consume(Identifier, "expected method name")
   let has_parameters = self.take(LeftParen)
   let parameters = if has_parameters { self.parameter_list() } else { [] }
@@ -749,6 +754,7 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
         body,
         is_constructor,
         is_getter: !is_constructor && !has_parameters,
+        is_static,
         span: SourceSpan::merge(start.span, span),
       }
     _ => abort("method body must be a block")

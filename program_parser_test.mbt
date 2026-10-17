@@ -140,3 +140,30 @@ test "parser distinguishes field access and assignment" {
     _ => fail("expected field assignment")
   }
 }
+
+///|
+test "parser records static methods getters and fields" {
+  let source = "class Registry {\n" +
+    "  static put(value) { __value = value }\n" +
+    "  static value { return __value }\n" +
+    "}\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [@moonwren.ClassStatement("Registry", None, [put, value], _)]
+    ) => {
+      assert_true(put.is_static)
+      assert_true(value.is_static)
+      assert_true(value.is_getter)
+      match put.body {
+        [
+          @moonwren.ExpressionStatement(
+            @moonwren.StaticFieldAssign("__value", _, _),
+            _
+          ),
+        ] => ()
+        _ => fail("expected static field assignment")
+      }
+    }
+    _ => fail("expected static declarations")
+  }
+}
