@@ -14,8 +14,15 @@ priv struct Closure {
 ///|
 priv struct ClassDefinition {
   name : String
+  superclass : Int?
   methods : Array[MethodDecl]
   environment : Environment
+}
+
+///|
+priv struct ResolvedMethod {
+  declaration : MethodDecl
+  owner_identifier : Int
 }
 
 ///|
@@ -268,6 +275,69 @@ fn evaluate_binary_values(
 }
 
 ///|
+fn class_is_subclass(
+  context : RuntimeContext,
+  candidate : Int,
+  target : Int,
+) -> Bool {
+  let mut current = Some(candidate)
+  while true {
+    match current {
+      None => return false
+      Some(identifier) => {
+        if identifier == target {
+          return true
+        }
+        if identifier < 0 || identifier >= context.classes.length() {
+          return false
+        }
+        current = context.classes[identifier].superclass
+      }
+    }
+  }
+  false
+}
+
+///|
+fn evaluate_is_type(
+  value : Value,
+  type_value : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  match type_value {
+    ClassValue(target) =>
+      match value {
+        InstanceValue(identifier) =>
+          if identifier < 0 || identifier >= context.instances.length() {
+            EvaluationSucceeded(Value::bool(false))
+          } else {
+            EvaluationSucceeded(
+              Value::bool(
+                class_is_subclass(
+                  context,
+                  context.instances[identifier].class_identifier,
+                  target,
+                ),
+              ),
+            )
+          }
+        ClassValue(candidate) =>
+          EvaluationSucceeded(
+            Value::bool(class_is_subclass(context, candidate, target)),
+          )
+        _ => EvaluationSucceeded(Value::bool(false))
+      }
+    value =>
+      evaluation_error(
+        InvalidOperand,
+        "right operand of 'is' must be a Class, received \{value.type_name()}",
+        span,
+      )
+  }
+}
+
+///|
 fn invoke_function(
   identifier : Int,
   arguments : Array[Value],
@@ -313,19 +383,33 @@ fn invoke_function(
 }
 
 ///|
-fn find_method(
-  methods : Array[MethodDecl],
+fn find_method_in_class(
+  context : RuntimeContext,
+  class_identifier : Int,
   name : String,
   arity : Int,
   is_constructor : Bool,
   is_getter : Bool,
-) -> MethodDecl? {
-  for declaration in methods {
+) -> ResolvedMethod? {
+  if class_identifier < 0 || class_identifier >= context.classes.length() {
+    return None
+  }
+  let class_definition = context.classes[class_identifier]
+  for declaration in class_definition.methods {
     if declaration.name == name &&
       declaration.parameters.length() == arity &&
       declaration.is_constructor == is_constructor &&
       declaration.is_getter == is_getter {
-      return Some(declaration)
+      return Some({ declaration, owner_identifier: class_identifier, })
+    }
+  }
+  if !is_constructor {
+    match class_definition.superclass {
+      Some(superclass) =>
+        return find_method_in_class(
+          context, superclass, name, arity, false, is_getter,
+        )
+      None => ()
     }
   }
   None
@@ -334,7 +418,7 @@ fn find_method(
 ///|
 fn invoke_user_method(
   instance_identifier : Int,
-  declaration : MethodDecl,
+  resolved : ResolvedMethod,
   arguments : Array[Value],
   span : SourceSpan,
   context : RuntimeContext,
@@ -354,17 +438,37 @@ fn invoke_user_method(
       span,
     )
   }
-  let class_identifier = context.instances[instance_identifier].class_identifier
-  if class_identifier < 0 || class_identifier >= context.classes.length() {
+  if resolved.owner_identifier < 0 ||
+    resolved.owner_identifier >= context.classes.length() {
     return evaluation_error(
       UndefinedMethod,
       "instance class is not available in this runtime",
       span,
     )
   }
-  let environment = context.classes[class_identifier].environment.capture()
+  let declaration = resolved.declaration
+  let owner = context.classes[resolved.owner_identifier]
+  let environment = owner.environment.capture()
   environment.push_scope()
   ignore(environment.bind("this", Value::instance(instance_identifier)))
+  match owner.superclass {
+    Some(superclass) =>
+      ignore(
+        environment.bind(
+          "$super",
+          SuperValue(
+            superclass,
+            instance_identifier,
+            if declaration.is_constructor {
+              declaration.name
+            } else {
+              ""
+            },
+          ),
+        ),
+      )
+    None => ()
+  }
   for index = 0; index < declaration.parameters.length(); index = index + 1 {
     ignore(environment.bind(declaration.parameters[index], arguments[index]))
   }
@@ -396,25 +500,75 @@ fn construct_instance(
   }
   let class_definition = context.classes[class_identifier]
   match
-    find_method(class_definition.methods, name, arguments.length(), true, false) {
+    find_method_in_class(
+      context,
+      class_identifier,
+      name,
+      arguments.length(),
+      true,
+      false,
+    ) {
     None =>
       evaluation_error(
         UndefinedMethod,
         "class '\{class_definition.name}' does not implement constructor '\{name}' with \{arguments.length()} arguments",
         span,
       )
-    Some(declaration) => {
+    Some(resolved) => {
       let instance_identifier = context.instances.length()
       context.instances.push({ class_identifier, fields: [], })
       match
         invoke_user_method(
-          instance_identifier, declaration, arguments, span, context,
+          instance_identifier, resolved, arguments, span, context,
         ) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
         EvaluationSucceeded(_) =>
           EvaluationSucceeded(Value::instance(instance_identifier))
       }
     }
+  }
+}
+
+///|
+fn invoke_super_constructor(
+  superclass : Int,
+  instance_identifier : Int,
+  constructor_name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if constructor_name == "" {
+    return evaluation_error(
+      UndefinedMethod,
+      "superclass constructors can only be called from a constructor",
+      span,
+    )
+  }
+  match
+    find_method_in_class(
+      context,
+      superclass,
+      constructor_name,
+      arguments.length(),
+      true,
+      false,
+    ) {
+    Some(resolved) =>
+      match
+        invoke_user_method(
+          instance_identifier, resolved, arguments, span, context,
+        ) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(_) =>
+          EvaluationSucceeded(Value::instance(instance_identifier))
+      }
+    None =>
+      evaluation_error(
+        UndefinedMethod,
+        "superclass does not implement constructor '\{constructor_name}' with \{arguments.length()} arguments",
+        span,
+      )
   }
 }
 
@@ -437,16 +591,17 @@ fn invoke_instance_method(
   let class_identifier = context.instances[instance_identifier].class_identifier
   let class_definition = context.classes[class_identifier]
   match
-    find_method(
-      class_definition.methods,
+    find_method_in_class(
+      context,
+      class_identifier,
       name,
       arguments.length(),
       false,
       false,
     ) {
-    Some(declaration) =>
+    Some(resolved) =>
       invoke_user_method(
-        instance_identifier, declaration, arguments, span, context,
+        instance_identifier, resolved, arguments, span, context,
       )
     None =>
       evaluation_error(
@@ -503,6 +658,27 @@ fn invoke_method(
       construct_instance(identifier, name, arguments, span, context)
     InstanceValue(identifier) =>
       invoke_instance_method(identifier, name, arguments, span, context)
+    SuperValue(superclass, instance_identifier, _) =>
+      match
+        find_method_in_class(
+          context,
+          superclass,
+          name,
+          arguments.length(),
+          false,
+          false,
+        ) {
+        Some(resolved) =>
+          invoke_user_method(
+            instance_identifier, resolved, arguments, span, context,
+          )
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "superclass does not implement method '\{name}' with \{arguments.length()} arguments",
+            span,
+          )
+      }
     value =>
       evaluation_error(
         UndefinedMethod,
@@ -530,9 +706,10 @@ fn read_property(
       }
       let class_identifier = context.instances[identifier].class_identifier
       let class_definition = context.classes[class_identifier]
-      match find_method(class_definition.methods, name, 0, false, true) {
-        Some(declaration) =>
-          invoke_user_method(identifier, declaration, [], span, context)
+      match
+        find_method_in_class(context, class_identifier, name, 0, false, true) {
+        Some(resolved) =>
+          invoke_user_method(identifier, resolved, [], span, context)
         None =>
           if name == "toString" {
             EvaluationSucceeded(
@@ -547,6 +724,17 @@ fn read_property(
           }
       }
     }
+    SuperValue(superclass, instance_identifier, _) =>
+      match find_method_in_class(context, superclass, name, 0, false, true) {
+        Some(resolved) =>
+          invoke_user_method(instance_identifier, resolved, [], span, context)
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "superclass does not implement getter '\{name}'",
+            span,
+          )
+      }
     RangeValue(from, to, inclusive) =>
       match name {
         "toString" => EvaluationSucceeded(Value::string(receiver.to_text()))
@@ -671,6 +859,27 @@ fn evaluate_expression_in(
           invoke_method(receiver, name, values, span, context)
         }
       }
+    SuperConstructorCall(arguments, span) => {
+      let values : Array[Value] = []
+      for argument in arguments {
+        match evaluate_expression_in(argument, environment, context) {
+          EvaluationFailed(issue) => return EvaluationFailed(issue)
+          EvaluationSucceeded(value) => values.push(value)
+        }
+      }
+      match environment.get("$super") {
+        Some(SuperValue(superclass, instance_identifier, constructor_name)) =>
+          invoke_super_constructor(
+            superclass, instance_identifier, constructor_name, values, span, context,
+          )
+        _ =>
+          evaluation_error(
+            UndefinedMethod,
+            "super can only be used in a subclass method",
+            span,
+          )
+      }
+    }
     FunctionLiteral(parameters, body, _) => {
       let identifier = context.closures.length()
       context.closures.push({
@@ -705,6 +914,16 @@ fn evaluate_expression_in(
             evaluate_expression_in(right, environment, context)
           }
         EvaluationFailed(issue) => EvaluationFailed(issue)
+      }
+    Binary(left, IsType, right, span) =>
+      match evaluate_expression_in(left, environment, context) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(left_value) =>
+          match evaluate_expression_in(right, environment, context) {
+            EvaluationFailed(issue) => EvaluationFailed(issue)
+            EvaluationSucceeded(right_value) =>
+              evaluate_is_type(left_value, right_value, span, context)
+          }
       }
     Binary(left, operator, right, span) =>
       match evaluate_expression_in(left, environment, context) {
@@ -897,7 +1116,7 @@ fn execute_statement_in(
             EvaluationFailed(issue) => StatementFailed(issue)
           }
       }
-    ClassStatement(name, methods, span) => {
+    ClassStatement(name, superclass_name, methods, span) => {
       for index = 0; index < methods.length(); index = index + 1 {
         for other = index + 1; other < methods.length(); other = other + 1 {
           let left = methods[index]
@@ -927,9 +1146,35 @@ fn execute_statement_in(
           ),
         )
       }
+      let superclass = match superclass_name {
+        None => None
+        Some(superclass_name) =>
+          match environment.get(superclass_name) {
+            Some(ClassValue(identifier)) => Some(identifier)
+            Some(value) =>
+              return StatementFailed(
+                Diagnostic::new(
+                  Runtime,
+                  InvalidSuperclass,
+                  "superclass '\{superclass_name}' must be a Class, received \{value.type_name()}",
+                  span,
+                ),
+              )
+            None =>
+              return StatementFailed(
+                Diagnostic::new(
+                  Runtime,
+                  InvalidSuperclass,
+                  "undefined superclass '\{superclass_name}'",
+                  span,
+                ),
+              )
+          }
+      }
       let identifier = context.classes.length()
       context.classes.push({
         name,
+        superclass,
         methods,
         environment: environment.capture(),
       })

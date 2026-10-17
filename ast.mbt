@@ -52,6 +52,7 @@ pub(all) enum Expr {
   FieldAssign(String, Expr, SourceSpan)
   PropertyGet(Expr, String, SourceSpan)
   MethodCall(Expr, String, Array[Expr], SourceSpan)
+  SuperConstructorCall(Array[Expr], SourceSpan)
   FunctionLiteral(Array[String], Array[Stmt], SourceSpan)
   Unary(UnaryOperator, Expr, SourceSpan)
   Binary(Expr, BinaryOperator, Expr, SourceSpan)
@@ -75,6 +76,7 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | FieldAssign(_, _, span)
     | PropertyGet(_, _, span)
     | MethodCall(_, _, _, span)
+    | SuperConstructorCall(_, span)
     | FunctionLiteral(_, _, span)
     | Unary(_, _, span)
     | Binary(_, _, _, span)
@@ -93,7 +95,7 @@ pub(all) enum Stmt {
   WhileStatement(Expr, Stmt, SourceSpan)
   ForStatement(String, Expr, Stmt, SourceSpan)
   ReturnStatement(Expr?, SourceSpan)
-  ClassStatement(String, Array[MethodDecl], SourceSpan)
+  ClassStatement(String, String?, Array[MethodDecl], SourceSpan)
 } derive(Eq, Debug)
 
 ///|
@@ -112,7 +114,7 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | WhileStatement(_, _, span)
     | ForStatement(_, _, _, span)
     | ReturnStatement(_, span)
-    | ClassStatement(_, _, span) => span
+    | ClassStatement(_, _, _, span) => span
   }
 }
 

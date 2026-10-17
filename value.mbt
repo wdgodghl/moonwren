@@ -9,6 +9,7 @@ pub(all) enum Value {
   FunctionValue(Int)
   ClassValue(Int)
   InstanceValue(Int)
+  SuperValue(Int, Int, String)
   SystemValue
 } derive(Eq, Debug)
 
@@ -83,6 +84,7 @@ pub fn Value::type_name(self : Value) -> String {
     FunctionValue(_) => "Fn"
     ClassValue(_) => "Class"
     InstanceValue(_) => "Instance"
+    SuperValue(_, _, _) => "Super"
     SystemValue => "System"
   }
 }
@@ -101,6 +103,7 @@ pub fn Value::to_text(self : Value) -> String {
     FunctionValue(_) => "<fn>"
     ClassValue(_) => "<class>"
     InstanceValue(_) => "<instance>"
+    SuperValue(_, _, _) => "<super>"
     SystemValue => "System"
   }
 }

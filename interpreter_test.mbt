@@ -418,3 +418,113 @@ test "method dispatch distinguishes signatures by arity" {
     "select.value() + select.value(2)\n"
   expect_program_value(source, @moonwren.Value::number(42.0))
 }
+
+///|
+test "subclasses inherit methods getters and initialized fields" {
+  let source = "class Base {\n" +
+    "  construct new(value) { _value = value }\n" +
+    "  add(amount) { _value = _value + amount }\n" +
+    "  value { return _value }\n" +
+    "}\n" +
+    "class Child is Base {\n" +
+    "  construct new(value) { super(value) }\n" +
+    "}\n" +
+    "var child = Child.new(40)\n" +
+    "child.add(2)\n" +
+    "child.value\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "overrides can call superclass methods and getters" {
+  let source = "class Base {\n" +
+    "  construct new() {}\n" +
+    "  number { return 20 }\n" +
+    "  add(value) { return value + 1 }\n" +
+    "}\n" +
+    "class Child is Base {\n" +
+    "  construct new() { super() }\n" +
+    "  number { return super.number + 1 }\n" +
+    "  add(value) { return super.add(value) + 1 }\n" +
+    "}\n" +
+    "var child = Child.new()\n" +
+    "child.number + child.add(19)\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "super lookup advances from each declaring class" {
+  let source = "class First {\n" +
+    "  construct new() {}\n" +
+    "  value() { return 1 }\n" +
+    "}\n" +
+    "class Second is First {\n" +
+    "  construct new() { super() }\n" +
+    "  value() { return super.value() + 1 }\n" +
+    "}\n" +
+    "class Third is Second {\n" +
+    "  construct new() { super() }\n" +
+    "  value() { return super.value() + 40 }\n" +
+    "}\n" +
+    "Third.new().value()\n"
+  expect_program_value(source, @moonwren.Value::number(42.0))
+}
+
+///|
+test "is recognizes instance and class inheritance" {
+  let source = "class Animal { construct new() {} }\n" +
+    "class Dog is Animal { construct new() { super() } }\n" +
+    "var dog = Dog.new()\n" +
+    "(dog is Dog) && (dog is Animal) && (Dog is Animal) && !(Animal is Dog)\n"
+  expect_program_value(source, @moonwren.Value::bool(true))
+}
+
+///|
+test "constructors are not inherited implicitly" {
+  let source = "class Base { construct new() {} }\n" +
+    "class Child is Base {}\n" +
+    "Child.new()\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("construction should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+}
+
+///|
+test "invalid and undefined superclasses are diagnosed" {
+  match @moonwren.run("var value = 42\nclass Child is value {}\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("class should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidSuperclass)
+  }
+  match @moonwren.run("class Child is Missing {}\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("class should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidSuperclass)
+  }
+}
+
+///|
+test "super is unavailable without a superclass method context" {
+  match @moonwren.run("super.missing()\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("super call should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedVariable)
+  }
+}
+
+///|
+test "missing superclass members produce structured diagnostics" {
+  let source = "class Base { construct new() {} }\n" +
+    "class Child is Base {\n" +
+    "  construct new() { super() }\n" +
+    "  value() { return super.missing() }\n" +
+    "}\n" +
+    "Child.new().value()\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("super call should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+}

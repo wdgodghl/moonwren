@@ -205,6 +205,8 @@ fn Parser::primary(self : Parser) -> Expr {
     Variable(token.lexeme, token.span)
   } else if self.take(ThisKeyword) {
     Variable("this", token.span)
+  } else if self.take(SuperKeyword) {
+    Variable("$super", token.span)
   } else if self.take(LeftParen) {
     self.skip_newlines()
     let inner = self.expression()
@@ -250,6 +252,36 @@ fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
 ///|
 fn Parser::method_call(self : Parser) -> Expr {
   let mut receiver = self.primary()
+  let super_span = match receiver {
+    Variable("$super", span) => Some(span)
+    _ => None
+  }
+  match super_span {
+    Some(start) =>
+      if self.take(LeftParen) {
+        self.skip_newlines()
+        let arguments : Array[Expr] = []
+        if !self.check(RightParen) {
+          while true {
+            arguments.push(self.expression())
+            self.skip_newlines()
+            if !self.take(Comma) {
+              break
+            }
+            self.skip_newlines()
+          }
+        }
+        let closing = self.consume(
+          RightParen,
+          "expected ')' after superclass constructor arguments",
+        )
+        receiver = SuperConstructorCall(
+          arguments,
+          SourceSpan::merge(start, closing.span),
+        )
+      }
+    None => ()
+  }
   while self.take(Dot) {
     let name = self.consume(Identifier, "expected method name after '.'")
     let is_function_literal = match receiver {
@@ -727,6 +759,13 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
 fn Parser::class_declaration(self : Parser, start : Token) -> Stmt {
   let name = self.consume(Identifier, "expected class name")
   self.skip_newlines()
+  let superclass = if self.take(IsKeyword) {
+    self.skip_newlines()
+    Some(self.consume(Identifier, "expected superclass name").lexeme)
+  } else {
+    None
+  }
+  self.skip_newlines()
   ignore(self.consume(LeftBrace, "expected '{' after class name"))
   self.skip_newlines()
   let methods : Array[MethodDecl] = []
@@ -737,6 +776,7 @@ fn Parser::class_declaration(self : Parser, start : Token) -> Stmt {
   let closing = self.consume(RightBrace, "expected '}' after class body")
   ClassStatement(
     name.lexeme,
+    superclass,
     methods,
     SourceSpan::merge(start.span, closing.span),
   )

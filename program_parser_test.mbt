@@ -84,7 +84,7 @@ test "program parser recognizes classes constructors methods and getters" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParsed(
-      [@moonwren.ClassStatement("Point", declarations, _)]
+      [@moonwren.ClassStatement("Point", None, declarations, _)]
     ) => {
       assert_eq(declarations.length(), 3)
       assert_true(declarations[0].is_constructor)
@@ -92,6 +92,38 @@ test "program parser recognizes classes constructors methods and getters" {
       assert_eq(declarations[2].parameters, ["dx", "dy"])
     }
     _ => fail("expected a class declaration")
+  }
+}
+
+///|
+test "program parser records superclass names and super constructor calls" {
+  let source = "class Child is Parent {\n" +
+    "  construct new(value) { super(value) }\n" +
+    "  value { return super.value }\n" +
+    "}\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [
+        @moonwren.ClassStatement(
+          "Child",
+          Some("Parent"),
+          [initializer, getter],
+          _
+        ),
+      ]
+    ) => {
+      match initializer.body {
+        [
+          @moonwren.ExpressionStatement(
+            @moonwren.SuperConstructorCall([_], _),
+            _
+          ),
+        ] => ()
+        _ => fail("expected a super constructor call")
+      }
+      assert_true(getter.is_getter)
+    }
+    _ => fail("expected an inherited class declaration")
   }
 }
 
