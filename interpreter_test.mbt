@@ -998,3 +998,51 @@ test "string values reject indexed assignment" {
       assert_eq(issues[0].code, @moonwren.InvalidOperand)
   }
 }
+
+///|
+test "empty built-in iterables skip the loop body" {
+  let source = "var visits = 0\n" +
+    "for (item in []) visits = visits + 1\n" +
+    "for (item in \"\") visits = visits + 1\n" +
+    "for (item in 1...1) visits = visits + 1\n" +
+    "visits\n"
+  expect_program_value(source, @moonwren.Value::number(0.0))
+}
+
+///|
+test "list slices normalize negative range endpoints" {
+  expect_program_value(
+    "[0, 1, 2, 3, 4][-4..-2].toString\n",
+    @moonwren.Value::string("[1, 2, 3]"),
+  )
+}
+
+///|
+test "string slices normalize negative range endpoints" {
+  expect_program_value(
+    "\"甲乙丙丁\"[-3..-1]\n",
+    @moonwren.Value::string("乙丙丁"),
+  )
+}
+
+///|
+test "exclusive slices may be empty at the collection end" {
+  let source = "[1, 2][2...2].toString + \"|\" + \"ab\"[2...2]\n"
+  expect_program_value(source, @moonwren.Value::string("[]|"))
+}
+
+///|
+test "map views preserve insertion order" {
+  let source = "var values = {\"first\": 1, \"second\": 2}\n" +
+    "values.keys.toString + \"|\" + values.values.toString\n"
+  expect_program_value(
+    source,
+    @moonwren.Value::string("(first, second)|(1, 2)"),
+  )
+}
+
+///|
+test "string split supports multi-character separators" {
+  let source = "\"甲--乙--丙\".split(\"--\").toString\n"
+  expect_program_value(source, @moonwren.Value::string("[甲, 乙, 丙]"))
+}
