@@ -149,12 +149,52 @@ test "completed and aborted fibers cannot be resumed" {
 }
 
 ///|
-test "yield inside a nested statement reports the current compatibility limit" {
-  let source = "var fiber = Fiber.new { if (true) Fiber.yield(1) }\n" +
-    "System.print(fiber.try())\n"
-  match @moonwren.run(source) {
-    @moonwren.ProgramCompleted(_, output) =>
-      assert_true(output[0].contains("resumable top-level fiber statement"))
-    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
-  }
+test "fibers preserve block scopes across suspension" {
+  let source = "var fiber = Fiber.new {\n" +
+    "  { var local = 40\n" +
+    "    var resumed = Fiber.yield(\"block\")\n" +
+    "    System.print(local + resumed)\n" +
+    "  }\n" +
+    "  return \"done\"\n" +
+    "}\n" +
+    "System.print(fiber.call())\n" +
+    "System.print(fiber.call(2))\n"
+  expect_fiber_output(source, ["block", "42", "done"])
+}
+
+///|
+test "fibers suspend in conditional branches" {
+  let source = "var fiber = Fiber.new { |enabled|\n" +
+    "  if (enabled) {\n" +
+    "    var value = Fiber.yield(\"if\")\n" +
+    "    return value\n" +
+    "  } else { return \"disabled\" }\n" +
+    "}\n" +
+    "System.print(fiber.call(true))\n" +
+    "System.print(fiber.call(\"resumed\"))\n"
+  expect_fiber_output(source, ["if", "resumed"])
+}
+
+///|
+test "fibers resume while and for loops without replaying iterations" {
+  let source = "var whileFiber = Fiber.new {\n" +
+    "  var index = 0\n" +
+    "  while (index < 3) {\n" +
+    "    index = index + 1\n" +
+    "    Fiber.yield(index)\n" +
+    "  }\n" +
+    "  return index\n" +
+    "}\n" +
+    "System.print(whileFiber.call())\n" +
+    "System.print(whileFiber.call())\n" +
+    "System.print(whileFiber.call())\n" +
+    "System.print(whileFiber.call())\n" +
+    "var forFiber = Fiber.new {\n" +
+    "  for (item in [4, 5]) { Fiber.yield(item) }\n" +
+    "  return 6\n" +
+    "}\n" +
+    "System.print(forFiber.call())\n" +
+    "System.print(forFiber.call())\n" +
+    "System.print(forFiber.call())\n"
+  expect_fiber_output(source, ["1", "2", "3", "3", "4", "5", "6"])
 }

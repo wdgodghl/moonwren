@@ -106,7 +106,7 @@ priv struct RuntimeFiber {
   mut initialized : Bool
   mut state : Int
   mut next_statement : Int
-  mut pending : ((Value) -> Stmt)?
+  mut pending : ((Value) -> FiberStatementStep)?
   mut last : Value
   mut error : Value
 }
@@ -2183,7 +2183,8 @@ priv enum FiberExpressionStep {
 ///|
 priv enum FiberStatementStep {
   FiberStatementReady
-  FiberStatementYielded(Value, (Value) -> Stmt)
+  FiberStatementCompleted(StatementResult)
+  FiberStatementYielded(Value, (Value) -> FiberStatementStep)
   FiberStatementFailed(Diagnostic)
 }
 
@@ -2388,7 +2389,11 @@ fn prepare_fiber_statement(
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
-            ExpressionStatement(continuation(resumed), span)
+            execute_fiber_statement(
+              ExpressionStatement(continuation(resumed), span),
+              environment,
+              context,
+            )
           })
       }
     VariableStatement(name, Some(initializer), span) =>
@@ -2397,7 +2402,11 @@ fn prepare_fiber_statement(
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
-            VariableStatement(name, Some(continuation(resumed)), span)
+            execute_fiber_statement(
+              VariableStatement(name, Some(continuation(resumed)), span),
+              environment,
+              context,
+            )
           })
       }
     ReturnStatement(Some(value), span) =>
@@ -2406,10 +2415,366 @@ fn prepare_fiber_statement(
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
-            ReturnStatement(Some(continuation(resumed)), span)
+            execute_fiber_statement(
+              ReturnStatement(Some(continuation(resumed)), span),
+              environment,
+              context,
+            )
           })
       }
     _ => FiberStatementReady
+  }
+}
+
+///|
+fn continue_fiber_sequence(
+  step : FiberStatementStep,
+  statements : Array[Stmt],
+  next : Int,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match step {
+    FiberStatementReady => abort("fiber statement was not executed")
+    FiberStatementFailed(issue) => FiberStatementFailed(issue)
+    FiberStatementYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        continue_fiber_sequence(
+          continuation(resumed),
+          statements,
+          next,
+          last,
+          environment,
+          context,
+        )
+      })
+    FiberStatementCompleted(result) =>
+      match result {
+        StatementCompleted(value) =>
+          execute_fiber_sequence(statements, next, value, environment, context)
+        StatementReturned(_, _)
+        | StatementBroken(_)
+        | StatementContinued(_)
+        | StatementFailed(_) => FiberStatementCompleted(result)
+      }
+  }
+}
+
+///|
+fn execute_fiber_sequence(
+  statements : Array[Stmt],
+  next : Int,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  if next >= statements.length() {
+    return FiberStatementCompleted(StatementCompleted(last))
+  }
+  continue_fiber_sequence(
+    execute_fiber_statement(statements[next], environment, context),
+    statements,
+    next + 1,
+    last,
+    environment,
+    context,
+  )
+}
+
+///|
+fn finish_fiber_scope(
+  step : FiberStatementStep,
+  environment : Environment,
+) -> FiberStatementStep {
+  match step {
+    FiberStatementReady => abort("fiber statement was not executed")
+    FiberStatementFailed(issue) => {
+      ignore(environment.pop_scope())
+      FiberStatementFailed(issue)
+    }
+    FiberStatementCompleted(result) => {
+      ignore(environment.pop_scope())
+      FiberStatementCompleted(result)
+    }
+    FiberStatementYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        finish_fiber_scope(continuation(resumed), environment)
+      })
+  }
+}
+
+///|
+fn continue_fiber_while(
+  step : FiberStatementStep,
+  condition : Expr,
+  body : Stmt,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match step {
+    FiberStatementReady => abort("fiber statement was not executed")
+    FiberStatementFailed(issue) => FiberStatementFailed(issue)
+    FiberStatementYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        continue_fiber_while(
+          continuation(resumed),
+          condition,
+          body,
+          last,
+          environment,
+          context,
+        )
+      })
+    FiberStatementCompleted(result) =>
+      match result {
+        StatementCompleted(value) =>
+          execute_fiber_while(condition, body, value, environment, context)
+        StatementContinued(_) =>
+          execute_fiber_while(condition, body, last, environment, context)
+        StatementBroken(_) => FiberStatementCompleted(StatementCompleted(last))
+        StatementReturned(_, _) | StatementFailed(_) =>
+          FiberStatementCompleted(result)
+      }
+  }
+}
+
+///|
+fn execute_fiber_while(
+  condition : Expr,
+  body : Stmt,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match prepare_fiber_expression(condition, environment, context) {
+    FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+    FiberExpressionYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        execute_fiber_while(
+          continuation(resumed),
+          body,
+          last,
+          environment,
+          context,
+        )
+      })
+    FiberExpressionReady =>
+      match evaluate_expression_in(condition, environment, context) {
+        EvaluationFailed(issue) => FiberStatementFailed(issue)
+        EvaluationSucceeded(value) =>
+          if !value.is_truthy() {
+            FiberStatementCompleted(StatementCompleted(last))
+          } else {
+            continue_fiber_while(
+              execute_fiber_statement(body, environment, context),
+              condition,
+              body,
+              last,
+              environment,
+              context,
+            )
+          }
+      }
+  }
+}
+
+///|
+fn continue_fiber_for(
+  step : FiberStatementStep,
+  name : String,
+  iterable : Value,
+  iterator : Value,
+  body : Stmt,
+  span : SourceSpan,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match step {
+    FiberStatementReady => abort("fiber statement was not executed")
+    FiberStatementFailed(issue) => FiberStatementFailed(issue)
+    FiberStatementYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        continue_fiber_for(
+          continuation(resumed),
+          name,
+          iterable,
+          iterator,
+          body,
+          span,
+          last,
+          environment,
+          context,
+        )
+      })
+    FiberStatementCompleted(result) =>
+      match result {
+        StatementCompleted(value) =>
+          execute_fiber_for_iteration(
+            name, iterable, iterator, body, span, value, environment, context,
+          )
+        StatementContinued(_) =>
+          execute_fiber_for_iteration(
+            name, iterable, iterator, body, span, last, environment, context,
+          )
+        StatementBroken(_) => FiberStatementCompleted(StatementCompleted(last))
+        StatementReturned(_, _) | StatementFailed(_) =>
+          FiberStatementCompleted(result)
+      }
+  }
+}
+
+///|
+fn execute_fiber_for_iteration(
+  name : String,
+  iterable : Value,
+  iterator : Value,
+  body : Stmt,
+  span : SourceSpan,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  let next = match
+    invoke_method(iterable, "iterate", [iterator], span, context) {
+    EvaluationFailed(issue) => return FiberStatementFailed(issue)
+    EvaluationSucceeded(BoolValue(false)) =>
+      return FiberStatementCompleted(StatementCompleted(last))
+    EvaluationSucceeded(value) => value
+  }
+  let item = match
+    invoke_method(iterable, "iteratorValue", [next], span, context) {
+    EvaluationFailed(issue) => return FiberStatementFailed(issue)
+    EvaluationSucceeded(value) => value
+  }
+  ignore(environment.assign(name, item))
+  continue_fiber_for(
+    execute_fiber_statement(body, environment, context),
+    name,
+    iterable,
+    next,
+    body,
+    span,
+    last,
+    environment,
+    context,
+  )
+}
+
+///|
+fn execute_fiber_statement(
+  statement : Stmt,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match statement {
+    BlockStatement(statements, span) => {
+      match context.step(span) {
+        Some(issue) => return FiberStatementFailed(issue)
+        None => ()
+      }
+      environment.push_scope()
+      finish_fiber_scope(
+        execute_fiber_sequence(
+          statements,
+          0,
+          Value::null(),
+          environment,
+          context,
+        ),
+        environment,
+      )
+    }
+    IfStatement(condition, then_branch, else_branch, span) => {
+      match context.step(span) {
+        Some(issue) => return FiberStatementFailed(issue)
+        None => ()
+      }
+      match prepare_fiber_expression(condition, environment, context) {
+        FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+        FiberExpressionYielded(value, continuation) =>
+          FiberStatementYielded(value, fn(resumed) {
+            execute_fiber_statement(
+              IfStatement(continuation(resumed), then_branch, else_branch, span),
+              environment,
+              context,
+            )
+          })
+        FiberExpressionReady =>
+          match evaluate_expression_in(condition, environment, context) {
+            EvaluationFailed(issue) => FiberStatementFailed(issue)
+            EvaluationSucceeded(value) =>
+              if value.is_truthy() {
+                execute_fiber_statement(then_branch, environment, context)
+              } else {
+                match else_branch {
+                  Some(branch) =>
+                    execute_fiber_statement(branch, environment, context)
+                  None =>
+                    FiberStatementCompleted(StatementCompleted(Value::null()))
+                }
+              }
+          }
+      }
+    }
+    WhileStatement(condition, body, span) => {
+      match context.step(span) {
+        Some(issue) => return FiberStatementFailed(issue)
+        None => ()
+      }
+      execute_fiber_while(condition, body, Value::null(), environment, context)
+    }
+    ForStatement(name, sequence, body, span) => {
+      match context.step(span) {
+        Some(issue) => return FiberStatementFailed(issue)
+        None => ()
+      }
+      match prepare_fiber_expression(sequence, environment, context) {
+        FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+        FiberExpressionYielded(value, continuation) =>
+          FiberStatementYielded(value, fn(resumed) {
+            execute_fiber_statement(
+              ForStatement(name, continuation(resumed), body, span),
+              environment,
+              context,
+            )
+          })
+        FiberExpressionReady =>
+          match evaluate_expression_in(sequence, environment, context) {
+            EvaluationFailed(issue) => FiberStatementFailed(issue)
+            EvaluationSucceeded(iterable) => {
+              environment.push_scope()
+              ignore(environment.bind(name, Value::null()))
+              finish_fiber_scope(
+                execute_fiber_for_iteration(
+                  name,
+                  iterable,
+                  Value::null(),
+                  body,
+                  span,
+                  Value::null(),
+                  environment,
+                  context,
+                ),
+                environment,
+              )
+            }
+          }
+      }
+    }
+    _ =>
+      match prepare_fiber_statement(statement, environment, context) {
+        FiberStatementFailed(issue) => FiberStatementFailed(issue)
+        FiberStatementYielded(value, continuation) =>
+          FiberStatementYielded(value, continuation)
+        FiberStatementCompleted(result) => FiberStatementCompleted(result)
+        FiberStatementReady =>
+          FiberStatementCompleted(
+            execute_statement_in(statement, environment, context),
+          )
+      }
   }
 }
 
@@ -2508,7 +2873,7 @@ fn resume_runtime_fiber(
   fiber.state = 1
   let mut pending_input = Some(input)
   while true {
-    let statement = match fiber.pending {
+    let step = match fiber.pending {
       Some(continuation) => {
         fiber.pending = None
         let resumed = match pending_input {
@@ -2527,10 +2892,10 @@ fn resume_runtime_fiber(
         }
         let current = closure.body[fiber.next_statement]
         fiber.next_statement = fiber.next_statement + 1
-        current
+        execute_fiber_statement(current, fiber.environment, context)
       }
     }
-    match prepare_fiber_statement(statement, fiber.environment, context) {
+    match step {
       FiberStatementFailed(issue) =>
         return abort_runtime_fiber(
           identifier, issue, previous_fiber, previous_source, context,
@@ -2541,46 +2906,47 @@ fn resume_runtime_fiber(
         restore_fiber_caller(context, previous_fiber, previous_source)
         return EvaluationSucceeded(value)
       }
-      FiberStatementReady => ()
-    }
-    match execute_statement_in(statement, fiber.environment, context) {
-      StatementCompleted(value) => fiber.last = value
-      StatementReturned(value, _) => {
-        fiber.state = 3
-        fiber.last = value
-        restore_fiber_caller(context, previous_fiber, previous_source)
-        return EvaluationSucceeded(value)
-      }
-      StatementBroken(break_span) =>
-        return abort_runtime_fiber(
-          identifier,
-          Diagnostic::new(
-            Runtime,
-            BreakOutsideLoop,
-            "break cannot cross a fiber boundary",
-            break_span,
-          ),
-          previous_fiber,
-          previous_source,
-          context,
-        )
-      StatementContinued(continue_span) =>
-        return abort_runtime_fiber(
-          identifier,
-          Diagnostic::new(
-            Runtime,
-            ContinueOutsideLoop,
-            "continue cannot cross a fiber boundary",
-            continue_span,
-          ),
-          previous_fiber,
-          previous_source,
-          context,
-        )
-      StatementFailed(issue) =>
-        return abort_runtime_fiber(
-          identifier, issue, previous_fiber, previous_source, context,
-        )
+      FiberStatementReady => abort("fiber statement was not executed")
+      FiberStatementCompleted(result) =>
+        match result {
+          StatementCompleted(value) => fiber.last = value
+          StatementReturned(value, _) => {
+            fiber.state = 3
+            fiber.last = value
+            restore_fiber_caller(context, previous_fiber, previous_source)
+            return EvaluationSucceeded(value)
+          }
+          StatementBroken(break_span) =>
+            return abort_runtime_fiber(
+              identifier,
+              Diagnostic::new(
+                Runtime,
+                BreakOutsideLoop,
+                "break cannot cross a fiber boundary",
+                break_span,
+              ),
+              previous_fiber,
+              previous_source,
+              context,
+            )
+          StatementContinued(continue_span) =>
+            return abort_runtime_fiber(
+              identifier,
+              Diagnostic::new(
+                Runtime,
+                ContinueOutsideLoop,
+                "continue cannot cross a fiber boundary",
+                continue_span,
+              ),
+              previous_fiber,
+              previous_source,
+              context,
+            )
+          StatementFailed(issue) =>
+            return abort_runtime_fiber(
+              identifier, issue, previous_fiber, previous_source, context,
+            )
+        }
     }
   }
   EvaluationSucceeded(Value::null())
