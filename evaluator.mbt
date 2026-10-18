@@ -1034,6 +1034,70 @@ fn read_list_range(
 }
 
 ///|
+fn read_string_range(
+  text : String,
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  span : SourceSpan,
+) -> EvaluationResult {
+  let characters = text.to_array()
+  let endpoint_allows_end = !inclusive
+  let start = match
+    collection_index(
+      Value::number(from),
+      characters.length(),
+      endpoint_allows_end,
+      span,
+    ) {
+    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+    CollectionIndexSucceeded(index) => index
+  }
+  let end = match
+    collection_index(
+      Value::number(to),
+      characters.length(),
+      endpoint_allows_end,
+      span,
+    ) {
+    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+    CollectionIndexSucceeded(index) => index
+  }
+  if start == characters.length() && start != end {
+    return evaluation_error(
+      IndexOutOfBounds,
+      "string slice starts outside the valid range",
+      span,
+    )
+  }
+  let step = if start <= end { 1 } else { -1 }
+  let mut index = start
+  let mut result = ""
+  while (if step > 0 {
+          if inclusive {
+            index <= end
+          } else {
+            index < end
+          }
+        } else if inclusive {
+          index >= end
+        } else {
+          index > end
+        }) {
+    if index < 0 || index >= characters.length() {
+      return evaluation_error(
+        IndexOutOfBounds,
+        "string slice crosses outside the valid range",
+        span,
+      )
+    }
+    result = result + characters[index].to_string()
+    index = index + step
+  }
+  EvaluationSucceeded(Value::string(result))
+}
+
+///|
 fn read_subscript(
   receiver : Value,
   index : Value,
@@ -1069,10 +1133,23 @@ fn read_subscript(
           None => EvaluationSucceeded(Value::null())
         }
       }
+    StringValue(text) => {
+      let characters = text.to_array()
+      match index {
+        RangeValue(from, to, inclusive) =>
+          read_string_range(text, from, to, inclusive, span)
+        value =>
+          match collection_index(value, characters.length(), false, span) {
+            CollectionIndexSucceeded(index) =>
+              EvaluationSucceeded(Value::string(characters[index].to_string()))
+            CollectionIndexFailed(issue) => EvaluationFailed(issue)
+          }
+      }
+    }
     other =>
       evaluation_error(
         InvalidOperand,
-        "subscript receiver must be a List or Map, received \{other.type_name()}",
+        "subscript receiver must be a List, Map, or String, received \{other.type_name()}",
         span,
       )
   }
@@ -1108,6 +1185,12 @@ fn write_subscript(
       } else {
         evaluation_error(InvalidOperand, "map is not available", span)
       }
+    StringValue(_) =>
+      evaluation_error(
+        InvalidOperand,
+        "String values are immutable and cannot be assigned by subscript",
+        span,
+      )
     other =>
       evaluation_error(
         InvalidOperand,
@@ -1201,6 +1284,116 @@ fn indexed_iterator(
       "\{owner} does not implement method '\{name}'",
       span,
     )
+  }
+}
+
+///|
+fn string_items(text : String) -> Array[Value] {
+  let items : Array[Value] = []
+  for character in text.to_array() {
+    items.push(Value::string(character.to_string()))
+  }
+  items
+}
+
+///|
+fn invalid_string_argument(
+  name : String,
+  position : Int,
+  value : Value,
+  span : SourceSpan,
+) -> EvaluationResult {
+  evaluation_error(
+    InvalidOperand,
+    "String.\{name} argument \{position} must be a String, received \{value.type_name()}",
+    span,
+  )
+}
+
+///|
+fn invoke_string_method(
+  text : String,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if name == "iterate" || name == "iteratorValue" {
+    return indexed_iterator("String", string_items(text), name, arguments, span)
+  }
+  match name {
+    "contains" | "startsWith" | "endsWith" | "indexOf" | "split" =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("String", name, 1, arguments.length(), span)
+      } else {
+        let needle = match arguments[0] {
+          StringValue(value) => value
+          value => return invalid_string_argument(name, 1, value, span)
+        }
+        match name {
+          "contains" => EvaluationSucceeded(Value::bool(text.contains(needle)))
+          "startsWith" =>
+            EvaluationSucceeded(Value::bool(text.has_prefix(needle)))
+          "endsWith" =>
+            EvaluationSucceeded(Value::bool(text.has_suffix(needle)))
+          "indexOf" =>
+            match text.find(needle) {
+              None => EvaluationSucceeded(Value::number(-1.0))
+              Some(offset) =>
+                EvaluationSucceeded(
+                  Value::number(
+                    Double::from_int(text.char_length(end_offset=offset)),
+                  ),
+                )
+            }
+          "split" =>
+            if needle == "" {
+              evaluation_error(
+                InvalidOperand,
+                "String.split separator must not be empty",
+                span,
+              )
+            } else {
+              let parts : Array[Value] = []
+              for part in text.split(needle) {
+                parts.push(Value::string(part.to_owned()))
+              }
+              EvaluationSucceeded(context.new_list(parts))
+            }
+          _ =>
+            evaluation_error(UndefinedMethod, "unreachable String method", span)
+        }
+      }
+    "replace" =>
+      if arguments.length() != 2 {
+        invalid_collection_arity("String", name, 2, arguments.length(), span)
+      } else {
+        let old = match arguments[0] {
+          StringValue(value) => value
+          value => return invalid_string_argument(name, 1, value, span)
+        }
+        let replacement = match arguments[1] {
+          StringValue(value) => value
+          value => return invalid_string_argument(name, 2, value, span)
+        }
+        if old == "" {
+          evaluation_error(
+            InvalidOperand,
+            "String.replace search text must not be empty",
+            span,
+          )
+        } else {
+          EvaluationSucceeded(
+            Value::string(text.replace_all(old~, new=replacement)),
+          )
+        }
+      }
+    _ =>
+      evaluation_error(
+        UndefinedMethod,
+        "String does not implement method '\{name}'",
+        span,
+      )
   }
 }
 
@@ -1531,6 +1724,8 @@ fn invoke_method(
           span,
         )
       }
+    StringValue(text) =>
+      invoke_string_method(text, name, arguments, span, context)
     ListValue(identifier) =>
       invoke_list_method(identifier, name, arguments, span, context)
     MapValue(identifier) =>
@@ -1684,6 +1879,20 @@ fn read_property(
           evaluation_error(
             UndefinedMethod,
             "superclass does not implement static getter '\{name}'",
+            span,
+          )
+      }
+    StringValue(text) =>
+      match name {
+        "count" =>
+          EvaluationSucceeded(
+            Value::number(Double::from_int(text.char_length())),
+          )
+        "toString" => EvaluationSucceeded(receiver)
+        _ =>
+          evaluation_error(
+            UndefinedMethod,
+            "String does not implement getter '\{name}'",
             span,
           )
       }
@@ -2141,6 +2350,7 @@ fn execute_iterable_for_in(
       }
       context.new_sequence(items)
     }
+    StringValue(text) => context.new_sequence(string_items(text))
     value => value
   }
   match iterable {

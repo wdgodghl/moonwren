@@ -901,3 +901,100 @@ test "built-in iteration protocol can be invoked directly" {
     "values.iteratorValue(first) + values.iteratorValue(second)\n"
   expect_program_value(source, @moonwren.Value::number(9.0))
 }
+
+///|
+test "string count uses Unicode characters" {
+  expect_program_value("\"A🤣中\".count\n", @moonwren.Value::number(3.0))
+}
+
+///|
+test "string subscripts use character indexes and negative offsets" {
+  let source = "var text = \"A🤣中\"\ntext[1] + text[-1]\n"
+  expect_program_value(source, @moonwren.Value::string("🤣中"))
+}
+
+///|
+test "string range subscripts preserve Unicode boundaries" {
+  let source = "var text = \"A🤣中文\"\n" +
+    "text[1..2] + \"|\" + text[0...2] + \"|\" + text[3..1]\n"
+  expect_program_value(
+    source,
+    @moonwren.Value::string("🤣中|A🤣|文中🤣"),
+  )
+}
+
+///|
+test "for loops iterate over Unicode characters" {
+  let source = "var result = \"\"\n" +
+    "for (character in \"A🤣中\") result = result + character\n" +
+    "result\n"
+  expect_program_value(source, @moonwren.Value::string("A🤣中"))
+}
+
+///|
+test "string search predicates support Unicode text" {
+  let source = "var text = \"月亮Moon🤣\"\n" +
+    "text.contains(\"Moon\") && text.startsWith(\"月亮\") && text.endsWith(\"🤣\")\n"
+  expect_program_value(source, @moonwren.Value::bool(true))
+}
+
+///|
+test "string indexOf returns character positions" {
+  let source = "var text = \"A🤣中🤣\"\n" +
+    "text.indexOf(\"中\") + text.indexOf(\"missing\")\n"
+  expect_program_value(source, @moonwren.Value::number(1.0))
+}
+
+///|
+test "string split returns a mutable list" {
+  let source = "var parts = \"红|绿|蓝\".split(\"|\")\n" +
+    "parts.add(\"紫\")\n" +
+    "parts.count.toString + \"|\" + parts[-1]\n"
+  expect_program_value(source, @moonwren.Value::string("4|紫"))
+}
+
+///|
+test "string replace replaces every occurrence" {
+  expect_program_value(
+    "\"月-月-星\".replace(\"月\", \"Moon\")\n",
+    @moonwren.Value::string("Moon-Moon-星"),
+  )
+}
+
+///|
+test "string methods validate argument types" {
+  match @moonwren.run("\"text\".contains(42)\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("non-string argument should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+  match @moonwren.run("\"text\".replace(\"t\", 42)\n") {
+    @moonwren.ProgramCompleted(_, _) =>
+      fail("non-string replacement should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+}
+
+///|
+test "string split and replace reject empty search text" {
+  match @moonwren.run("\"text\".split(\"\")\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("empty separator should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+  match @moonwren.run("\"text\".replace(\"\", \"x\")\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("empty search should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+}
+
+///|
+test "string values reject indexed assignment" {
+  match @moonwren.run("var text = \"abc\"\ntext[0] = \"z\"\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("string assignment should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidOperand)
+  }
+}
