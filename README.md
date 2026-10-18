@@ -186,8 +186,9 @@ System.print(worker.call("start")) // waiting
 System.print(worker.call("done"))  // done
 ```
 
-See [`examples/fibers.wren`](examples/fibers.wren) for calls, main-fiber
-transfers, nested control flow, completion state, and captured aborts.
+See [`examples/fibers.wren`](examples/fibers.wren) for calls, transfers, nested
+control flow, completion state, and captured aborts. Worker-to-worker transfer
+chains preserve each suspended continuation until control returns to it.
 
 Multi-file programs use explicit imports. The CLI resolves relative module
 names from the importing file, automatically adds `.wren` when omitted, and

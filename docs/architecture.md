@@ -91,7 +91,10 @@ and source module. Nested statement continuations retain block scopes, branch
 selection, loop iterators, and loop positions. Internal function frames retain
 their own environment while reporting the outer Fiber as `Fiber.current`, so a
 callee may yield repeatedly without exposing an implementation-only Fiber. The
-main Fiber remains a stable runtime value for cooperative transfers.
+main Fiber remains a stable runtime value for cooperative transfers. A transfer
+records the target beside the suspended continuation; the scheduler follows
+worker-to-worker targets iteratively until a worker completes or transfers to
+the main Fiber, avoiding native recursive growth across a transfer chain.
 
 Foreign declarations remain ordinary class members in the syntax tree but are
 marked separately from MoonWren-backed methods. Dispatch derives the canonical

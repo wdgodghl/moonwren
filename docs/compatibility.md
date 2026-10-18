@@ -21,7 +21,7 @@ implementation idiomatic to MoonBit.
 | Core `Sequence` class | Implemented subset | Aggregation, predicates, joining, reduction, lazy `map`/`where`/`skip`/`take`, materialization |
 | Functions and closures | Partial | Construction, arity, multiline bodies, `return`, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
-| Fibers | Implemented subset | Lazy creation, nested block/branch/loop suspension, direct called-function suspension, `current`, `call`, `try`, `yield`, `suspend`, main-fiber `transfer`, abort/error/completion state |
+| Fibers | Implemented subset | Lazy creation, nested block/branch/loop suspension, direct called-function suspension, `current`, `call`, `try`, `yield`, `suspend`, worker/main `transfer`, abort/error/completion state |
 | Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
 | Foreign methods | Implemented | Instance/static methods and getters, canonical module binding, values and structured host failures |
 | Foreign classes | Implemented subset | Host allocation handles, handle-aware methods, mixed Wren methods, shutdown finalization; reachability GC pending |
@@ -84,10 +84,11 @@ positions inside blocks, conditionals, `while`, and `for`, including repeated
 loop yields without replaying earlier side effects. A directly called function
 may suspend when the call is an expression statement, variable initializer, or
 return value; arbitrary nested method and operator call stacks remain future
-work. Transfers between the main Fiber and a worker preserve resume values.
-Worker-to-worker `transfer` currently uses the same synchronous return path as
-`call`, while `transferError` marks its target aborted without a full non-local
-stack transfer.
+work. Transfers between workers form a non-local scheduling chain: each source
+stores its continuation, the target receives the transferred value, and a later
+transfer back resumes the saved expression. Transfers to the main Fiber return
+control to the embedding call site. `transferError` marks its target aborted
+but does not yet perform a non-local error transfer.
 
 Foreign methods are resolved using the canonical module name, class name,
 static flag, and Wren signature. Callbacks receive the receiver separately from
