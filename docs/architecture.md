@@ -85,19 +85,24 @@ exhausted. Map traversal snapshots key/value entry objects so later mutation
 cannot invalidate an active iterator.
 
 Each Fiber owns a closure identifier, a persistent captured environment, a
-statement cursor, completion/error state, and an optional expression
-continuation. Starting or resuming a Fiber temporarily switches the runtime's
-active Fiber and source module. A yield stores a continuation that rebuilds the
-suspended expression with the next resume value, allowing several yields in a
-single expression without replaying completed output. The main Fiber is a
-stable runtime value used for cooperative transfers back to the caller.
+statement cursor, completion/error state, and an optional continuation.
+Starting or resuming a Fiber temporarily switches the runtime's active Fiber
+and source module. Nested statement continuations retain block scopes, branch
+selection, loop iterators, and loop positions. Internal function frames retain
+their own environment while reporting the outer Fiber as `Fiber.current`, so a
+callee may yield repeatedly without exposing an implementation-only Fiber. The
+main Fiber remains a stable runtime value for cooperative transfers.
 
 Foreign declarations remain ordinary class members in the syntax tree but are
 marked separately from MoonWren-backed methods. Dispatch derives the canonical
 Wren signature and looks it up in the run's immutable binding registry. The
 callback boundary passes a receiver plus ordered values and converts host
 failures into normal structured diagnostics, so module and call frames continue
-to work across the boundary.
+to work across the boundary. Foreign class definitions also resolve an
+allocator/finalizer binding when executed. Constructed instances retain the
+host's opaque integer handle beside ordinary Wren fields; handle-aware foreign
+methods receive it without exposing runtime registry indexes. Interpreter
+shutdown walks allocated foreign instances and finalizes each handle once.
 
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.

@@ -21,10 +21,10 @@ implementation idiomatic to MoonBit.
 | Core `Sequence` class | Implemented subset | Aggregation, predicates, joining, reduction, lazy `map`/`where`/`skip`/`take`, materialization |
 | Functions and closures | Partial | Construction, arity, multiline bodies, `return`, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
-| Fibers | Implemented subset | Lazy creation, `current`, `call`, `try`, `yield`, `suspend`, main-fiber `transfer`, abort/error/completion state |
+| Fibers | Implemented subset | Lazy creation, nested block/branch/loop suspension, direct called-function suspension, `current`, `call`, `try`, `yield`, `suspend`, main-fiber `transfer`, abort/error/completion state |
 | Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
 | Foreign methods | Implemented | Instance/static methods and getters, canonical module binding, values and structured host failures |
-| Foreign classes | Planned | Host-owned instance storage and finalization |
+| Foreign classes | Implemented subset | Host allocation handles, handle-aware methods, mixed Wren methods, shutdown finalization; reachability GC pending |
 
 Unsupported syntax must produce a structured diagnostic. The parser and
 runtime should never report success after discarding an unsupported construct.
@@ -79,22 +79,26 @@ arbitrary invalid UTF-8. These two documented differences remain compatibility
 work rather than silent behavior.
 
 Fiber bodies keep a persistent captured environment and resume values through
-expression continuations. Suspension currently works in top-level Fiber body
-expression, variable, and return statements, including multiple suspension
-points in one expression. A suspension nested inside a block, conditional,
-loop, or separately called function is rejected with `InvalidFiberState`;
-supporting those positions requires preserving the complete nested execution
-stack and remains compatibility work. Transfers between the main Fiber and a
-worker preserve resume values. Worker-to-worker `transfer` currently uses the
-same synchronous return path as `call`, while `transferError` marks its target
-aborted without a full non-local stack transfer.
+statement continuations. Suspension preserves lexical scopes and execution
+positions inside blocks, conditionals, `while`, and `for`, including repeated
+loop yields without replaying earlier side effects. A directly called function
+may suspend when the call is an expression statement, variable initializer, or
+return value; arbitrary nested method and operator call stacks remain future
+work. Transfers between the main Fiber and a worker preserve resume values.
+Worker-to-worker `transfer` currently uses the same synchronous return path as
+`call`, while `transferError` marks its target aborted without a full non-local
+stack transfer.
 
 Foreign methods are resolved using the canonical module name, class name,
 static flag, and Wren signature. Callbacks receive the receiver separately from
 the ordered arguments and may return any `Value` or a structured failure.
 Bindings are immutable for one run and callbacks execute while the interpreter
-is suspended, so the runtime is deliberately non-reentrant. Foreign classes
-and host-managed object storage are not yet implemented.
+is suspended, so the runtime is deliberately non-reentrant. A foreign class
+binding allocates an opaque integer handle from constructor arguments. Its
+foreign instance methods receive that handle, while methods written in Wren
+continue to dispatch normally on the same object. Finalizers run exactly once
+when the interpreter run shuts down. Reachability-based collection and
+mid-execution finalization remain tied to the planned garbage collector.
 
 Imports support `import "module"`, explicit names using `for`, and local aliases
 using `as`. Every canonical module owns an isolated top-level environment and

@@ -17,8 +17,9 @@ negative indexes, range slices, MapEntry iteration, eager sequence aggregations,
 and composable lazy `map`/`where`/`skip`/`take` pipelines. Named modules,
 explicit imports, loader callbacks, module caching,
 cross-module stack traces, multi-file CLI execution, cooperative Fiber values,
-and host-bound foreign methods are also available. Fully nested Fiber
-continuations and foreign classes follow in later milestones.
+host-bound foreign methods, and host-backed foreign classes are also available.
+Fibers preserve block and loop state across suspension and can suspend through
+direct function-call statements, initializers, and returns.
 
 ## Goals
 
@@ -186,7 +187,7 @@ System.print(worker.call("done"))  // done
 ```
 
 See [`examples/fibers.wren`](examples/fibers.wren) for calls, main-fiber
-transfers, completion state, and captured aborts.
+transfers, nested control flow, completion state, and captured aborts.
 
 Multi-file programs use explicit imports. The CLI resolves relative module
 names from the importing file, automatically adds `.wren` when omitted, and
@@ -239,9 +240,13 @@ let result = run_modules("main", modules, 100000)
 Wren classes may declare foreign instance methods, static methods, and getters.
 `run_with_foreign_methods` binds those declarations to typed MoonBit callbacks;
 callbacks receive the receiver and argument array, then return either a Wren
-value or a structured host failure. See
+value or a structured host failure. `run_with_foreign_bindings` additionally
+binds `foreign class` declarations. The host allocator returns an opaque integer
+handle, handle-aware instance methods operate on it, and the finalizer releases
+it once when the interpreter run shuts down. See
 [`docs/embedding.md`](docs/embedding.md) and
-[`examples/foreign_methods.wren`](examples/foreign_methods.wren).
+[`examples/foreign_methods.wren`](examples/foreign_methods.wren) or
+[`examples/foreign_classes.wren`](examples/foreign_classes.wren).
 
 ## Project status
 
