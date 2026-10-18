@@ -198,3 +198,37 @@ test "fibers resume while and for loops without replaying iterations" {
     "System.print(forFiber.call())\n"
   expect_fiber_output(source, ["1", "2", "3", "3", "4", "5", "6"])
 }
+
+///|
+test "fibers preserve suspension inside called functions" {
+  let source = "var worker = Fn.new { |base|\n" +
+    "  { var local = base + 1\n" +
+    "    var first = Fiber.yield(\"from function\")\n" +
+    "    var second = Fiber.yield(local + first)\n" +
+    "    return second\n" +
+    "  }\n" +
+    "}\n" +
+    "var fiber = Fiber.new {\n" +
+    "  var value = worker.call(40)\n" +
+    "  return value + 1\n" +
+    "}\n" +
+    "System.print(fiber.call())\n" +
+    "System.print(fiber.call(1))\n" +
+    "System.print(fiber.call(41))\n"
+  expect_fiber_output(source, ["from function", "42", "42"])
+}
+
+///|
+test "called functions keep the visible fiber identity" {
+  let source = "var current = null\n" +
+    "var helper = Fn.new {\n" +
+    "  current = Fiber.current\n" +
+    "  Fiber.yield(\"pause\")\n" +
+    "  return 7\n" +
+    "}\n" +
+    "var fiber = Fiber.new { return helper.call() }\n" +
+    "System.print(fiber.call())\n" +
+    "System.print(Object.same(current, fiber))\n" +
+    "System.print(fiber.call())\n"
+  expect_fiber_output(source, ["pause", "true", "7"])
+}
