@@ -24,3 +24,7 @@ keywords = [ "wren", "interpreter", "scripting", "language" ]
 preferred_target = "wasm"
 
 description = "A Wren-compatible scripting language implementation in MoonBit"
+
+import {
+  "moonbitlang/x@0.5.5",
+}
