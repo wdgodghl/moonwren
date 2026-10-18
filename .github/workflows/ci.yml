@@ -13,9 +13,13 @@ jobs:
       - uses: hustcer/setup-moonbit@v1
         with:
           version: 0.10.14+7d59c7ec9
+      - name: Resolve dependencies
+        run: moon update
       - name: Check formatting
         run: moon fmt --check
       - name: Check packages
         run: moon check
+      - name: Build packages
+        run: moon build
       - name: Run tests
         run: moon test
