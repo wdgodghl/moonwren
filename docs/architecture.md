@@ -64,6 +64,14 @@ indexes before mutation and return structured diagnostics for fractional or
 out-of-range indexes. List loops take a shallow snapshot at loop entry, while
 collection text conversion limits nesting depth to handle cycles safely.
 
+Loop execution is expressed through an object protocol instead of a type switch.
+The interpreter repeatedly calls `iterate(iterator)` and then
+`iteratorValue(iterator)`, so user classes and built-in sequences follow the
+same control path. List loops and Map key/value views use shallow snapshots to
+make mutation during traversal deterministic. String snapshots are built from
+MoonBit Unicode characters, keeping indexing, slicing, iteration, and search
+positions aligned on the same character boundaries.
+
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.
 Captured environments copy the scope structure while sharing mutable variable
@@ -99,7 +107,7 @@ boundaries convert escaped loop control into structured diagnostics.
 
 ## Extension path
 
-The next runtime layer can extend collection iteration and add more core-class
-methods. Modules, fibers, and foreign bindings can build on the same source
-spans, diagnostics, environments, output capture, and execution limits without
-coupling those features to the scanner.
+The next runtime layer can add module loading and a host binding boundary.
+Fibers can then build on the same source spans, diagnostics, environments,
+output capture, iterator protocol, and execution limits without coupling those
+features to the scanner.

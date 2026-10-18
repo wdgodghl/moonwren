@@ -9,12 +9,13 @@ implementation idiomatic to MoonBit.
 | Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
-| Branching and loops | Partial | `if`, `while`, range and List `for`, `break`, `continue` |
+| Branching and loops | Implemented subset | `if`, `while`, protocol-based `for`, `break`, `continue` |
 | Method and getter calls | Partial | Chaining, signatures by arity, user getters, range getters, `System.print` |
 | Core `System` class | Partial | `print()` and `print(object)` with captured output |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Core `List` class | Partial | Literals, subscripts, mutation methods, count, text, iteration |
-| Core `Map` class | Partial | Literals, subscripts, arbitrary keys, mutation methods, count, text |
+| Core `String` class | Partial | Unicode character indexes, slices, iteration, search, split, replace |
+| Core `List` class | Partial | Literals, negative indexes, slices, mutation/search methods, iteration |
+| Core `Map` class | Partial | Literals, immutable keys, mutation methods, key/value sequence views |
 | Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
@@ -53,8 +54,16 @@ boundaries, preventing a callee from changing its caller's loop state.
 
 List and Map values use runtime identity, so two separately allocated
 collections are not equal even when their contents match. Map lookup is
-deterministic and returns `null` for a missing key. A repeated literal key
-replaces the earlier value. List iteration snapshots the elements present when
-the loop begins, which prevents mutation during a loop from silently extending
-that loop. Collection text conversion has a depth bound so recursive structures
-remain printable.
+deterministic and returns `null` for a missing key. Keys must be immutable core
+values or class values, and a repeated literal key replaces the earlier value.
+Map `keys` and `values` getters preserve insertion order in immutable sequence
+snapshots. List iteration snapshots the elements present when the loop begins,
+which prevents mutation during a loop from silently extending that loop.
+Collection text conversion has a depth bound so recursive structures remain
+printable.
+
+`for` uses the same `iterate(iterator)` and `iteratorValue(iterator)` protocol
+for built-in and user-defined objects. Range, List, String, and Map sequence
+views implement this protocol. String indexes and `count` operate on Unicode
+characters rather than UTF-16 code units; slices and iteration therefore keep
+surrogate pairs intact.
