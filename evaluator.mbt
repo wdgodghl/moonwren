@@ -100,6 +100,18 @@ priv struct RuntimeIterator {
 }
 
 ///|
+priv struct RuntimeFiber {
+  function_identifier : Int
+  mut environment : Environment
+  mut initialized : Bool
+  mut state : Int
+  mut next_statement : Int
+  mut pending : ((Value) -> Stmt)?
+  mut last : Value
+  mut error : Value
+}
+
+///|
 priv struct RuntimeModule {
   name : String
   environment : Environment
@@ -118,6 +130,7 @@ priv struct RuntimeContext {
   map_entries : Array[RuntimeMapEntryValue]
   sequences : Array[RuntimeSequence]
   iterators : Array[RuntimeIterator]
+  fibers : Array[RuntimeFiber]
   modules : Array[RuntimeModule]
   foreign_methods : Array[ForeignMethodBinding]
   loader : (String, String) -> ModuleLoadResult
@@ -126,6 +139,7 @@ priv struct RuntimeContext {
   max_steps : Int
   mut call_depth : Int
   max_call_depth : Int
+  mut current_fiber : Int
 }
 
 ///|
@@ -146,6 +160,18 @@ fn RuntimeContext::new_with_loader(
     map_entries: [],
     sequences: [],
     iterators: [],
+    fibers: [
+      {
+        function_identifier: -1,
+        environment: Environment::new(),
+        initialized: true,
+        state: 1,
+        next_statement: 0,
+        pending: None,
+        last: Value::null(),
+        error: Value::null(),
+      },
+    ],
     modules: [],
     foreign_methods,
     loader,
@@ -154,6 +180,7 @@ fn RuntimeContext::new_with_loader(
     max_steps,
     call_depth: 0,
     max_call_depth: 64,
+    current_fiber: 0,
   }
 }
 
@@ -182,6 +209,25 @@ fn RuntimeContext::new_map(self : RuntimeContext) -> Value {
   let identifier = self.maps.length()
   self.maps.push({ entries: [], })
   Value::map(identifier)
+}
+
+///|
+fn RuntimeContext::new_fiber(
+  self : RuntimeContext,
+  function_identifier : Int,
+) -> Value {
+  let identifier = self.fibers.length()
+  self.fibers.push({
+    function_identifier,
+    environment: Environment::new(),
+    initialized: false,
+    state: 0,
+    next_statement: 0,
+    pending: None,
+    last: Value::null(),
+    error: Value::null(),
+  })
+  Value::fiber(identifier)
 }
 
 ///|
@@ -219,6 +265,7 @@ fn bind_core_globals(environment : Environment) -> Unit {
   ignore(environment.bind("Object", Value::core_class(ObjectClass)))
   ignore(environment.bind("Bool", Value::core_class(BoolClass)))
   ignore(environment.bind("Class", Value::core_class(ClassClass)))
+  ignore(environment.bind("Fiber", Value::core_class(FiberClass)))
   ignore(environment.bind("Fn", Value::core_class(FnClass)))
   ignore(environment.bind("List", Value::core_class(ListClass)))
   ignore(environment.bind("Map", Value::core_class(MapClass)))
@@ -714,6 +761,7 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
     MapValue(_) => Value::core_class(MapClass)
     SequenceValue(_) => Value::core_class(SequenceClass)
     FunctionValue(_) => Value::core_class(FnClass)
+    FiberValue(_) => Value::core_class(FiberClass)
     InstanceValue(identifier) =>
       if identifier >= 0 && identifier < context.instances.length() {
         Value::class_value(context.instances[identifier].class_identifier)
@@ -751,6 +799,7 @@ fn value_is_core_class(value : Value, target : CoreClass) -> Bool {
     MapValue(_) => target == MapClass || target == SequenceClass
     SequenceValue(_) => target == SequenceClass
     FunctionValue(_) => target == FnClass
+    FiberValue(_) => target == FiberClass
     ClassValue(_) | CoreClassValue(_) | SystemValue => target == ClassClass
     InstanceValue(_) | MapEntryValue(_) | IteratorValue(_) => false
     SuperValue(_, _, _) => false
@@ -2125,6 +2174,497 @@ fn invalid_function_argument(
 }
 
 ///|
+priv enum FiberExpressionStep {
+  FiberExpressionReady
+  FiberExpressionYielded(Value, (Value) -> Expr)
+  FiberExpressionFailed(Diagnostic)
+}
+
+///|
+priv enum FiberStatementStep {
+  FiberStatementReady
+  FiberStatementYielded(Value, (Value) -> Stmt)
+  FiberStatementFailed(Diagnostic)
+}
+
+///|
+fn fiber_yield_value(
+  name : String,
+  arguments : Array[Expr],
+  span : SourceSpan,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  let valid_arity = if name == "suspend" {
+    arguments.length() == 0
+  } else {
+    arguments.length() <= 1
+  }
+  if !valid_arity {
+    return FiberExpressionFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidArity,
+        "Fiber.\{name} expects \{if name == "suspend" { "zero" } else { "zero or one" }} argument",
+        span,
+      ),
+    )
+  }
+  let yielded = if arguments.length() == 0 {
+    Value::null()
+  } else {
+    match evaluate_expression_in(arguments[0], environment, context) {
+      EvaluationSucceeded(value) => value
+      EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+    }
+  }
+  FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
+}
+
+///|
+fn prepare_fiber_expression(
+  expression : Expr,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match expression {
+    MethodCall(Variable("Fiber", _), name, arguments, span) => {
+      if name == "yield" || name == "suspend" {
+        return fiber_yield_value(name, arguments, span, environment, context)
+      }
+      FiberExpressionReady
+    }
+    MethodCall(receiver, name, arguments, span) => {
+      match prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          return FiberExpressionYielded(yielded, fn(resumed) {
+            MethodCall(continuation(resumed), name, arguments, span)
+          })
+        FiberExpressionReady => ()
+      }
+      for index = 0; index < arguments.length(); index = index + 1 {
+        match prepare_fiber_expression(arguments[index], environment, context) {
+          FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+          FiberExpressionYielded(yielded, continuation) => {
+            let argument_index = index
+            return FiberExpressionYielded(yielded, fn(resumed) {
+              let rebuilt : Array[Expr] = []
+              for position = 0
+                  position < arguments.length()
+                  position = position + 1 {
+                rebuilt.push(
+                  if position == argument_index {
+                    continuation(resumed)
+                  } else {
+                    arguments[position]
+                  },
+                )
+              }
+              MethodCall(receiver, name, rebuilt, span)
+            })
+          }
+          FiberExpressionReady => ()
+        }
+      }
+      if name == "transfer" && context.current_fiber != 0 {
+        match receiver {
+          Variable(_, _) =>
+            match evaluate_expression_in(receiver, environment, context) {
+              EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+              EvaluationSucceeded(FiberValue(0)) =>
+                return fiber_yield_value(
+                  "transfer", arguments, span, environment, context,
+                )
+              EvaluationSucceeded(_) => ()
+            }
+          _ => ()
+        }
+      }
+      FiberExpressionReady
+    }
+    PropertyGet(receiver, name, span) =>
+      match prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            PropertyGet(continuation(resumed), name, span)
+          })
+      }
+    Grouping(inner, span) =>
+      match prepare_fiber_expression(inner, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            Grouping(continuation(resumed), span)
+          })
+      }
+    Unary(operator, right, span) =>
+      match prepare_fiber_expression(right, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            Unary(operator, continuation(resumed), span)
+          })
+      }
+    Binary(left, operator, right, span) =>
+      match prepare_fiber_expression(left, environment, context) {
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            Binary(continuation(resumed), operator, right, span)
+          })
+        FiberExpressionReady =>
+          match prepare_fiber_expression(right, environment, context) {
+            FiberExpressionReady => FiberExpressionReady
+            FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+            FiberExpressionYielded(yielded, continuation) =>
+              FiberExpressionYielded(yielded, fn(resumed) {
+                Binary(left, operator, continuation(resumed), span)
+              })
+          }
+      }
+    Assign(name, value, span) =>
+      match prepare_fiber_expression(value, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            Assign(name, continuation(resumed), span)
+          })
+      }
+    FieldAssign(name, value, span) =>
+      match prepare_fiber_expression(value, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            FieldAssign(name, continuation(resumed), span)
+          })
+      }
+    StaticFieldAssign(name, value, span) =>
+      match prepare_fiber_expression(value, environment, context) {
+        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            StaticFieldAssign(name, continuation(resumed), span)
+          })
+      }
+    SubscriptGet(receiver, index, span) =>
+      match prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            SubscriptGet(continuation(resumed), index, span)
+          })
+        FiberExpressionReady =>
+          match prepare_fiber_expression(index, environment, context) {
+            FiberExpressionReady => FiberExpressionReady
+            FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+            FiberExpressionYielded(yielded, continuation) =>
+              FiberExpressionYielded(yielded, fn(resumed) {
+                SubscriptGet(receiver, continuation(resumed), span)
+              })
+          }
+      }
+    _ => FiberExpressionReady
+  }
+}
+
+///|
+fn prepare_fiber_statement(
+  statement : Stmt,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match statement {
+    ExpressionStatement(expression, span) =>
+      match prepare_fiber_expression(expression, environment, context) {
+        FiberExpressionReady => FiberStatementReady
+        FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberStatementYielded(yielded, fn(resumed) {
+            ExpressionStatement(continuation(resumed), span)
+          })
+      }
+    VariableStatement(name, Some(initializer), span) =>
+      match prepare_fiber_expression(initializer, environment, context) {
+        FiberExpressionReady => FiberStatementReady
+        FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberStatementYielded(yielded, fn(resumed) {
+            VariableStatement(name, Some(continuation(resumed)), span)
+          })
+      }
+    ReturnStatement(Some(value), span) =>
+      match prepare_fiber_expression(value, environment, context) {
+        FiberExpressionReady => FiberStatementReady
+        FiberExpressionFailed(issue) => FiberStatementFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberStatementYielded(yielded, fn(resumed) {
+            ReturnStatement(Some(continuation(resumed)), span)
+          })
+      }
+    _ => FiberStatementReady
+  }
+}
+
+///|
+fn restore_fiber_caller(
+  context : RuntimeContext,
+  previous_fiber : Int,
+  previous_source : String,
+) -> Unit {
+  context.current_fiber = previous_fiber
+  context.current_source = previous_source
+  context.call_depth = context.call_depth - 1
+}
+
+///|
+fn abort_runtime_fiber(
+  identifier : Int,
+  issue : Diagnostic,
+  previous_fiber : Int,
+  previous_source : String,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let fiber = context.fibers[identifier]
+  fiber.state = 4
+  fiber.error = Value::string(issue.message)
+  fiber.pending = None
+  restore_fiber_caller(context, previous_fiber, previous_source)
+  EvaluationFailed(issue)
+}
+
+///|
+fn resume_runtime_fiber(
+  identifier : Int,
+  input : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if identifier <= 0 || identifier >= context.fibers.length() {
+    return evaluation_error(
+      InvalidFiberState,
+      "fiber is not available in this runtime",
+      span,
+    )
+  }
+  let fiber = context.fibers[identifier]
+  if fiber.state == 1 {
+    return evaluation_error(
+      InvalidFiberState,
+      "cannot resume a running fiber",
+      span,
+    )
+  }
+  if fiber.state == 3 {
+    return evaluation_error(
+      InvalidFiberState,
+      "cannot resume a completed fiber",
+      span,
+    )
+  }
+  if fiber.state == 4 {
+    return evaluation_error(
+      InvalidFiberState,
+      "cannot resume an aborted fiber",
+      span,
+    )
+  }
+  if fiber.function_identifier < 0 ||
+    fiber.function_identifier >= context.closures.length() {
+    return evaluation_error(
+      InvalidFiberState,
+      "fiber function is not available",
+      span,
+    )
+  }
+  if context.call_depth >= context.max_call_depth {
+    return evaluation_error(
+      CallStackLimit,
+      "fiber call depth limit exceeded",
+      span,
+    )
+  }
+  let closure = context.closures[fiber.function_identifier]
+  if !fiber.initialized {
+    fiber.environment = closure.environment.capture()
+    fiber.environment.push_scope()
+    if closure.parameters.length() == 1 {
+      ignore(fiber.environment.bind(closure.parameters[0], input))
+    }
+    fiber.initialized = true
+  }
+  let previous_fiber = context.current_fiber
+  let previous_source = context.current_source
+  context.current_fiber = identifier
+  context.current_source = closure.source_name
+  context.call_depth = context.call_depth + 1
+  fiber.state = 1
+  let mut pending_input = Some(input)
+  while true {
+    let statement = match fiber.pending {
+      Some(continuation) => {
+        fiber.pending = None
+        let resumed = match pending_input {
+          Some(value) => value
+          None => Value::null()
+        }
+        pending_input = None
+        continuation(resumed)
+      }
+      None => {
+        if fiber.next_statement >= closure.body.length() {
+          fiber.state = 3
+          let result = fiber.last
+          restore_fiber_caller(context, previous_fiber, previous_source)
+          return EvaluationSucceeded(result)
+        }
+        let current = closure.body[fiber.next_statement]
+        fiber.next_statement = fiber.next_statement + 1
+        current
+      }
+    }
+    match prepare_fiber_statement(statement, fiber.environment, context) {
+      FiberStatementFailed(issue) =>
+        return abort_runtime_fiber(
+          identifier, issue, previous_fiber, previous_source, context,
+        )
+      FiberStatementYielded(value, continuation) => {
+        fiber.pending = Some(continuation)
+        fiber.state = 2
+        restore_fiber_caller(context, previous_fiber, previous_source)
+        return EvaluationSucceeded(value)
+      }
+      FiberStatementReady => ()
+    }
+    match execute_statement_in(statement, fiber.environment, context) {
+      StatementCompleted(value) => fiber.last = value
+      StatementReturned(value, _) => {
+        fiber.state = 3
+        fiber.last = value
+        restore_fiber_caller(context, previous_fiber, previous_source)
+        return EvaluationSucceeded(value)
+      }
+      StatementBroken(break_span) =>
+        return abort_runtime_fiber(
+          identifier,
+          Diagnostic::new(
+            Runtime,
+            BreakOutsideLoop,
+            "break cannot cross a fiber boundary",
+            break_span,
+          ),
+          previous_fiber,
+          previous_source,
+          context,
+        )
+      StatementContinued(continue_span) =>
+        return abort_runtime_fiber(
+          identifier,
+          Diagnostic::new(
+            Runtime,
+            ContinueOutsideLoop,
+            "continue cannot cross a fiber boundary",
+            continue_span,
+          ),
+          previous_fiber,
+          previous_source,
+          context,
+        )
+      StatementFailed(issue) =>
+        return abort_runtime_fiber(
+          identifier, issue, previous_fiber, previous_source, context,
+        )
+    }
+  }
+  EvaluationSucceeded(Value::null())
+}
+
+///|
+fn invoke_fiber_method(
+  identifier : Int,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if identifier < 0 || identifier >= context.fibers.length() {
+    return evaluation_error(
+      InvalidFiberState,
+      "fiber is not available in this runtime",
+      span,
+    )
+  }
+  match name {
+    "call" | "try" | "transfer" => {
+      if arguments.length() > 1 {
+        return evaluation_error(
+          InvalidArity,
+          "Fiber.\{name} expects zero or one argument, received \{arguments.length()}",
+          span,
+        )
+      }
+      if identifier == 0 {
+        return evaluation_error(
+          InvalidFiberState,
+          "the main fiber can only be a transfer target from a running fiber",
+          span,
+        )
+      }
+      let input = if arguments.length() == 0 {
+        Value::null()
+      } else {
+        arguments[0]
+      }
+      match resume_runtime_fiber(identifier, input, span, context) {
+        EvaluationSucceeded(value) => EvaluationSucceeded(value)
+        EvaluationFailed(issue) =>
+          if name == "try" {
+            EvaluationSucceeded(Value::string(issue.message))
+          } else {
+            EvaluationFailed(issue)
+          }
+      }
+    }
+    "transferError" => {
+      if arguments.length() != 1 {
+        return invalid_collection_arity(
+          "Fiber",
+          name,
+          1,
+          arguments.length(),
+          span,
+        )
+      }
+      if identifier == 0 {
+        return evaluation_error(
+          FiberAborted,
+          runtime_value_to_text(arguments[0], context, 0),
+          span,
+        )
+      }
+      let fiber = context.fibers[identifier]
+      fiber.state = 4
+      fiber.error = arguments[0]
+      fiber.pending = None
+      EvaluationSucceeded(arguments[0])
+    }
+    _ =>
+      evaluation_error(
+        UndefinedMethod,
+        "Fiber does not implement method '\{name}'",
+        span,
+      )
+  }
+}
+
+///|
 fn invoke_sequence_operation(
   receiver : Value,
   name : String,
@@ -2854,6 +3394,55 @@ fn invoke_core_class_method(
       } else {
         EvaluationSucceeded(Value::bool(arguments[0] == arguments[1]))
       }
+    (FiberClass, "new") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("Fiber", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          FunctionValue(identifier) =>
+            if identifier < 0 || identifier >= context.closures.length() {
+              evaluation_error(
+                InvalidOperand,
+                "Fiber.new function is not available",
+                span,
+              )
+            } else if context.closures[identifier].parameters.length() > 1 {
+              evaluation_error(
+                InvalidArity,
+                "Fiber.new function may take zero or one parameter",
+                span,
+              )
+            } else {
+              EvaluationSucceeded(context.new_fiber(identifier))
+            }
+          value =>
+            evaluation_error(
+              InvalidOperand,
+              "Fiber.new expects a function, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+    (FiberClass, "abort") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("Fiber", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          NullValue => EvaluationSucceeded(Value::null())
+          value =>
+            evaluation_error(
+              FiberAborted,
+              runtime_value_to_text(value, context, 0),
+              span,
+            )
+        }
+      }
+    (FiberClass, "yield") | (FiberClass, "suspend") =>
+      evaluation_error(
+        InvalidFiberState,
+        "Fiber.\{name} must appear in a resumable top-level fiber statement",
+        span,
+      )
     (FnClass, "new") =>
       if arguments.length() != 1 {
         invalid_collection_arity("Fn", name, 1, arguments.length(), span)
@@ -3168,6 +3757,8 @@ fn invoke_method(
           span,
         )
       }
+    FiberValue(identifier) =>
+      invoke_fiber_method(identifier, name, arguments, span, context)
     NumberValue(number) => invoke_number_method(number, name, arguments, span)
     StringValue(text) =>
       invoke_string_method(text, name, arguments, span, context)
@@ -3293,6 +3884,7 @@ fn read_core_class_property(
   class_value : CoreClass,
   name : String,
   span : SourceSpan,
+  context : RuntimeContext,
 ) -> EvaluationResult {
   if name == "name" || name == "toString" {
     return EvaluationSucceeded(Value::string(class_value.name()))
@@ -3308,6 +3900,9 @@ fn read_core_class_property(
     } else {
       EvaluationSucceeded(Value::core_class(ObjectClass))
     }
+  }
+  if class_value == FiberClass && name == "current" {
+    return EvaluationSucceeded(Value::fiber(context.current_fiber))
   }
   if class_value == NumClass {
     return match name {
@@ -3459,7 +4054,7 @@ fn read_property(
       if name == "type" {
         EvaluationSucceeded(Value::core_class(ClassClass))
       } else {
-        read_core_class_property(class_value, name, span)
+        read_core_class_property(class_value, name, span, context)
       }
     SuperClassValue(superclass, receiver_class) =>
       match
@@ -3613,6 +4208,27 @@ fn read_property(
         EvaluationSucceeded(Value::core_class(SequenceClass))
       } else {
         read_sequence_property(receiver, name, span, context)
+      }
+    FiberValue(identifier) =>
+      if identifier < 0 || identifier >= context.fibers.length() {
+        evaluation_error(InvalidFiberState, "fiber is not available", span)
+      } else {
+        let fiber = context.fibers[identifier]
+        match name {
+          "isDone" =>
+            EvaluationSucceeded(
+              Value::bool(fiber.state == 3 || fiber.state == 4),
+            )
+          "error" => EvaluationSucceeded(fiber.error)
+          "type" => EvaluationSucceeded(Value::core_class(FiberClass))
+          "toString" => EvaluationSucceeded(Value::string("<fiber>"))
+          _ =>
+            evaluation_error(
+              UndefinedMethod,
+              "Fiber does not implement getter '\{name}'",
+              span,
+            )
+        }
       }
     MapEntryValue(identifier) =>
       if identifier < 0 || identifier >= context.map_entries.length() {

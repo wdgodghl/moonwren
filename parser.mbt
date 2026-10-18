@@ -260,7 +260,7 @@ fn Parser::primary(self : Parser) -> Expr {
 
 ///|
 fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
-  ignore(self.consume(LeftBrace, "expected '{' after Fn.new"))
+  ignore(self.consume(LeftBrace, "expected '{' after function constructor"))
   self.skip_newlines()
   let parameters : Array[String] = []
   if self.take(Pipe) {
@@ -322,11 +322,23 @@ fn Parser::method_call(self : Parser) -> Expr {
     if self.take(Dot) {
       let name = self.consume(Identifier, "expected method name after '.'")
       let is_function_literal = match receiver {
-        Variable("Fn", _) => name.lexeme == "new" && self.check(LeftBrace)
+        Variable("Fn", _) | Variable("Fiber", _) =>
+          name.lexeme == "new" && self.check(LeftBrace)
         _ => false
       }
       if is_function_literal {
-        receiver = self.function_literal(receiver.span())
+        let owner = receiver
+        let literal = self.function_literal(owner.span())
+        receiver = match owner {
+          Variable("Fiber", _) =>
+            MethodCall(
+              owner,
+              "new",
+              [literal],
+              SourceSpan::merge(owner.span(), literal.span()),
+            )
+          _ => literal
+        }
       } else if self.take(LeftParen) {
         self.skip_newlines()
         let arguments : Array[Expr] = []

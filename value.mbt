@@ -4,6 +4,7 @@ pub(all) enum CoreClass {
   ObjectClass
   BoolClass
   ClassClass
+  FiberClass
   FnClass
   ListClass
   MapClass
@@ -26,6 +27,7 @@ pub fn CoreClass::name(self : CoreClass) -> String {
     ObjectClass => "Object"
     BoolClass => "Bool"
     ClassClass => "Class"
+    FiberClass => "Fiber"
     FnClass => "Fn"
     ListClass => "List"
     MapClass => "Map"
@@ -48,6 +50,7 @@ pub(all) enum Value {
   MapValue(Int)
   SequenceValue(Int)
   FunctionValue(Int)
+  FiberValue(Int)
   ClassValue(Int)
   InstanceValue(Int)
   SuperValue(Int, Int, String)
@@ -110,6 +113,11 @@ fn Value::function(identifier : Int) -> Value {
 }
 
 ///|
+fn Value::fiber(identifier : Int) -> Value {
+  FiberValue(identifier)
+}
+
+///|
 fn Value::class_value(identifier : Int) -> Value {
   ClassValue(identifier)
 }
@@ -160,6 +168,7 @@ pub fn Value::type_name(self : Value) -> String {
     MapValue(_) => "Map"
     SequenceValue(_) => "Sequence"
     FunctionValue(_) => "Fn"
+    FiberValue(_) => "Fiber"
     ClassValue(_) => "Class"
     InstanceValue(_) => "Instance"
     SuperValue(_, _, _) => "Super"
@@ -186,6 +195,7 @@ pub fn Value::to_text(self : Value) -> String {
     MapValue(_) => "<map>"
     SequenceValue(_) => "<sequence>"
     FunctionValue(_) => "<fn>"
+    FiberValue(_) => "<fiber>"
     ClassValue(_) => "<class>"
     InstanceValue(_) => "<instance>"
     SuperValue(_, _, _) => "<super>"

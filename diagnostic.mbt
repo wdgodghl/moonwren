@@ -45,6 +45,8 @@ pub(all) enum DiagnosticCode {
   ContinueOutsideLoop
   ForeignBindingMissing
   ForeignCallFailed
+  InvalidFiberState
+  FiberAborted
   UnsupportedFeature
 } derive(Eq, Debug)
 
