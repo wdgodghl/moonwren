@@ -232,3 +232,40 @@ test "called functions keep the visible fiber identity" {
     "System.print(fiber.call())\n"
   expect_fiber_output(source, ["pause", "true", "7"])
 }
+
+///|
+test "worker fibers transfer control and values directly" {
+  let source = "var main = Fiber.current\n" +
+    "var left = null\n" +
+    "var right = null\n" +
+    "left = Fiber.new {\n" +
+    "  var reply = right.transfer(\"left to right\")\n" +
+    "  System.print(reply)\n" +
+    "  var resumed = main.transfer(\"left to main\")\n" +
+    "  return resumed\n" +
+    "}\n" +
+    "right = Fiber.new { |message|\n" +
+    "  System.print(message)\n" +
+    "  return left.transfer(\"right to left\")\n" +
+    "}\n" +
+    "System.print(left.transfer())\n" +
+    "System.print(left.transfer(\"finish left\"))\n" +
+    "System.print(left.isDone)\n" +
+    "System.print(right.transfer(\"finish right\"))\n" +
+    "System.print(right.isDone)\n"
+  expect_fiber_output(source, [
+    "left to right", "right to left", "left to main", "finish left", "true", "finish right",
+    "true",
+  ])
+}
+
+///|
+test "a fiber cannot transfer to itself" {
+  let source = "var fiber = Fiber.new { fiber.transfer() }\n" +
+    "System.print(fiber.try())\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, output) =>
+      assert_true(output[0].contains("cannot transfer to itself"))
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}

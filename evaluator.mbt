@@ -148,6 +148,7 @@ priv struct RuntimeContext {
   mut call_depth : Int
   max_call_depth : Int
   mut current_fiber : Int
+  mut transfer_target : Int
 }
 
 ///|
@@ -194,6 +195,7 @@ fn RuntimeContext::new_with_loader(
     call_depth: 0,
     max_call_depth: 64,
     current_fiber: 0,
+    transfer_target: -1,
   }
 }
 
@@ -2371,10 +2373,22 @@ fn prepare_fiber_expression(
           Variable(_, _) =>
             match evaluate_expression_in(receiver, environment, context) {
               EvaluationFailed(issue) => return FiberExpressionFailed(issue)
-              EvaluationSucceeded(FiberValue(0)) =>
+              EvaluationSucceeded(FiberValue(target)) => {
+                if target == context.current_fiber {
+                  return FiberExpressionFailed(
+                    Diagnostic::new(
+                      Runtime,
+                      InvalidFiberState,
+                      "a fiber cannot transfer to itself",
+                      span,
+                    ),
+                  )
+                }
+                context.transfer_target = target
                 return fiber_yield_value(
                   "transfer", arguments, span, environment, context,
                 )
+              }
               EvaluationSucceeded(_) => ()
             }
           _ => ()
@@ -3303,7 +3317,7 @@ fn invoke_fiber_method(
       } else {
         arguments[0]
       }
-      match resume_runtime_fiber(identifier, input, span, context) {
+      match resume_fiber_transfer_chain(identifier, input, span, context) {
         EvaluationSucceeded(value) => EvaluationSucceeded(value)
         EvaluationFailed(issue) =>
           if name == "try" {
@@ -3343,6 +3357,40 @@ fn invoke_fiber_method(
         span,
       )
   }
+}
+
+///|
+fn resume_fiber_transfer_chain(
+  identifier : Int,
+  input : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let mut target = identifier
+  let mut transferred = input
+  while true {
+    context.transfer_target = -1
+    let result = resume_runtime_fiber(target, transferred, span, context)
+    match result {
+      EvaluationFailed(issue) => return EvaluationFailed(issue)
+      EvaluationSucceeded(value) => {
+        let next = context.transfer_target
+        if next < 0 || next == 0 {
+          return EvaluationSucceeded(value)
+        }
+        if next >= context.fibers.length() {
+          return evaluation_error(
+            InvalidFiberState,
+            "transfer target is not available in this runtime",
+            span,
+          )
+        }
+        target = next
+        transferred = value
+      }
+    }
+  }
+  EvaluationSucceeded(Value::null())
 }
 
 ///|
