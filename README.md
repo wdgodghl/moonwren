@@ -7,14 +7,15 @@ standalone command-line runner, and behavior-focused compatibility tests.
 The project is under active development. The current milestone covers source
 locations, lexical analysis, primitive expressions, variables, lexical block
 scope, assignment, conditionals, `while` loops, protocol-based `for` loops,
-method and getter calls, captured program output, `System.print`, universal
-`toString`, range metadata getters, multiline functions with lexical closures,
+method and getter calls, captured program output, the core class model,
+universal `toString`, range metadata getters, multiline functions with lexical closures,
 early `return`, classes, constructors, instances, fields, methods, getters, and
 `this`, inheritance, method overriding, `super`, class relationship checks,
 static members, and structured `break`/`continue` control flow. Core values
 include mutable List and Map collections, Unicode-aware String operations,
-negative indexes, range slices, stable key/value views, and extensible
-iteration. Named modules, explicit imports, loader callbacks, module caching,
+negative indexes, range slices, MapEntry iteration, eager sequence aggregations,
+and composable lazy `map`/`where`/`skip`/`take` pipelines. Named modules,
+explicit imports, loader callbacks, module caching,
 cross-module stack traces, and multi-file CLI execution are also available.
 Fibers and foreign methods follow in later milestones.
 
@@ -123,10 +124,11 @@ accidentally break or continue its caller's loop. See
 [`examples/loop_control.wren`](examples/loop_control.wren).
 
 Lists and maps are mutable reference values. Lists support positive and negative
-indexes, range slices, `add`, `insert`, `remove`, `removeAt`, `contains`,
-`indexOf`, `swap`, `clear`, `count`, and stable `for` iteration. Maps accept
-immutable keys and provide indexed lookup and update, `containsKey`, `remove`,
-`clear`, `count`, plus snapshot `keys` and `values` sequences:
+indexes, range slices, construction and filling, `add`, `addAll`, `insert`,
+`remove`, `removeAt`, `contains`, `indexOf`, `swap`, `sort`, concatenation,
+repetition, `clear`, `count`, and stable `for` iteration. Maps accept immutable
+keys and provide indexed lookup and update, `containsKey`, `remove`, `clear`,
+`count`, snapshot `keys` and `values` views, and entry iteration:
 
 ```wren
 var scores = {"Ada": 38, "Lin": 40}
@@ -145,10 +147,27 @@ example including nested collections and removal.
 
 Strings expose character-based indexing, slicing, counting, and iteration, so
 surrogate pairs are never returned as partial characters. The core methods
-include `contains`, `startsWith`, `endsWith`, `indexOf`, `split`, and `replace`.
+include `contains`, `startsWith`, `endsWith`, `indexOf`, `split`, `replace`,
+trimming, UTF-8 byte views, and code-point views. `Num` provides parsing,
+constants, predicates, rounding, trigonometry, logarithms, powers, and clamping.
 Any class can participate in a `for` loop by implementing `iterate(iterator)`
 and `iteratorValue(iterator)`. See
 [`examples/iterables.wren`](examples/iterables.wren).
+
+Every built-in iterable supports `all`, `any`, `contains`, `count`, `each`,
+`join`, and seeded or unseeded `reduce`. Transformations are lazy and can be
+composed before materializing with `toList`; short-circuiting operations only
+consume as much input as needed:
+
+```wren
+var selected = (1..20).where(Fn.new { |n| n % 2 == 0 })
+selected = selected.map(Fn.new { |n| n * n }).skip(2).take(3)
+
+System.print(selected.toList) // [36, 64, 100]
+```
+
+See [`examples/core_library.wren`](examples/core_library.wren) for a runnable
+tour of the expanded core library.
 
 Multi-file programs use explicit imports. The CLI resolves relative module
 names from the importing file, automatically adds `.wren` when omitted, and
@@ -202,8 +221,9 @@ let result = run_modules("main", modules, 100000)
 
 MoonWren is not yet a complete Wren implementation. The method dispatcher
 supports constructor signatures, overloaded instance methods by arity,
-user-defined getters, the two `System.print` signatures, and the standard
-`from`, `to`, `min`, `max`, and `isInclusive` range properties. Collection and
+user-defined getters, core class metadata and constructors, captured
+`System.print`/`write` output, and the standard `from`, `to`, `min`, `max`, and
+`isInclusive` range properties. Collection and
 String subscripts produce structured invalid-index and bounds diagnostics, and
 Map keys are checked before lookup or mutation. Inherited
 lookup advances from each method's declaring class, so multi-level `super`

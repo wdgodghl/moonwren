@@ -43,13 +43,15 @@ rather than ignored.
 
 ## Runtime
 
-Primitive values are represented by one tagged value type. An environment is
-a stack of lexical scopes, so lookup and assignment select the nearest visible
-binding. Method receivers and arguments are evaluated from left to right before
-dispatch. Getter calls use a separate syntax node so `value.toString` remains
-distinct from a zero-argument method such as `System.print()`. The initial
-built-in receiver implements both `System.print` signatures and captures output
-as lines, keeping the library independent of a particular console. The
+Primitive values, core class objects, collection handles, and iterator handles
+are represented by one tagged value type. An environment is a stack of lexical
+scopes, so lookup and assignment select the nearest visible binding. Method
+receivers and arguments are evaluated from left to right before dispatch.
+Getter calls use a separate syntax node so `value.toString` remains distinct
+from a zero-argument method such as `System.print()`. Core class objects expose
+runtime type relationships without manufacturing user-defined class records.
+The built-in `System` receiver captures print and write output as lines, keeping
+the library independent of a particular console. The
 interpreter applies a configurable execution-step budget and a separate
 function call-depth guard. Both limits are shared by the complete runtime, so
 function calls cannot bypass resource accounting. Numeric range values
@@ -72,6 +74,15 @@ same control path. List loops and Map key/value views use shallow snapshots to
 make mutation during traversal deterministic. String snapshots are built from
 MoonBit Unicode characters, keeping indexing, slicing, iteration, and search
 positions aligned on the same character boundaries.
+
+Lazy sequences store a source plus a transformation descriptor instead of an
+eager element array. A traversal allocates an independent iterator record that
+tracks the source iterator, yielded count, and current value. `map`, `where`,
+`skip`, and `take` therefore compose without intermediate lists and observe the
+source when consumed. Eager operations reuse the same advancement helper;
+`all`, `any`, `contains`, and `isEmpty` can stop before an unbounded source is
+exhausted. Map traversal snapshots key/value entry objects so later mutation
+cannot invalidate an active iterator.
 
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.

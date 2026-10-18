@@ -10,13 +10,16 @@ implementation idiomatic to MoonBit.
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
 | Branching and loops | Implemented subset | `if`, `while`, protocol-based `for`, `break`, `continue` |
-| Method and getter calls | Partial | Chaining, signatures by arity, user getters, range getters, `System.print` |
-| Core `System` class | Partial | `print()` and `print(object)` with captured output |
+| Method and getter calls | Partial | Chaining, signatures by arity, user getters, core type metadata |
+| Core class model | Implemented subset | `Object`, `Bool`, `Class`, `Fn`, `List`, `Map`, `Null`, `Num`, `Range`, `Sequence`, and `String` globals; `type`, `name`, `supertype`, and `is` |
+| Core `System` class | Partial | Captured `print`, `write`, `printAll`, `writeAll`; no-op `gc`; `clock` pending |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Core `String` class | Partial | Unicode character indexes, slices, iteration, search, split, replace |
-| Core `List` class | Partial | Literals, negative indexes, slices, mutation/search methods, iteration |
-| Core `Map` class | Partial | Literals, immutable keys, mutation methods, key/value sequence views |
-| Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
+| Core `String` class | Partial | Unicode character indexes, slices, iteration, search, split, replace, trim, bytes/code points, static scalar construction |
+| Core `List` class | Partial | Construction, negative indexes, slices, mutation/search, sorting, concatenation, repetition, iteration |
+| Core `Map` class | Partial | Construction, immutable keys, mutation, entry iteration, key/value sequence views |
+| Core `Num` class | Implemented subset | Parsing, constants, predicates, rounding, trigonometry, logs, powers, min/max/clamp |
+| Core `Sequence` class | Implemented subset | Aggregation, predicates, joining, reduction, lazy `map`/`where`/`skip`/`take`, materialization |
+| Functions and closures | Partial | Construction, arity, multiline bodies, `return`, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
 | Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
@@ -56,17 +59,23 @@ List and Map values use runtime identity, so two separately allocated
 collections are not equal even when their contents match. Map lookup is
 deterministic and returns `null` for a missing key. Keys must be immutable core
 values or class values, and a repeated literal key replaces the earlier value.
-Map `keys` and `values` getters preserve insertion order in immutable sequence
+Map iteration yields key/value entry objects in deterministic insertion order;
+its `keys` and `values` getters preserve the same order in immutable sequence
 snapshots. List iteration snapshots the elements present when the loop begins,
 which prevents mutation during a loop from silently extending that loop.
 Collection text conversion has a depth bound so recursive structures remain
 printable.
 
 `for` uses the same `iterate(iterator)` and `iteratorValue(iterator)` protocol
-for built-in and user-defined objects. Range, List, String, and Map sequence
-views implement this protocol. String indexes and `count` operate on Unicode
-characters rather than UTF-16 code units; slices and iteration therefore keep
-surrogate pairs intact.
+for built-in and user-defined objects. Range, List, String, Map, and lazy
+Sequence values implement this protocol. Sequence transformations keep their
+source and callback until iteration, and each traversal receives independent
+iterator state. Predicates and membership checks short-circuit. String indexes
+and `count` deliberately operate on Unicode characters instead of Wren's raw
+UTF-8 byte offsets; slices and iteration therefore never split a character.
+`String.fromByte` currently covers scalar-safe byte values rather than creating
+arbitrary invalid UTF-8. These two documented differences remain compatibility
+work rather than silent behavior.
 
 Imports support `import "module"`, explicit names using `for`, and local aliases
 using `as`. Every canonical module owns an isolated top-level environment and
