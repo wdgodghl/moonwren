@@ -16,8 +16,9 @@ include mutable List and Map collections, Unicode-aware String operations,
 negative indexes, range slices, MapEntry iteration, eager sequence aggregations,
 and composable lazy `map`/`where`/`skip`/`take` pipelines. Named modules,
 explicit imports, loader callbacks, module caching,
-cross-module stack traces, and multi-file CLI execution are also available.
-Fibers and foreign methods follow in later milestones.
+cross-module stack traces, multi-file CLI execution, cooperative Fiber values,
+and host-bound foreign methods are also available. Fully nested Fiber
+continuations and foreign classes follow in later milestones.
 
 ## Goals
 
@@ -169,6 +170,24 @@ System.print(selected.toList) // [36, 64, 100]
 See [`examples/core_library.wren`](examples/core_library.wren) for a runnable
 tour of the expanded core library.
 
+Fibers retain their local environment between calls and exchange values at
+cooperative suspension points. Errors can either propagate through `call` or be
+captured through `try`:
+
+```wren
+var worker = Fiber.new { |request|
+  System.print(request)
+  var response = Fiber.yield("waiting")
+  return response
+}
+
+System.print(worker.call("start")) // waiting
+System.print(worker.call("done"))  // done
+```
+
+See [`examples/fibers.wren`](examples/fibers.wren) for calls, main-fiber
+transfers, completion state, and captured aborts.
+
 Multi-file programs use explicit imports. The CLI resolves relative module
 names from the importing file, automatically adds `.wren` when omitted, and
 executes every canonical module once:
@@ -216,6 +235,13 @@ let modules = [
 ]
 let result = run_modules("main", modules, 100000)
 ```
+
+Wren classes may declare foreign instance methods, static methods, and getters.
+`run_with_foreign_methods` binds those declarations to typed MoonBit callbacks;
+callbacks receive the receiver and argument array, then return either a Wren
+value or a structured host failure. See
+[`docs/embedding.md`](docs/embedding.md) and
+[`examples/foreign_methods.wren`](examples/foreign_methods.wren).
 
 ## Project status
 

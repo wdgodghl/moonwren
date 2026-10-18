@@ -84,6 +84,21 @@ source when consumed. Eager operations reuse the same advancement helper;
 exhausted. Map traversal snapshots key/value entry objects so later mutation
 cannot invalidate an active iterator.
 
+Each Fiber owns a closure identifier, a persistent captured environment, a
+statement cursor, completion/error state, and an optional expression
+continuation. Starting or resuming a Fiber temporarily switches the runtime's
+active Fiber and source module. A yield stores a continuation that rebuilds the
+suspended expression with the next resume value, allowing several yields in a
+single expression without replaying completed output. The main Fiber is a
+stable runtime value used for cooperative transfers back to the caller.
+
+Foreign declarations remain ordinary class members in the syntax tree but are
+marked separately from MoonWren-backed methods. Dispatch derives the canonical
+Wren signature and looks it up in the run's immutable binding registry. The
+callback boundary passes a receiver plus ordered values and converts host
+failures into normal structured diagnostics, so module and call frames continue
+to work across the boundary.
+
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.
 Captured environments copy the scope structure while sharing mutable variable
@@ -140,7 +155,7 @@ files and relative `.wren` imports.
 
 ## Extension path
 
-The next runtime layer can add a host binding boundary. Fibers can then build
-on the same source spans, diagnostics, environments, output capture, iterator
-protocol, module loader, and execution limits without coupling those features
-to the scanner.
+The next runtime layer can extend Fiber continuations through nested statement
+and callable frames, then add foreign classes with host-owned storage and
+finalizers. Both can reuse the existing source spans, diagnostics, environments,
+output capture, module loader, and execution limits.

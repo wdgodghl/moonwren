@@ -21,9 +21,10 @@ implementation idiomatic to MoonBit.
 | Core `Sequence` class | Implemented subset | Aggregation, predicates, joining, reduction, lazy `map`/`where`/`skip`/`take`, materialization |
 | Functions and closures | Partial | Construction, arity, multiline bodies, `return`, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
-| Fibers | Planned | Cooperative execution |
+| Fibers | Implemented subset | Lazy creation, `current`, `call`, `try`, `yield`, `suspend`, main-fiber `transfer`, abort/error/completion state |
 | Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
-| Foreign methods | Planned | Embedding boundary |
+| Foreign methods | Implemented | Instance/static methods and getters, canonical module binding, values and structured host failures |
+| Foreign classes | Planned | Host-owned instance storage and finalization |
 
 Unsupported syntax must produce a structured diagnostic. The parser and
 runtime should never report success after discarding an unsupported construct.
@@ -76,6 +77,24 @@ UTF-8 byte offsets; slices and iteration therefore never split a character.
 `String.fromByte` currently covers scalar-safe byte values rather than creating
 arbitrary invalid UTF-8. These two documented differences remain compatibility
 work rather than silent behavior.
+
+Fiber bodies keep a persistent captured environment and resume values through
+expression continuations. Suspension currently works in top-level Fiber body
+expression, variable, and return statements, including multiple suspension
+points in one expression. A suspension nested inside a block, conditional,
+loop, or separately called function is rejected with `InvalidFiberState`;
+supporting those positions requires preserving the complete nested execution
+stack and remains compatibility work. Transfers between the main Fiber and a
+worker preserve resume values. Worker-to-worker `transfer` currently uses the
+same synchronous return path as `call`, while `transferError` marks its target
+aborted without a full non-local stack transfer.
+
+Foreign methods are resolved using the canonical module name, class name,
+static flag, and Wren signature. Callbacks receive the receiver separately from
+the ordered arguments and may return any `Value` or a structured failure.
+Bindings are immutable for one run and callbacks execute while the interpreter
+is suspended, so the runtime is deliberately non-reentrant. Foreign classes
+and host-managed object storage are not yet implemented.
 
 Imports support `import "module"`, explicit names using `for`, and local aliases
 using `as`. Every canonical module owns an isolated top-level environment and
