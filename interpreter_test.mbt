@@ -796,3 +796,108 @@ test "list indexes produce structured diagnostics" {
       assert_eq(issues[0].code, @moonwren.IndexOutOfBounds)
   }
 }
+
+///|
+test "user classes can implement the iteration protocol" {
+  let source = "class Pair {\n" +
+    "  construct new() {}\n" +
+    "  iterate(iterator) {\n" +
+    "    if (iterator == null) return 0\n" +
+    "    return iterator < 1 ? iterator + 1 : false\n" +
+    "  }\n" +
+    "  iteratorValue(iterator) { return iterator + 10 }\n" +
+    "}\n" +
+    "var total = 0\n" +
+    "for (value in Pair.new()) total = total + value\n" +
+    "total\n"
+  expect_program_value(source, @moonwren.Value::number(21.0))
+}
+
+///|
+test "iterable classes must implement both protocol methods" {
+  let source = "class Broken {\n" +
+    "  construct new() {}\n" +
+    "  iterate(iterator) { return iterator == null ? 0 : false }\n" +
+    "}\n" +
+    "for (value in Broken.new()) value\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("incomplete iterator should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedMethod)
+  }
+}
+
+///|
+test "list indexes accept negative offsets" {
+  let source = "var values = [10, 20, 30]\n" +
+    "values[-1] = 12\n" +
+    "values[-3] + values[-1]\n"
+  expect_program_value(source, @moonwren.Value::number(22.0))
+}
+
+///|
+test "list methods normalize negative indexes" {
+  let source = "var values = [1, 2, 3]\n" +
+    "values.insert(-1, 8)\n" +
+    "var removed = values.removeAt(-2)\n" +
+    "removed + values[-1]\n"
+  expect_program_value(source, @moonwren.Value::number(11.0))
+}
+
+///|
+test "list range subscripts support inclusive exclusive and descending slices" {
+  let source = "var values = [0, 1, 2, 3, 4]\n" +
+    "values[1..3].toString + \"|\" + values[1...4].toString + \"|\" + values[3..1].toString\n"
+  expect_program_value(
+    source,
+    @moonwren.Value::string("[1, 2, 3]|[1, 2, 3]|[3, 2, 1]"),
+  )
+}
+
+///|
+test "list indexOf remove and swap mutate predictably" {
+  let source = "var values = [10, 20, 30]\n" +
+    "var index = values.indexOf(20)\n" +
+    "var removed = values.remove(20)\n" +
+    "var absent = values.remove(99)\n" +
+    "values.swap(0, -1)\n" +
+    "index + removed + (absent == null ? 1 : 0) + values[0]\n"
+  expect_program_value(source, @moonwren.Value::number(52.0))
+}
+
+///|
+test "map key and value views are stable iterable snapshots" {
+  let source = "var values = {\"a\": 1, \"b\": 2}\n" +
+    "var keys = values.keys\n" +
+    "var numbers = values.values\n" +
+    "values[\"c\"] = 100\n" +
+    "var keyCount = 0\n" +
+    "for (key in keys) keyCount = keyCount + 1\n" +
+    "var total = 0\n" +
+    "for (number in numbers) total = total + number\n" +
+    "keyCount + total + keys.count + numbers.count\n"
+  expect_program_value(source, @moonwren.Value::number(9.0))
+}
+
+///|
+test "mutable values cannot be used as map keys" {
+  match @moonwren.run("var key = [1]\nvar values = {key: 2}\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("mutable map key should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidMapKey)
+  }
+  match @moonwren.run("var values = {}\nvalues[[1]]\n") {
+    @moonwren.ProgramCompleted(_, _) => fail("mutable lookup key should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidMapKey)
+  }
+}
+
+///|
+test "built-in iteration protocol can be invoked directly" {
+  let source = "var values = [4, 5]\n" +
+    "var first = values.iterate(null)\n" +
+    "var second = values.iterate(first)\n" +
+    "values.iteratorValue(first) + values.iteratorValue(second)\n"
+  expect_program_value(source, @moonwren.Value::number(9.0))
+}

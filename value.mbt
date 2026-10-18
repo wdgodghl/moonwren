@@ -8,6 +8,7 @@ pub(all) enum Value {
   RangeValue(Double, Double, Bool)
   ListValue(Int)
   MapValue(Int)
+  SequenceValue(Int)
   FunctionValue(Int)
   ClassValue(Int)
   InstanceValue(Int)
@@ -58,6 +59,11 @@ fn Value::map(identifier : Int) -> Value {
 }
 
 ///|
+fn Value::sequence(identifier : Int) -> Value {
+  SequenceValue(identifier)
+}
+
+///|
 fn Value::function(identifier : Int) -> Value {
   FunctionValue(identifier)
 }
@@ -96,6 +102,7 @@ pub fn Value::type_name(self : Value) -> String {
     RangeValue(_, _, _) => "Range"
     ListValue(_) => "List"
     MapValue(_) => "Map"
+    SequenceValue(_) => "Sequence"
     FunctionValue(_) => "Fn"
     ClassValue(_) => "Class"
     InstanceValue(_) => "Instance"
@@ -118,6 +125,7 @@ pub fn Value::to_text(self : Value) -> String {
     RangeValue(from, to, false) => "\{from}...\{to}"
     ListValue(_) => "<list>"
     MapValue(_) => "<map>"
+    SequenceValue(_) => "<sequence>"
     FunctionValue(_) => "<fn>"
     ClassValue(_) => "<class>"
     InstanceValue(_) => "<instance>"

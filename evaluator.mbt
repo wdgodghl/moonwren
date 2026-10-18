@@ -55,6 +55,12 @@ priv struct RuntimeMap {
 }
 
 ///|
+/// Immutable snapshot used by Map key/value views and built-in iteration.
+priv struct RuntimeSequence {
+  items : Array[Value]
+}
+
+///|
 priv struct RuntimeContext {
   output : Array[String]
   closures : Array[Closure]
@@ -62,6 +68,7 @@ priv struct RuntimeContext {
   instances : Array[Instance]
   lists : Array[RuntimeList]
   maps : Array[RuntimeMap]
+  sequences : Array[RuntimeSequence]
   mut steps : Int
   max_steps : Int
   mut call_depth : Int
@@ -77,6 +84,7 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
     instances: [],
     lists: [],
     maps: [],
+    sequences: [],
     steps: 0,
     max_steps,
     call_depth: 0,
@@ -102,6 +110,16 @@ fn RuntimeContext::new_map(self : RuntimeContext) -> Value {
 }
 
 ///|
+fn RuntimeContext::new_sequence(
+  self : RuntimeContext,
+  items : Array[Value],
+) -> Value {
+  let identifier = self.sequences.length()
+  self.sequences.push({ items, })
+  Value::sequence(identifier)
+}
+
+///|
 fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int? {
   for index = 0; index < entries.length(); index = index + 1 {
     if entries[index].key == key {
@@ -109,6 +127,28 @@ fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int? {
     }
   }
   None
+}
+
+///|
+fn is_valid_map_key(value : Value) -> Bool {
+  match value {
+    NullValue
+    | BoolValue(_)
+    | NumberValue(_)
+    | StringValue(_)
+    | RangeValue(_, _, _)
+    | ClassValue(_) => true
+    _ => false
+  }
+}
+
+///|
+fn invalid_map_key(value : Value, span : SourceSpan) -> EvaluationResult {
+  evaluation_error(
+    InvalidMapKey,
+    "Map keys must be immutable values, received \{value.type_name()}",
+    span,
+  )
 }
 
 ///|
@@ -139,6 +179,7 @@ fn runtime_value_to_text(
     return match value {
       ListValue(_) => "[...]"
       MapValue(_) => "{...}"
+      SequenceValue(_) => "(...)"
       _ => value.to_text()
     }
   }
@@ -173,6 +214,20 @@ fn runtime_value_to_text(
             runtime_value_to_text(entries[index].value, context, depth + 1)
         }
         text + "}"
+      }
+    SequenceValue(identifier) =>
+      if identifier < 0 || identifier >= context.sequences.length() {
+        "<sequence>"
+      } else {
+        let items = context.sequences[identifier].items
+        let mut text = "("
+        for index = 0; index < items.length(); index = index + 1 {
+          if index > 0 {
+            text = text + ", "
+          }
+          text = text + runtime_value_to_text(items[index], context, depth + 1)
+        }
+        text + ")"
       }
     _ => value.to_text()
   }
@@ -877,8 +932,9 @@ fn collection_index(
 ) -> CollectionIndexResult {
   match value {
     NumberValue(number) => {
-      let index = number.to_int()
-      if Double::from_int(index) != number {
+      let raw_index = number.to_int()
+      let index = if raw_index < 0 { raw_index + length } else { raw_index }
+      if Double::from_int(raw_index) != number {
         CollectionIndexFailed(
           Diagnostic::new(
             Runtime,
@@ -893,7 +949,7 @@ fn collection_index(
           Diagnostic::new(
             Runtime,
             IndexOutOfBounds,
-            "list index \{index} is outside the valid range",
+            "list index \{raw_index} is outside the valid range",
             span,
           ),
         )
@@ -914,6 +970,70 @@ fn collection_index(
 }
 
 ///|
+fn read_list_range(
+  items : Array[Value],
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let endpoint_allows_end = !inclusive
+  let start = match
+    collection_index(
+      Value::number(from),
+      items.length(),
+      endpoint_allows_end,
+      span,
+    ) {
+    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+    CollectionIndexSucceeded(index) => index
+  }
+  let end = match
+    collection_index(
+      Value::number(to),
+      items.length(),
+      endpoint_allows_end,
+      span,
+    ) {
+    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+    CollectionIndexSucceeded(index) => index
+  }
+  if start == items.length() && start != end {
+    return evaluation_error(
+      IndexOutOfBounds,
+      "list slice starts outside the valid range",
+      span,
+    )
+  }
+  let result : Array[Value] = []
+  let step = if start <= end { 1 } else { -1 }
+  let mut index = start
+  while (if step > 0 {
+          if inclusive {
+            index <= end
+          } else {
+            index < end
+          }
+        } else if inclusive {
+          index >= end
+        } else {
+          index > end
+        }) {
+    if index < 0 || index >= items.length() {
+      return evaluation_error(
+        IndexOutOfBounds,
+        "list slice crosses outside the valid range",
+        span,
+      )
+    }
+    result.push(items[index])
+    index = index + step
+  }
+  EvaluationSucceeded(context.new_list(result))
+}
+
+///|
 fn read_subscript(
   receiver : Value,
   index : Value,
@@ -926,14 +1046,22 @@ fn read_subscript(
         evaluation_error(InvalidOperand, "list is not available", span)
       } else {
         let items = context.lists[identifier].items
-        match collection_index(index, items.length(), false, span) {
-          CollectionIndexSucceeded(index) => EvaluationSucceeded(items[index])
-          CollectionIndexFailed(issue) => EvaluationFailed(issue)
+        match index {
+          RangeValue(from, to, inclusive) =>
+            read_list_range(items, from, to, inclusive, span, context)
+          value =>
+            match collection_index(value, items.length(), false, span) {
+              CollectionIndexSucceeded(index) =>
+                EvaluationSucceeded(items[index])
+              CollectionIndexFailed(issue) => EvaluationFailed(issue)
+            }
         }
       }
     MapValue(identifier) =>
       if identifier < 0 || identifier >= context.maps.length() {
         evaluation_error(InvalidOperand, "map is not available", span)
+      } else if !is_valid_map_key(index) {
+        invalid_map_key(index, span)
       } else {
         let entries = context.maps[identifier].entries
         match find_map_key(entries, index) {
@@ -973,7 +1101,9 @@ fn write_subscript(
         }
       }
     MapValue(identifier) =>
-      if context.set_map_entry(identifier, index, value) {
+      if !is_valid_map_key(index) {
+        invalid_map_key(index, span)
+      } else if context.set_map_entry(identifier, index, value) {
         EvaluationSucceeded(value)
       } else {
         evaluation_error(InvalidOperand, "map is not available", span)
@@ -1003,6 +1133,157 @@ fn invalid_collection_arity(
 }
 
 ///|
+fn indexed_iterator(
+  owner : String,
+  items : Array[Value],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if arguments.length() != 1 {
+    return invalid_collection_arity(owner, name, 1, arguments.length(), span)
+  }
+  if name == "iterate" {
+    match arguments[0] {
+      NullValue =>
+        if items.length() == 0 {
+          EvaluationSucceeded(Value::bool(false))
+        } else {
+          EvaluationSucceeded(Value::number(0.0))
+        }
+      NumberValue(number) => {
+        let index = number.to_int()
+        if Double::from_int(index) != number || index < 0 {
+          evaluation_error(
+            InvalidOperand,
+            "\{owner} iterator must be a non-negative integer",
+            span,
+          )
+        } else if index + 1 < items.length() {
+          EvaluationSucceeded(Value::number(Double::from_int(index + 1)))
+        } else {
+          EvaluationSucceeded(Value::bool(false))
+        }
+      }
+      value =>
+        evaluation_error(
+          InvalidOperand,
+          "\{owner} iterator must be null or Num, received \{value.type_name()}",
+          span,
+        )
+    }
+  } else if name == "iteratorValue" {
+    match arguments[0] {
+      NumberValue(number) => {
+        let index = number.to_int()
+        if Double::from_int(index) != number ||
+          index < 0 ||
+          index >= items.length() {
+          evaluation_error(
+            InvalidOperand,
+            "\{owner} iterator is outside the valid range",
+            span,
+          )
+        } else {
+          EvaluationSucceeded(items[index])
+        }
+      }
+      value =>
+        evaluation_error(
+          InvalidOperand,
+          "\{owner} iterator must be a Num, received \{value.type_name()}",
+          span,
+        )
+    }
+  } else {
+    evaluation_error(
+      UndefinedMethod,
+      "\{owner} does not implement method '\{name}'",
+      span,
+    )
+  }
+}
+
+///|
+fn invoke_range_method(
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name != "iterate" && name != "iteratorValue" {
+    return evaluation_error(
+      UndefinedMethod,
+      "Range does not implement method '\{name}'",
+      span,
+    )
+  }
+  if arguments.length() != 1 {
+    return invalid_collection_arity("Range", name, 1, arguments.length(), span)
+  }
+  if name == "iteratorValue" {
+    return match arguments[0] {
+      NumberValue(_) => EvaluationSucceeded(arguments[0])
+      value =>
+        evaluation_error(
+          InvalidOperand,
+          "Range iterator must be a Num, received \{value.type_name()}",
+          span,
+        )
+    }
+  }
+  let step = if from <= to { 1.0 } else { -1.0 }
+  let next = match arguments[0] {
+    NullValue => from
+    NumberValue(current) => current + step
+    value =>
+      return evaluation_error(
+        InvalidOperand,
+        "Range iterator must be null or Num, received \{value.type_name()}",
+        span,
+      )
+  }
+  let has_next = if step > 0.0 {
+    if inclusive {
+      next <= to
+    } else {
+      next < to
+    }
+  } else if inclusive {
+    next >= to
+  } else {
+    next > to
+  }
+  if has_next {
+    EvaluationSucceeded(Value::number(next))
+  } else {
+    EvaluationSucceeded(Value::bool(false))
+  }
+}
+
+///|
+fn invoke_sequence_method(
+  identifier : Int,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if identifier < 0 || identifier >= context.sequences.length() {
+    return evaluation_error(InvalidOperand, "sequence is not available", span)
+  }
+  indexed_iterator(
+    "Sequence",
+    context.sequences[identifier].items,
+    name,
+    arguments,
+    span,
+  )
+}
+
+///|
 fn invoke_list_method(
   identifier : Int,
   name : String,
@@ -1014,6 +1295,9 @@ fn invoke_list_method(
     return evaluation_error(InvalidOperand, "list is not available", span)
   }
   let items = context.lists[identifier].items
+  if name == "iterate" || name == "iteratorValue" {
+    return indexed_iterator("List", items, name, arguments, span)
+  }
   match name {
     "add" =>
       if arguments.length() != 1 {
@@ -1070,6 +1354,60 @@ fn invoke_list_method(
         }
         EvaluationSucceeded(Value::bool(found))
       }
+    "indexOf" =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("List", name, 1, arguments.length(), span)
+      } else {
+        let mut found = -1
+        for index = 0; index < items.length(); index = index + 1 {
+          if found == -1 && items[index] == arguments[0] {
+            found = index
+          }
+        }
+        EvaluationSucceeded(Value::number(Double::from_int(found)))
+      }
+    "remove" =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("List", name, 1, arguments.length(), span)
+      } else {
+        let mut found = -1
+        for index = 0; index < items.length(); index = index + 1 {
+          if found == -1 && items[index] == arguments[0] {
+            found = index
+          }
+        }
+        if found == -1 {
+          EvaluationSucceeded(Value::null())
+        } else {
+          let removed = items[found]
+          for position = found
+              position + 1 < items.length()
+              position = position + 1 {
+            items[position] = items[position + 1]
+          }
+          ignore(items.pop())
+          EvaluationSucceeded(removed)
+        }
+      }
+    "swap" =>
+      if arguments.length() != 2 {
+        invalid_collection_arity("List", name, 2, arguments.length(), span)
+      } else {
+        let left = match
+          collection_index(arguments[0], items.length(), false, span) {
+          CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+          CollectionIndexSucceeded(index) => index
+        }
+        let right = match
+          collection_index(arguments[1], items.length(), false, span) {
+          CollectionIndexFailed(issue) => return EvaluationFailed(issue)
+          CollectionIndexSucceeded(index) => index
+        }
+        let temporary = items[left]
+        items[left] = items[right]
+        items[right] = temporary
+        EvaluationSucceeded(Value::null())
+      }
     "clear" =>
       if arguments.length() != 0 {
         invalid_collection_arity("List", name, 0, arguments.length(), span)
@@ -1104,6 +1442,8 @@ fn invoke_map_method(
     "containsKey" =>
       if arguments.length() != 1 {
         invalid_collection_arity("Map", name, 1, arguments.length(), span)
+      } else if !is_valid_map_key(arguments[0]) {
+        invalid_map_key(arguments[0], span)
       } else {
         let found = match find_map_key(entries, arguments[0]) {
           Some(_) => true
@@ -1114,6 +1454,8 @@ fn invoke_map_method(
     "remove" =>
       if arguments.length() != 1 {
         invalid_collection_arity("Map", name, 1, arguments.length(), span)
+      } else if !is_valid_map_key(arguments[0]) {
+        invalid_map_key(arguments[0], span)
       } else {
         match find_map_key(entries, arguments[0]) {
           None => EvaluationSucceeded(Value::null())
@@ -1193,6 +1535,10 @@ fn invoke_method(
       invoke_list_method(identifier, name, arguments, span, context)
     MapValue(identifier) =>
       invoke_map_method(identifier, name, arguments, span, context)
+    SequenceValue(identifier) =>
+      invoke_sequence_method(identifier, name, arguments, span, context)
+    RangeValue(from, to, inclusive) =>
+      invoke_range_method(from, to, inclusive, name, arguments, span)
     ClassValue(identifier) =>
       match
         find_method_in_class(
@@ -1396,10 +1742,47 @@ fn read_property(
             EvaluationSucceeded(
               Value::string(runtime_value_to_text(receiver, context, 0)),
             )
+          "keys" => {
+            let values : Array[Value] = []
+            for entry in context.maps[identifier].entries {
+              values.push(entry.key)
+            }
+            EvaluationSucceeded(context.new_sequence(values))
+          }
+          "values" => {
+            let values : Array[Value] = []
+            for entry in context.maps[identifier].entries {
+              values.push(entry.value)
+            }
+            EvaluationSucceeded(context.new_sequence(values))
+          }
           _ =>
             evaluation_error(
               UndefinedMethod,
               "Map does not implement getter '\{name}'",
+              span,
+            )
+        }
+      }
+    SequenceValue(identifier) =>
+      if identifier < 0 || identifier >= context.sequences.length() {
+        evaluation_error(InvalidOperand, "sequence is not available", span)
+      } else {
+        match name {
+          "count" =>
+            EvaluationSucceeded(
+              Value::number(
+                Double::from_int(context.sequences[identifier].items.length()),
+              ),
+            )
+          "toString" =>
+            EvaluationSucceeded(
+              Value::string(runtime_value_to_text(receiver, context, 0)),
+            )
+          _ =>
+            evaluation_error(
+              UndefinedMethod,
+              "Sequence does not implement getter '\{name}'",
               span,
             )
         }
@@ -1446,6 +1829,9 @@ fn evaluate_expression_in(
           evaluate_expression_in(entry.key, environment, context) {
           EvaluationFailed(issue) => return EvaluationFailed(issue)
           EvaluationSucceeded(value) => value
+        }
+        if !is_valid_map_key(key) {
+          return invalid_map_key(key, entry.key.span())
         }
         let value = match
           evaluate_expression_in(entry.value, environment, context) {
@@ -1729,80 +2115,71 @@ fn execute_block_in(
 }
 
 ///|
-fn execute_range_for_in(
+fn execute_iterable_for_in(
   name : String,
-  from : Double,
-  to : Double,
-  inclusive : Bool,
+  sequence : Value,
   body : Stmt,
+  span : SourceSpan,
   environment : Environment,
   context : RuntimeContext,
 ) -> StatementResult {
-  environment.push_scope()
-  ignore(environment.bind(name, Value::number(from)))
-  let step = if from <= to { 1.0 } else { -1.0 }
-  let mut current = from
-  let mut last = Value::null()
-  while (if step > 0.0 {
-          if inclusive {
-            current <= to
-          } else {
-            current < to
-          }
-        } else if inclusive {
-          current >= to
-        } else {
-          current > to
-        }) {
-    ignore(environment.assign(name, Value::number(current)))
-    match execute_statement_in(body, environment, context) {
-      StatementCompleted(value) => last = value
-      StatementReturned(value, span) => {
-        ignore(environment.pop_scope())
-        return StatementReturned(value, span)
+  let iterable = match sequence {
+    ListValue(identifier) => {
+      if identifier < 0 || identifier >= context.lists.length() {
+        return StatementFailed(
+          Diagnostic::new(
+            Runtime,
+            InvalidOperand,
+            "list is not available",
+            span,
+          ),
+        )
       }
-      StatementBroken(_) => {
-        ignore(environment.pop_scope())
-        return StatementCompleted(last)
+      let items : Array[Value] = []
+      for item in context.lists[identifier].items {
+        items.push(item)
       }
-      StatementContinued(_) => ()
-      StatementFailed(issue) => {
-        ignore(environment.pop_scope())
-        return StatementFailed(issue)
-      }
+      context.new_sequence(items)
     }
-    current = current + step
+    value => value
   }
-  ignore(environment.pop_scope())
-  StatementCompleted(last)
-}
-
-///|
-fn execute_list_for_in(
-  name : String,
-  identifier : Int,
-  body : Stmt,
-  environment : Environment,
-  context : RuntimeContext,
-) -> StatementResult {
-  if identifier < 0 || identifier >= context.lists.length() {
-    return StatementFailed(
-      Diagnostic::new(
-        Runtime,
-        InvalidOperand,
-        "list is not available",
-        body.span(),
-      ),
-    )
-  }
-  let snapshot : Array[Value] = []
-  for item in context.lists[identifier].items {
-    snapshot.push(item)
+  match iterable {
+    RangeValue(_, _, _)
+    | ListValue(_)
+    | StringValue(_)
+    | SequenceValue(_)
+    | InstanceValue(_) => ()
+    value =>
+      return StatementFailed(
+        Diagnostic::new(
+          Runtime,
+          InvalidOperand,
+          "for loop expects an iterable value, received \{value.type_name()}",
+          span,
+        ),
+      )
   }
   environment.push_scope()
   ignore(environment.bind(name, Value::null()))
   let mut last = Value::null()
-  for item in snapshot {
+  let mut iterator = Value::null()
+  while true {
+    match invoke_method(iterable, "iterate", [iterator], span, context) {
+      EvaluationFailed(issue) => {
+        ignore(environment.pop_scope())
+        return StatementFailed(issue)
+      }
+      EvaluationSucceeded(BoolValue(false)) => break
+      EvaluationSucceeded(next) => iterator = next
+    }
+    let item = match
+      invoke_method(iterable, "iteratorValue", [iterator], span, context) {
+      EvaluationFailed(issue) => {
+        ignore(environment.pop_scope())
+        return StatementFailed(issue)
+      }
+      EvaluationSucceeded(value) => value
+    }
     ignore(environment.assign(name, item))
     match execute_statement_in(body, environment, context) {
       StatementCompleted(value) => last = value
@@ -1899,21 +2276,8 @@ fn execute_statement_in(
     ForStatement(name, sequence, body, span) =>
       match evaluate_expression_in(sequence, environment, context) {
         EvaluationFailed(issue) => StatementFailed(issue)
-        EvaluationSucceeded(RangeValue(from, to, inclusive)) =>
-          execute_range_for_in(
-            name, from, to, inclusive, body, environment, context,
-          )
-        EvaluationSucceeded(ListValue(identifier)) =>
-          execute_list_for_in(name, identifier, body, environment, context)
         EvaluationSucceeded(value) =>
-          StatementFailed(
-            Diagnostic::new(
-              Runtime,
-              InvalidOperand,
-              "for loop expects a Range or List, received \{value.type_name()}",
-              span,
-            ),
-          )
+          execute_iterable_for_in(name, value, body, span, environment, context)
       }
     ReturnStatement(value, span) =>
       match value {

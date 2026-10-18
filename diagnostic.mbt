@@ -33,6 +33,7 @@ pub(all) enum DiagnosticCode {
   InvalidOperand
   InvalidIndex
   IndexOutOfBounds
+  InvalidMapKey
   DivisionByZero
   ExecutionLimit
   CallStackLimit
