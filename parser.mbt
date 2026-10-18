@@ -822,6 +822,7 @@ fn Parser::parameter_list(self : Parser) -> Array[String] {
 ///|
 fn Parser::method_declaration(self : Parser) -> MethodDecl {
   let start = self.current_token()
+  let is_foreign = self.take(ForeignKeyword)
   let is_static = self.take(StaticKeyword)
   let is_constructor = self.take(ConstructKeyword)
   if is_static && is_constructor {
@@ -837,6 +838,27 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
       self.current_token().span,
     )
   }
+  if is_foreign && is_constructor {
+    self.report(
+      UnexpectedToken,
+      "foreign constructors require foreign class support",
+      start.span,
+    )
+  }
+  if is_foreign {
+    let end_span = if has_parameters { self.previous().span } else { name.span }
+    self.finish_statement()
+    return {
+      name: name.lexeme,
+      parameters,
+      body: [],
+      is_constructor,
+      is_getter: !is_constructor && !has_parameters,
+      is_static,
+      is_foreign,
+      span: SourceSpan::merge(start.span, end_span),
+    }
+  }
   self.skip_newlines()
   let opening = self.consume(LeftBrace, "expected '{' before method body")
   let block = self.block_statement(opening)
@@ -849,6 +871,7 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
         is_constructor,
         is_getter: !is_constructor && !has_parameters,
         is_static,
+        is_foreign,
         span: SourceSpan::merge(start.span, span),
       }
     _ => abort("method body must be a block")

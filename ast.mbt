@@ -171,6 +171,7 @@ pub(all) struct MethodDecl {
   is_constructor : Bool
   is_getter : Bool
   is_static : Bool
+  is_foreign : Bool
   span : SourceSpan
 } derive(Eq, Debug)
 

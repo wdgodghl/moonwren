@@ -119,6 +119,7 @@ priv struct RuntimeContext {
   sequences : Array[RuntimeSequence]
   iterators : Array[RuntimeIterator]
   modules : Array[RuntimeModule]
+  foreign_methods : Array[ForeignMethodBinding]
   loader : (String, String) -> ModuleLoadResult
   mut current_source : String
   mut steps : Int
@@ -132,6 +133,7 @@ fn RuntimeContext::new_with_loader(
   max_steps : Int,
   source_name : String,
   loader : (String, String) -> ModuleLoadResult,
+  foreign_methods : Array[ForeignMethodBinding],
 ) -> RuntimeContext {
   {
     output: [],
@@ -145,6 +147,7 @@ fn RuntimeContext::new_with_loader(
     sequences: [],
     iterators: [],
     modules: [],
+    foreign_methods,
     loader,
     current_source: source_name,
     steps: 0,
@@ -156,9 +159,12 @@ fn RuntimeContext::new_with_loader(
 
 ///|
 fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
-  RuntimeContext::new_with_loader(max_steps, "<source>", fn(_, name) {
-    ModuleLoadFailed("module '\{name}' is not available")
-  })
+  RuntimeContext::new_with_loader(
+    max_steps,
+    "<source>",
+    fn(_, name) { ModuleLoadFailed("module '\{name}' is not available") },
+    [],
+  )
 }
 
 ///|
@@ -915,6 +921,56 @@ fn find_method_in_class(
 }
 
 ///|
+fn method_signature(declaration : MethodDecl) -> String {
+  if declaration.is_getter {
+    return declaration.name
+  }
+  let mut signature = declaration.name + "("
+  for index = 0; index < declaration.parameters.length(); index = index + 1 {
+    if index > 0 {
+      signature = signature + ","
+    }
+    signature = signature + "_"
+  }
+  signature + ")"
+}
+
+///|
+fn invoke_foreign_method(
+  receiver : Value,
+  owner : ClassDefinition,
+  declaration : MethodDecl,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let signature = method_signature(declaration)
+  for binding in context.foreign_methods {
+    if binding.matches(
+        owner.source_name,
+        owner.name,
+        declaration.is_static,
+        signature,
+      ) {
+      return match binding.call(receiver, arguments) {
+        ForeignCallSucceeded(value) => EvaluationSucceeded(value)
+        ForeignCallFailed(message) =>
+          evaluation_error(
+            ForeignCallFailed,
+            "foreign method \{owner.name}.\{signature} failed: \{message}",
+            span,
+          )
+      }
+    }
+  }
+  evaluation_error(
+    ForeignBindingMissing,
+    "no foreign binding for \{owner.source_name}:\{owner.name}.\{signature}",
+    span,
+  )
+}
+
+///|
 fn invoke_user_method(
   instance_identifier : Int,
   resolved : ResolvedMethod,
@@ -947,6 +1003,22 @@ fn invoke_user_method(
   }
   let declaration = resolved.declaration
   let owner = context.classes[resolved.owner_identifier]
+  if declaration.is_foreign {
+    return trace_call_failure(
+      invoke_foreign_method(
+        Value::instance(instance_identifier),
+        owner,
+        declaration,
+        arguments,
+        span,
+        context,
+      ),
+      owner.source_name,
+      "\{owner.name}.\{declaration.name}",
+      context.current_source,
+      span,
+    )
+  }
   let environment = owner.environment.capture()
   environment.push_scope()
   ignore(environment.bind("this", Value::instance(instance_identifier)))
@@ -1031,6 +1103,22 @@ fn invoke_static_method(
   }
   let declaration = resolved.declaration
   let owner = context.classes[resolved.owner_identifier]
+  if declaration.is_foreign {
+    return trace_call_failure(
+      invoke_foreign_method(
+        Value::class_value(receiver_class),
+        owner,
+        declaration,
+        arguments,
+        span,
+        context,
+      ),
+      owner.source_name,
+      "\{owner.name}.\{declaration.name}",
+      context.current_source,
+      span,
+    )
+  }
   let environment = owner.environment.capture()
   environment.push_scope()
   ignore(environment.bind("this", Value::class_value(receiver_class)))

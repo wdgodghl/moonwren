@@ -43,6 +43,8 @@ pub(all) enum DiagnosticCode {
   ReturnOutsideFunction
   BreakOutsideLoop
   ContinueOutsideLoop
+  ForeignBindingMissing
+  ForeignCallFailed
   UnsupportedFeature
 } derive(Eq, Debug)
 
