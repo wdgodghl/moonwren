@@ -34,6 +34,9 @@ pub(all) enum DiagnosticCode {
   InvalidIndex
   IndexOutOfBounds
   InvalidMapKey
+  ModuleNotFound
+  CircularImport
+  UndefinedExport
   DivisionByZero
   ExecutionLimit
   CallStackLimit
@@ -56,6 +59,31 @@ pub(all) struct Diagnostic {
   code : DiagnosticCode
   message : String
   span : SourceSpan
+  source_name : String
+  frames : Array[CallFrame]
+}
+
+///|
+/// One caller location retained while an error unwinds through the runtime.
+pub(all) struct CallFrame {
+  callable : String
+  source_name : String
+  span : SourceSpan
+} derive(Eq, Debug)
+
+///|
+pub extend CallFrame with Eq::{equal, not_equal}
+
+///|
+pub extend CallFrame with Debug::{to_repr}
+
+///|
+pub fn CallFrame::new(
+  callable : String,
+  source_name : String,
+  span : SourceSpan,
+) -> CallFrame {
+  { callable, source_name, span, }
 }
 
 ///|
@@ -65,10 +93,53 @@ pub fn Diagnostic::new(
   message : String,
   span : SourceSpan,
 ) -> Diagnostic {
-  { phase, code, message, span, }
+  { phase, code, message, span, source_name: "", frames: [], }
+}
+
+///|
+pub fn Diagnostic::with_source(
+  self : Diagnostic,
+  source_name : String,
+) -> Diagnostic {
+  {
+    phase: self.phase,
+    code: self.code,
+    message: self.message,
+    span: self.span,
+    source_name: if self.source_name == "" {
+      source_name
+    } else {
+      self.source_name
+    },
+    frames: self.frames,
+  }
+}
+
+///|
+pub fn Diagnostic::with_frame(
+  self : Diagnostic,
+  frame : CallFrame,
+) -> Diagnostic {
+  self.frames.push(frame)
+  self
 }
 
 ///|
 pub fn Diagnostic::render(self : Diagnostic, source_name : String) -> String {
-  "\{source_name}:\{self.span.line()}:\{self.span.column()}: \{self.message}"
+  let origin = if self.source_name == "" {
+    source_name
+  } else {
+    self.source_name
+  }
+  let mut rendered = "\{origin}:\{self.span.line()}:\{self.span.column()}: \{self.message}"
+  for frame in self.frames {
+    let frame_source = if frame.source_name == "" {
+      source_name
+    } else {
+      frame.source_name
+    }
+    rendered = rendered +
+      "\n  at \{frame.callable} (\{frame_source}:\{frame.span.line()}:\{frame.span.column()})"
+  }
+  rendered
 }

@@ -5,69 +5,86 @@ pub(all) enum ProgramRunResult {
 }
 
 ///|
-/// Run a source file with a configurable guard against unbounded loops.
-pub fn run_with_limit(source : String, max_steps : Int) -> ProgramRunResult {
+fn invalid_execution_limit(source_name : String) -> ProgramRunResult {
+  ProgramFailed(
+    [
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "execution step limit must be positive",
+        SourceSpan::empty(),
+      ).with_source(source_name),
+    ],
+    [],
+  )
+}
+
+///|
+/// Run one named entry module and resolve imports through an embedding callback.
+pub fn run_with_loader(
+  source_name : String,
+  source : String,
+  max_steps : Int,
+  loader : (String, String) -> ModuleLoadResult,
+) -> ProgramRunResult {
   if max_steps <= 0 {
-    return ProgramFailed(
-      [
-        Diagnostic::new(
-          Runtime,
-          ExecutionLimit,
-          "execution step limit must be positive",
-          SourceSpan::empty(),
-        ),
-      ],
-      [],
-    )
+    return invalid_execution_limit(source_name)
   }
-  match parse_program(source) {
-    ProgramParseFailed(diagnostics) => ProgramFailed(diagnostics, [])
-    ProgramParsed(statements) => {
-      let environment = Environment::new()
-      ignore(environment.bind("System", Value::system()))
-      let context = RuntimeContext::new(max_steps)
-      match execute_statements_in(statements, environment, context) {
-        StatementCompleted(value) => ProgramCompleted(value, context.output)
-        StatementFailed(issue) => ProgramFailed([issue], context.output)
-        StatementReturned(_, span) =>
-          ProgramFailed(
-            [
-              Diagnostic::new(
-                Runtime,
-                ReturnOutsideFunction,
-                "return can only be used inside a function",
-                span,
-              ),
-            ],
-            context.output,
-          )
-        StatementBroken(span) =>
-          ProgramFailed(
-            [
-              Diagnostic::new(
-                Runtime,
-                BreakOutsideLoop,
-                "break can only be used inside a loop",
-                span,
-              ),
-            ],
-            context.output,
-          )
-        StatementContinued(span) =>
-          ProgramFailed(
-            [
-              Diagnostic::new(
-                Runtime,
-                ContinueOutsideLoop,
-                "continue can only be used inside a loop",
-                span,
-              ),
-            ],
-            context.output,
-          )
-      }
+  let context = RuntimeContext::new_with_loader(max_steps, source_name, loader)
+  match execute_module_source(source_name, source, context) {
+    ModuleExecuted(_, value) => ProgramCompleted(value, context.output)
+    ModuleExecutionFailed(issues) => ProgramFailed(issues, context.output)
+  }
+}
+
+///|
+fn find_module_source(modules : Array[ModuleSource], name : String) -> String? {
+  for module_source in modules {
+    if module_source.name == name {
+      return Some(module_source.source)
     }
   }
+  None
+}
+
+///|
+/// Run an entry module from a complete in-memory source collection.
+/// Import specifiers are matched against module names exactly.
+pub fn run_modules(
+  entry_name : String,
+  modules : Array[ModuleSource],
+  max_steps : Int,
+) -> ProgramRunResult {
+  let entry_source = match find_module_source(modules, entry_name) {
+    Some(source) => source
+    None =>
+      return ProgramFailed(
+        [
+          Diagnostic::new(
+            Runtime,
+            ModuleNotFound,
+            "entry module '\{entry_name}' was not provided",
+            SourceSpan::empty(),
+          ).with_source(entry_name),
+        ],
+        [],
+      )
+  }
+  let loader = fn(_importer : String, specifier : String) -> ModuleLoadResult {
+    match find_module_source(modules, specifier) {
+      Some(source) => ModuleLoaded(specifier, source)
+      None => ModuleLoadFailed("module '\{specifier}' was not provided")
+    }
+  }
+  run_with_loader(entry_name, entry_source, max_steps, loader)
+}
+
+///|
+/// Run a source file with a configurable guard against unbounded loops.
+pub fn run_with_limit(source : String, max_steps : Int) -> ProgramRunResult {
+  run_with_loader("<source>", source, max_steps, fn(_, name) {
+    ModuleLoadFailed("module '\{name}' is not available")
+  })
 }
 
 ///|

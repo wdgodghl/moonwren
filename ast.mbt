@@ -122,6 +122,7 @@ pub(all) enum Stmt {
   ReturnStatement(Expr?, SourceSpan)
   BreakStatement(SourceSpan)
   ContinueStatement(SourceSpan)
+  ImportStatement(String, Array[ImportBinding], SourceSpan)
   ClassStatement(String, String?, Array[MethodDecl], SourceSpan)
 } derive(Eq, Debug)
 
@@ -143,9 +144,23 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | ReturnStatement(_, span)
     | BreakStatement(span)
     | ContinueStatement(span)
+    | ImportStatement(_, _, span)
     | ClassStatement(_, _, _, span) => span
   }
 }
+
+///|
+/// One explicitly imported top-level name and its optional local alias.
+pub(all) struct ImportBinding {
+  name : String
+  local_name : String
+} derive(Eq, Debug)
+
+///|
+pub extend ImportBinding with Eq::{equal, not_equal}
+
+///|
+pub extend ImportBinding with Debug::{to_repr}
 
 ///|
 /// One instance method, getter, or constructor declared in a class body.

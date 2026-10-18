@@ -1046,3 +1046,309 @@ test "string split supports multi-character separators" {
   let source = "\"甲--乙--丙\".split(\"--\").toString\n"
   expect_program_value(source, @moonwren.Value::string("[甲, 乙, 丙]"))
 }
+
+///|
+test "modules import values classes and aliases" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main",
+      "import \"math\" for Calculator as Calc, answer\n" +
+      "Calc.double(answer)\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "math",
+      "var answer = 21\n" +
+      "class Calculator { static double(value) { return value * 2 } }\n",
+    ),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(42.0))
+    _ => fail("module import should succeed")
+  }
+}
+
+///|
+test "module environments keep top-level names isolated" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main", "var value = 40\nimport \"other\" for value as otherValue\nvalue + otherValue\n",
+    ),
+    @moonwren.ModuleSource::new("other", "var value = 2\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(42.0))
+    _ => fail("module scopes should remain isolated")
+  }
+}
+
+///|
+test "module cache executes each canonical module once" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main", "import \"boot\"\nimport \"boot\"\n42\n",
+    ),
+    @moonwren.ModuleSource::new("boot", "System.print(\"loaded\")\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, output) => {
+      assert_eq(value, @moonwren.Value::number(42.0))
+      assert_eq(output, ["loaded"])
+    }
+    _ => fail("cached module should execute once")
+  }
+}
+
+///|
+test "missing modules produce source-located diagnostics" {
+  let modules = [
+    @moonwren.ModuleSource::new("main.wren", "import \"missing\"\n"),
+  ]
+  match @moonwren.run_modules("main.wren", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("missing module should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.ModuleNotFound)
+      assert_eq(issues[0].source_name, "main.wren")
+    }
+  }
+}
+
+///|
+test "imports reject undefined exported names" {
+  let modules = [
+    @moonwren.ModuleSource::new("main", "import \"values\" for missing\n"),
+    @moonwren.ModuleSource::new("values", "var present = 42\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("undefined export should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.UndefinedExport)
+  }
+}
+
+///|
+test "circular imports are detected" {
+  let modules = [
+    @moonwren.ModuleSource::new("a", "import \"b\"\n"),
+    @moonwren.ModuleSource::new("b", "import \"a\"\n"),
+  ]
+  match @moonwren.run_modules("a", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("cycle should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.CircularImport)
+      assert_eq(issues[0].source_name, "a")
+      assert_eq(issues[0].frames.length(), 2)
+    }
+  }
+}
+
+///|
+test "module parse failures retain the imported source name" {
+  let modules = [
+    @moonwren.ModuleSource::new("main", "import \"broken.wren\"\n"),
+    @moonwren.ModuleSource::new("broken.wren", "var value =\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("broken module should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].phase, @moonwren.Parse)
+      assert_eq(issues[0].source_name, "broken.wren")
+      assert_eq(issues[0].frames.length(), 1)
+    }
+  }
+}
+
+///|
+test "module loaders can canonicalize multiple specifiers" {
+  let loader = fn(
+    _importer : String,
+    specifier : String,
+  ) -> @moonwren.ModuleLoadResult {
+    if specifier == "util" || specifier == "./util" {
+      @moonwren.ModuleLoaded(
+        "lib/util.wren", "System.print(\"once\")\nvar value = 21\n",
+      )
+    } else {
+      @moonwren.ModuleLoadFailed("not found")
+    }
+  }
+  let source = "import \"util\" for value as first\n" +
+    "import \"./util\" for value as second\n" +
+    "first + second\n"
+  match @moonwren.run_with_loader("main.wren", source, 100000, loader) {
+    @moonwren.ProgramCompleted(value, output) => {
+      assert_eq(value, @moonwren.Value::number(42.0))
+      assert_eq(output, ["once"])
+    }
+    _ => fail("canonical loader should share the module cache")
+  }
+}
+
+///|
+test "runtime failures retain cross-module call stacks" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main.wren",
+      "import \"math.wren\" for Calculator\n" +
+      "var run = Fn.new { return Calculator.divide() }\n" +
+      "run.call()\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "math.wren", "class Calculator { static divide() { return 1 / 0 } }\n",
+    ),
+  ]
+  match @moonwren.run_modules("main.wren", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("division should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      let issue = issues[0]
+      assert_eq(issue.code, @moonwren.DivisionByZero)
+      assert_eq(issue.source_name, "math.wren")
+      assert_eq(issue.frames.length(), 2)
+      assert_eq(issue.frames[0].callable, "Calculator.divide")
+      assert_eq(issue.frames[1].callable, "Fn.call")
+      let rendered = issue.render("fallback")
+      assert_true(rendered.contains("math.wren"))
+      assert_true(rendered.contains("Calculator.divide"))
+      assert_true(rendered.contains("main.wren"))
+    }
+  }
+}
+
+///|
+test "transitive imports resolve through isolated modules" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main", "import \"middle\" for answer\nanswer\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "middle", "import \"base\" for value\nvar answer = value + 2\n",
+    ),
+    @moonwren.ModuleSource::new("base", "var value = 40\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(42.0))
+    _ => fail("transitive import should succeed")
+  }
+}
+
+///|
+test "imported closures retain private module state" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main", "import \"private\" for reveal\nreveal.call()\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "private", "var secret = 42\nvar reveal = Fn.new { return secret }\n",
+    ),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(42.0))
+    _ => fail("imported closure should retain module state")
+  }
+}
+
+///|
+test "repeated imports share class state" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main",
+      "import \"counter\" for Counter as First\n" +
+      "import \"counter\" for Counter as Second\n" +
+      "First.next()\nSecond.next()\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "counter",
+      "class Counter {\n" +
+      "  static next() {\n" +
+      "    __value = __value == null ? 1 : __value + 1\n" +
+      "    return __value\n" +
+      "  }\n" +
+      "}\n",
+    ),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(2.0))
+    _ => fail("cached class should share static state")
+  }
+}
+
+///|
+test "imports reject duplicate local bindings" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main", "var answer = 0\nimport \"values\" for answer\n",
+    ),
+    @moonwren.ModuleSource::new("values", "var answer = 42\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("duplicate binding should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.DuplicateVariable)
+  }
+}
+
+///|
+test "run_modules reports a missing entry module" {
+  match @moonwren.run_modules("missing", [], 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("missing entry should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.ModuleNotFound)
+      assert_eq(issues[0].source_name, "missing")
+    }
+  }
+}
+
+///|
+test "execution budgets are shared across imported modules" {
+  let modules = [
+    @moonwren.ModuleSource::new("main", "import \"loop\"\n"),
+    @moonwren.ModuleSource::new("loop", "while (true) { 1 }\n"),
+  ]
+  match @moonwren.run_modules("main", modules, 20) {
+    @moonwren.ProgramCompleted(_, _) => fail("loop should exhaust budget")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.ExecutionLimit)
+      assert_eq(issues[0].source_name, "loop")
+    }
+  }
+}
+
+///|
+test "entry parsing preserves every diagnostic and source name" {
+  let modules = [
+    @moonwren.ModuleSource::new("broken.wren", "var first =\nvar second =\n"),
+  ]
+  match @moonwren.run_modules("broken.wren", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("broken entry should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_true(issues.length() > 1)
+      for issue in issues {
+        assert_eq(issue.source_name, "broken.wren")
+      }
+    }
+  }
+}
+
+///|
+test "imported function failures identify definition and caller modules" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main.wren", "import \"failure.wren\" for failNow\nfailNow.call()\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "failure.wren", "var failNow = Fn.new { return missing }\n",
+    ),
+  ]
+  match @moonwren.run_modules("main.wren", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("function should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].source_name, "failure.wren")
+      assert_eq(issues[0].frames.length(), 1)
+      assert_eq(issues[0].frames[0].source_name, "main.wren")
+    }
+  }
+}

@@ -679,6 +679,38 @@ fn Parser::variable_declaration(self : Parser, start : Token) -> Stmt {
 }
 
 ///|
+fn Parser::import_declaration(self : Parser, start : Token) -> Stmt {
+  let module_token = self.consume(
+    StringLiteral,
+    "expected module string after import",
+  )
+  let module_name = decode_string(module_token.lexeme)
+  let bindings : Array[ImportBinding] = []
+  let mut end_span = module_token.span
+  if self.take(ForKeyword) {
+    while true {
+      let imported = self.consume(Identifier, "expected imported name")
+      let binding_token = if self.take(AsKeyword) {
+        self.consume(Identifier, "expected alias after 'as'")
+      } else {
+        imported
+      }
+      bindings.push({ name: imported.lexeme, local_name: binding_token.lexeme, })
+      end_span = binding_token.span
+      if !self.take(Comma) {
+        break
+      }
+    }
+  }
+  self.finish_statement()
+  ImportStatement(
+    module_name,
+    bindings,
+    SourceSpan::merge(start.span, end_span),
+  )
+}
+
+///|
 fn Parser::block_statement(self : Parser, opening : Token) -> Stmt {
   self.skip_newlines()
   let statements : Array[Stmt] = []
@@ -880,7 +912,9 @@ fn Parser::statement(self : Parser) -> Stmt {
 ///|
 fn Parser::declaration(self : Parser) -> Stmt {
   let start = self.current_token()
-  if self.take(ClassKeyword) {
+  if self.take(ImportKeyword) {
+    self.import_declaration(start)
+  } else if self.take(ClassKeyword) {
     self.class_declaration(start)
   } else if self.take(VarKeyword) {
     self.variable_declaration(start)

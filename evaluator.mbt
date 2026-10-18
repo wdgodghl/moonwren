@@ -9,6 +9,7 @@ priv struct Closure {
   parameters : Array[String]
   body : Array[Stmt]
   environment : Environment
+  source_name : String
 }
 
 ///|
@@ -18,6 +19,7 @@ priv struct ClassDefinition {
   methods : Array[MethodDecl]
   environment : Environment
   static_fields : Array[InstanceField]
+  source_name : String
 }
 
 ///|
@@ -61,6 +63,13 @@ priv struct RuntimeSequence {
 }
 
 ///|
+priv struct RuntimeModule {
+  name : String
+  environment : Environment
+  mut state : Int
+}
+
+///|
 priv struct RuntimeContext {
   output : Array[String]
   closures : Array[Closure]
@@ -69,6 +78,9 @@ priv struct RuntimeContext {
   lists : Array[RuntimeList]
   maps : Array[RuntimeMap]
   sequences : Array[RuntimeSequence]
+  modules : Array[RuntimeModule]
+  loader : (String, String) -> ModuleLoadResult
+  mut current_source : String
   mut steps : Int
   max_steps : Int
   mut call_depth : Int
@@ -76,7 +88,11 @@ priv struct RuntimeContext {
 }
 
 ///|
-fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
+fn RuntimeContext::new_with_loader(
+  max_steps : Int,
+  source_name : String,
+  loader : (String, String) -> ModuleLoadResult,
+) -> RuntimeContext {
   {
     output: [],
     closures: [],
@@ -85,11 +101,21 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
     lists: [],
     maps: [],
     sequences: [],
+    modules: [],
+    loader,
+    current_source: source_name,
     steps: 0,
     max_steps,
     call_depth: 0,
     max_call_depth: 64,
   }
+}
+
+///|
+fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
+  RuntimeContext::new_with_loader(max_steps, "<source>", fn(_, name) {
+    ModuleLoadFailed("module '\{name}' is not available")
+  })
 }
 
 ///|
@@ -548,6 +574,25 @@ fn evaluate_is_type(
 }
 
 ///|
+fn trace_call_failure(
+  result : EvaluationResult,
+  definition_source : String,
+  callable : String,
+  caller_source : String,
+  span : SourceSpan,
+) -> EvaluationResult {
+  match result {
+    EvaluationSucceeded(value) => EvaluationSucceeded(value)
+    EvaluationFailed(issue) =>
+      EvaluationFailed(
+        issue
+        .with_source(definition_source)
+        .with_frame(CallFrame::new(callable, caller_source, span)),
+      )
+  }
+}
+
+///|
 fn invoke_function(
   identifier : Int,
   arguments : Array[Value],
@@ -581,11 +626,14 @@ fn invoke_function(
   for index = 0; index < closure.parameters.length(); index = index + 1 {
     ignore(environment.bind(closure.parameters[index], arguments[index]))
   }
+  let caller_source = context.current_source
+  context.current_source = closure.source_name
   context.call_depth = context.call_depth + 1
   let result = execute_statements_in(closure.body, environment, context)
   context.call_depth = context.call_depth - 1
+  context.current_source = caller_source
   ignore(environment.pop_scope())
-  match result {
+  let evaluation = match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
     StatementBroken(span) =>
@@ -602,6 +650,13 @@ fn invoke_function(
       )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
+  trace_call_failure(
+    evaluation,
+    closure.source_name,
+    "Fn.call",
+    caller_source,
+    span,
+  )
 }
 
 ///|
@@ -696,11 +751,14 @@ fn invoke_user_method(
   for index = 0; index < declaration.parameters.length(); index = index + 1 {
     ignore(environment.bind(declaration.parameters[index], arguments[index]))
   }
+  let caller_source = context.current_source
+  context.current_source = owner.source_name
   context.call_depth = context.call_depth + 1
   let result = execute_statements_in(declaration.body, environment, context)
   context.call_depth = context.call_depth - 1
+  context.current_source = caller_source
   ignore(environment.pop_scope())
-  match result {
+  let evaluation = match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
     StatementBroken(span) =>
@@ -717,6 +775,13 @@ fn invoke_user_method(
       )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
+  trace_call_failure(
+    evaluation,
+    owner.source_name,
+    "\{owner.name}.\{declaration.name}",
+    caller_source,
+    span,
+  )
 }
 
 ///|
@@ -762,11 +827,14 @@ fn invoke_static_method(
   for index = 0; index < declaration.parameters.length(); index = index + 1 {
     ignore(environment.bind(declaration.parameters[index], arguments[index]))
   }
+  let caller_source = context.current_source
+  context.current_source = owner.source_name
   context.call_depth = context.call_depth + 1
   let result = execute_statements_in(declaration.body, environment, context)
   context.call_depth = context.call_depth - 1
+  context.current_source = caller_source
   ignore(environment.pop_scope())
-  match result {
+  let evaluation = match result {
     StatementCompleted(value) | StatementReturned(value, _) =>
       EvaluationSucceeded(value)
     StatementBroken(span) =>
@@ -783,6 +851,13 @@ fn invoke_static_method(
       )
     StatementFailed(issue) => EvaluationFailed(issue)
   }
+  trace_call_failure(
+    evaluation,
+    owner.source_name,
+    "\{owner.name}.\{declaration.name}",
+    caller_source,
+    span,
+  )
 }
 
 ///|
@@ -2230,6 +2305,7 @@ fn evaluate_expression_in(
         parameters,
         body,
         environment: environment.capture(),
+        source_name: context.current_source,
       })
       EvaluationSucceeded(Value::function(identifier))
     }
@@ -2413,6 +2489,149 @@ fn execute_iterable_for_in(
 }
 
 ///|
+priv enum ModuleExecutionResult {
+  ModuleExecuted(Environment, Value)
+  ModuleExecutionFailed(Array[Diagnostic])
+}
+
+///|
+fn find_runtime_module(context : RuntimeContext, name : String) -> Int? {
+  for index = 0; index < context.modules.length(); index = index + 1 {
+    if context.modules[index].name == name {
+      return Some(index)
+    }
+  }
+  None
+}
+
+///|
+fn execute_module_source(
+  name : String,
+  source : String,
+  context : RuntimeContext,
+) -> ModuleExecutionResult {
+  match find_runtime_module(context, name) {
+    Some(index) =>
+      if context.modules[index].state == 0 {
+        return ModuleExecutionFailed([
+          Diagnostic::new(
+            Runtime,
+            CircularImport,
+            "circular import reached module '\{name}'",
+            SourceSpan::empty(),
+          ).with_source(name),
+        ])
+      } else if context.modules[index].state == 1 {
+        return ModuleExecuted(context.modules[index].environment, Value::null())
+      } else {
+        return ModuleExecutionFailed([
+          Diagnostic::new(
+            Runtime,
+            ModuleNotFound,
+            "module '\{name}' previously failed to load",
+            SourceSpan::empty(),
+          ).with_source(name),
+        ])
+      }
+    None => ()
+  }
+  let environment = Environment::new()
+  ignore(environment.bind("System", Value::system()))
+  let module_index = context.modules.length()
+  context.modules.push({ name, environment, state: 0, })
+  let statements = match parse_program(source) {
+    ProgramParseFailed(diagnostics) => {
+      context.modules[module_index].state = 2
+      let issues : Array[Diagnostic] = []
+      for diagnostic in diagnostics {
+        issues.push(diagnostic.with_source(name))
+      }
+      return ModuleExecutionFailed(issues)
+    }
+    ProgramParsed(statements) => statements
+  }
+  let previous_source = context.current_source
+  context.current_source = name
+  let result = execute_statements_in(statements, environment, context)
+  context.current_source = previous_source
+  match result {
+    StatementCompleted(value) => {
+      context.modules[module_index].state = 1
+      ModuleExecuted(environment, value)
+    }
+    StatementFailed(issue) => {
+      context.modules[module_index].state = 2
+      ModuleExecutionFailed([issue.with_source(name)])
+    }
+    StatementReturned(_, span) => {
+      context.modules[module_index].state = 2
+      ModuleExecutionFailed([
+        Diagnostic::new(
+          Runtime,
+          ReturnOutsideFunction,
+          "return can only be used inside a function",
+          span,
+        ).with_source(name),
+      ])
+    }
+    StatementBroken(span) => {
+      context.modules[module_index].state = 2
+      ModuleExecutionFailed([
+        Diagnostic::new(
+          Runtime,
+          BreakOutsideLoop,
+          "break can only be used inside a loop",
+          span,
+        ).with_source(name),
+      ])
+    }
+    StatementContinued(span) => {
+      context.modules[module_index].state = 2
+      ModuleExecutionFailed([
+        Diagnostic::new(
+          Runtime,
+          ContinueOutsideLoop,
+          "continue can only be used inside a loop",
+          span,
+        ).with_source(name),
+      ])
+    }
+  }
+}
+
+///|
+fn load_imported_module(
+  importer : String,
+  specifier : String,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> ModuleExecutionResult {
+  match (context.loader)(importer, specifier) {
+    ModuleLoadFailed(message) =>
+      ModuleExecutionFailed([
+        Diagnostic::new(Runtime, ModuleNotFound, message, span).with_source(
+          importer,
+        ),
+      ])
+    ModuleLoaded(name, source) =>
+      match execute_module_source(name, source, context) {
+        ModuleExecuted(environment, value) => ModuleExecuted(environment, value)
+        ModuleExecutionFailed(issues) => {
+          let traced : Array[Diagnostic] = []
+          for issue in issues {
+            traced.push(
+              issue.with_frame(
+                CallFrame::new("import \"\{specifier}\"", importer, span),
+              ),
+            )
+          }
+          ModuleExecutionFailed(traced)
+        }
+      }
+  }
+}
+
+///|
 fn execute_statement_in(
   statement : Stmt,
   environment : Environment,
@@ -2500,6 +2719,38 @@ fn execute_statement_in(
       }
     BreakStatement(span) => StatementBroken(span)
     ContinueStatement(span) => StatementContinued(span)
+    ImportStatement(specifier, bindings, span) =>
+      match
+        load_imported_module(context.current_source, specifier, span, context) {
+        ModuleExecutionFailed(issues) => StatementFailed(issues[0])
+        ModuleExecuted(module_environment, _) => {
+          for binding in bindings {
+            let value = match module_environment.get(binding.name) {
+              Some(value) => value
+              None =>
+                return StatementFailed(
+                  Diagnostic::new(
+                    Runtime,
+                    UndefinedExport,
+                    "module '\{specifier}' does not define '\{binding.name}'",
+                    span,
+                  ).with_source(context.current_source),
+                )
+            }
+            if !environment.bind(binding.local_name, value) {
+              return StatementFailed(
+                Diagnostic::new(
+                  Runtime,
+                  DuplicateVariable,
+                  "imported name '\{binding.local_name}' is already declared in this scope",
+                  span,
+                ).with_source(context.current_source),
+              )
+            }
+          }
+          StatementCompleted(Value::null())
+        }
+      }
     ClassStatement(name, superclass_name, methods, span) => {
       for index = 0; index < methods.length(); index = index + 1 {
         for other = index + 1; other < methods.length(); other = other + 1 {
@@ -2563,6 +2814,7 @@ fn execute_statement_in(
         methods,
         environment: environment.capture(),
         static_fields: [],
+        source_name: context.current_source,
       })
       let value = Value::class_value(identifier)
       ignore(environment.assign(name, value))

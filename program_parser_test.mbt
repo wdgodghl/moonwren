@@ -190,3 +190,46 @@ test "program parser recognizes break and continue statements" {
     _ => fail("expected loop control statements")
   }
 }
+
+///|
+test "program parser recognizes imports and aliases" {
+  let source = "import \"math\" for Calculator as Calc, pi\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [
+        @moonwren.ImportStatement(
+          "math",
+          [
+            { name: "Calculator", local_name: "Calc", },
+            { name: "pi", local_name: "pi", },
+          ],
+          _
+        ),
+      ]
+    ) => ()
+    _ => fail("expected import declaration")
+  }
+}
+
+///|
+test "program parser recognizes side-effect-only imports" {
+  match @moonwren.parse_program("import \"bootstrap\"\n") {
+    @moonwren.ProgramParsed([@moonwren.ImportStatement("bootstrap", [], _)]) =>
+      ()
+    _ => fail("expected side-effect import")
+  }
+}
+
+///|
+test "program parser rejects malformed imports" {
+  match @moonwren.parse_program("import module\n") {
+    @moonwren.ProgramParsed(_) => fail("module name must be a string")
+    @moonwren.ProgramParseFailed(issues) =>
+      assert_eq(issues[0].code, @moonwren.ExpectedToken)
+  }
+  match @moonwren.parse_program("import \"math\" for value as\n") {
+    @moonwren.ProgramParsed(_) => fail("alias must have a name")
+    @moonwren.ProgramParseFailed(issues) =>
+      assert_eq(issues[0].code, @moonwren.ExpectedToken)
+  }
+}
