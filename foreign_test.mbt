@@ -117,3 +117,31 @@ test "missing foreign bindings identify the full Wren signature" {
     }
   }
 }
+
+///|
+test "foreign bindings use the canonical imported module name" {
+  let source = "import \"host\" for Host\nSystem.print(Host.version)\n"
+  let binding = @moonwren.ForeignMethodBinding::new(
+    "host.wren",
+    "Host",
+    true,
+    "version",
+    fn(_, _) { @moonwren.ForeignCallSucceeded(@moonwren.Value::string("1.0")) },
+  )
+  let loader = fn(_importer : String, name : String) {
+    if name == "host" {
+      @moonwren.ModuleLoaded(
+        "host.wren", "class Host { foreign static version }\n",
+      )
+    } else {
+      @moonwren.ModuleLoadFailed("missing module")
+    }
+  }
+  match
+    @moonwren.run_with_foreign_methods("main.wren", source, 100000, loader, [
+      binding,
+    ]) {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["1.0"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
