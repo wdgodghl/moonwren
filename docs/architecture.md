@@ -34,7 +34,8 @@ diagnostic accumulated during the pass.
 The expression parser follows precedence levels from unary operators through
 conditional and assignment expressions. Program parsing adds variable
 declarations, blocks, `if` statements, `while` statements, functions, and class
-members. Instance fields have dedicated syntax nodes so field access cannot be
+members. Import declarations retain the module specifier and every requested
+name or alias. Instance fields have dedicated syntax nodes so field access cannot be
 confused with a lexical variable. Class declarations retain an optional
 superclass name, while `super(...)` has a dedicated expression node so it can
 only invoke the matching parent constructor. Unsupported syntax is rejected
@@ -105,9 +106,30 @@ failure as distinct results. Blocks propagate those results without guessing
 their destination. Loops consume only break and continue; function and method
 boundaries convert escaped loop control into structured diagnostics.
 
+## Modules and diagnostics
+
+The runtime owns a registry keyed by each loader-provided canonical module
+name. A module enters the loading state before parsing and execution, making a
+back-edge immediately diagnosable as a circular import. Successful modules
+retain their isolated environment and are reused without executing top-level
+code again. Failed modules cannot be mistaken for a successful cached module.
+All modules share output capture, object registries, call-depth accounting, and
+the statement-step budget.
+
+Closures and classes remember the module where they were defined. When an error
+crosses a function or method boundary, the runtime keeps the original source
+and appends the caller location. Imports add their own frames. The resulting
+`Diagnostic` remains structured for embedders and can also render a readable
+multi-line stack trace.
+
+The library itself performs no file I/O: `run_with_loader` accepts a callback,
+and `run_modules` provides a deterministic in-memory implementation. The CLI
+uses the official `moonbitlang/x` filesystem and path packages to resolve entry
+files and relative `.wren` imports.
+
 ## Extension path
 
-The next runtime layer can add module loading and a host binding boundary.
-Fibers can then build on the same source spans, diagnostics, environments,
-output capture, iterator protocol, and execution limits without coupling those
-features to the scanner.
+The next runtime layer can add a host binding boundary. Fibers can then build
+on the same source spans, diagnostics, environments, output capture, iterator
+protocol, module loader, and execution limits without coupling those features
+to the scanner.

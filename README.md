@@ -14,7 +14,9 @@ early `return`, classes, constructors, instances, fields, methods, getters, and
 static members, and structured `break`/`continue` control flow. Core values
 include mutable List and Map collections, Unicode-aware String operations,
 negative indexes, range slices, stable key/value views, and extensible
-iteration. Fibers, modules, and foreign methods follow in later milestones.
+iteration. Named modules, explicit imports, loader callbacks, module caching,
+cross-module stack traces, and multi-file CLI execution are also available.
+Fibers and foreign methods follow in later milestones.
 
 ## Goals
 
@@ -36,16 +38,16 @@ moon run cmd/main
 ```
 
 Running the command without arguments executes the bundled summation example
-and prints `55`. A source string can also be supplied directly:
+and prints `55`. Use `--eval` to execute a source string directly:
 
 ```text
-moon run cmd/main -- "var value = 40\nSystem.print(value + 2)"
+moon run cmd/main -- --eval "var value = 40\nSystem.print(value + 2)"
 ```
 
 Functions are values and capture surrounding variables by reference:
 
 ```text
-moon run cmd/main -- "var count = 0\nvar next = Fn.new { count = count + 1 }\nSystem.print(next.call())\nSystem.print(next.call())"
+moon run cmd/main -- --eval "var count = 0\nvar next = Fn.new { count = count + 1 }\nSystem.print(next.call())\nSystem.print(next.call())"
 ```
 
 Function bodies may contain declarations and control flow. A `return` exits
@@ -148,6 +150,21 @@ Any class can participate in a `for` loop by implementing `iterate(iterator)`
 and `iteratorValue(iterator)`. See
 [`examples/iterables.wren`](examples/iterables.wren).
 
+Multi-file programs use explicit imports. The CLI resolves relative module
+names from the importing file, automatically adds `.wren` when omitted, and
+executes every canonical module once:
+
+```wren
+import "math" for Calculator
+System.print(Calculator.double(21))
+```
+
+```text
+moon run cmd/main -- examples/modules/main.wren
+```
+
+See [`examples/modules`](examples/modules) for the complete project.
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -169,6 +186,18 @@ match @moonwren.run("var answer = 6 * 7\nanswer\n") {
 directly by the library. Embedders can route those lines to a console, log,
 editor pane, or another host-provided destination.
 
+Embedders can provide modules from memory, a database, an archive, or another
+source through `run_with_loader`. `run_modules` is a convenience API for a
+fixed in-memory collection:
+
+```moonbit
+let modules = [
+  ModuleSource::new("main", "import \"answer\" for value\nvalue\n"),
+  ModuleSource::new("answer", "var value = 42\n"),
+]
+let result = run_modules("main", modules, 100000)
+```
+
 ## Project status
 
 MoonWren is not yet a complete Wren implementation. The method dispatcher
@@ -186,6 +215,8 @@ matrix and planned order of implementation.
 Program execution has both a configurable statement-step budget and a call
 depth guard. These limits turn unbounded loops and runaway recursion into
 structured diagnostics instead of allowing them to consume host resources.
+Diagnostics retain their defining module and accumulate function, instance,
+static-method, and import frames while unwinding.
 
 The implementation pipeline and package boundaries are documented in
 [`docs/architecture.md`](docs/architecture.md).

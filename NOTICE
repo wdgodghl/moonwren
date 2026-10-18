@@ -7,3 +7,6 @@ references; upstream source files are not included in this repository.
 
 Wren is available at https://github.com/wren-lang/wren and is distributed
 under the MIT License by Robert Nystrom and contributors.
+
+The command-line package depends on moonbitlang/x, distributed under the
+Apache License 2.0 by the MoonBit project contributors.

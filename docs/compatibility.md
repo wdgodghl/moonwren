@@ -5,7 +5,7 @@ implementation idiomatic to MoonBit.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Source spans and diagnostics | Implemented | Line and column tracking |
+| Source spans and diagnostics | Implemented | File, line, column, and cross-module call frames |
 | Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
@@ -19,7 +19,7 @@ implementation idiomatic to MoonBit.
 | Functions and closures | Partial | Multiline bodies, `return`, parameters, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
 | Fibers | Planned | Cooperative execution |
-| Modules | Planned | Imports and module loading hooks |
+| Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
 | Foreign methods | Planned | Embedding boundary |
 
 Unsupported syntax must produce a structured diagnostic. The parser and
@@ -67,3 +67,11 @@ for built-in and user-defined objects. Range, List, String, and Map sequence
 views implement this protocol. String indexes and `count` operate on Unicode
 characters rather than UTF-16 code units; slices and iteration therefore keep
 surrogate pairs intact.
+
+Imports support `import "module"`, explicit names using `for`, and local aliases
+using `as`. Every canonical module owns an isolated top-level environment and
+executes at most once. Loader callbacks decide how an importer/specifier pair
+maps to canonical source, while the in-memory helper matches names exactly.
+Missing modules, missing imported names, duplicate local bindings, parse errors,
+and circular imports retain source locations. Import, function, and method
+frames are included when a runtime error crosses module boundaries.
