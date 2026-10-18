@@ -1,5 +1,43 @@
 ///|
 /// Runtime values available before object and class support is introduced.
+pub(all) enum CoreClass {
+  ObjectClass
+  BoolClass
+  ClassClass
+  FnClass
+  ListClass
+  MapClass
+  NullClass
+  NumClass
+  RangeClass
+  SequenceClass
+  StringClass
+} derive(Eq, Debug)
+
+///|
+pub extend CoreClass with Eq::{equal, not_equal}
+
+///|
+pub extend CoreClass with Debug::{to_repr}
+
+///|
+pub fn CoreClass::name(self : CoreClass) -> String {
+  match self {
+    ObjectClass => "Object"
+    BoolClass => "Bool"
+    ClassClass => "Class"
+    FnClass => "Fn"
+    ListClass => "List"
+    MapClass => "Map"
+    NullClass => "Null"
+    NumClass => "Num"
+    RangeClass => "Range"
+    SequenceClass => "Sequence"
+    StringClass => "String"
+  }
+}
+
+///|
 pub(all) enum Value {
   NullValue
   BoolValue(Bool)
@@ -14,6 +52,9 @@ pub(all) enum Value {
   InstanceValue(Int)
   SuperValue(Int, Int, String)
   SuperClassValue(Int, Int)
+  CoreClassValue(CoreClass)
+  IteratorValue(Int)
+  MapEntryValue(Int)
   SystemValue
 } derive(Eq, Debug)
 
@@ -84,6 +125,21 @@ fn Value::system() -> Value {
 }
 
 ///|
+fn Value::core_class(value : CoreClass) -> Value {
+  CoreClassValue(value)
+}
+
+///|
+fn Value::iterator(identifier : Int) -> Value {
+  IteratorValue(identifier)
+}
+
+///|
+fn Value::map_entry(identifier : Int) -> Value {
+  MapEntryValue(identifier)
+}
+
+///|
 /// Wren considers `false` and `null` falsey; every other value is truthy.
 pub fn Value::is_truthy(self : Value) -> Bool {
   match self {
@@ -108,6 +164,9 @@ pub fn Value::type_name(self : Value) -> String {
     InstanceValue(_) => "Instance"
     SuperValue(_, _, _) => "Super"
     SuperClassValue(_, _) => "SuperClass"
+    CoreClassValue(_) => "Class"
+    IteratorValue(_) => "Iterator"
+    MapEntryValue(_) => "MapEntry"
     SystemValue => "System"
   }
 }
@@ -131,6 +190,9 @@ pub fn Value::to_text(self : Value) -> String {
     InstanceValue(_) => "<instance>"
     SuperValue(_, _, _) => "<super>"
     SuperClassValue(_, _) => "<superclass>"
+    CoreClassValue(class_value) => class_value.name()
+    IteratorValue(_) => "<iterator>"
+    MapEntryValue(_) => "<map entry>"
     SystemValue => "System"
   }
 }

@@ -57,9 +57,46 @@ priv struct RuntimeMap {
 }
 
 ///|
-/// Immutable snapshot used by Map key/value views and built-in iteration.
+priv struct RuntimeMapEntryValue {
+  key : Value
+  value : Value
+}
+
+///|
+priv enum RuntimeSequenceKind {
+  SequenceSnapshot(Array[Value])
+  SequenceMap(Value, Int)
+  SequenceWhere(Value, Int)
+  SequenceSkip(Value, Int)
+  SequenceTake(Value, Int)
+}
+
+///|
+priv enum IteratorAdvanceResult {
+  IteratorAdvanced(Value, Value)
+  IteratorComplete
+  IteratorAdvanceFailed(Diagnostic)
+}
+
+///|
+priv enum CollectedValuesResult {
+  ValuesCollected(Array[Value])
+  ValueCollectionFailed(Diagnostic)
+}
+
+///|
 priv struct RuntimeSequence {
-  items : Array[Value]
+  kind : RuntimeSequenceKind
+}
+
+///|
+priv struct RuntimeIterator {
+  sequence_identifier : Int
+  mut source_iterator : Value
+  mut current : Value
+  mut yielded : Int
+  mut started : Bool
+  mut completed : Bool
 }
 
 ///|
@@ -72,12 +109,15 @@ priv struct RuntimeModule {
 ///|
 priv struct RuntimeContext {
   output : Array[String]
+  mut output_line_open : Bool
   closures : Array[Closure]
   classes : Array[ClassDefinition]
   instances : Array[Instance]
   lists : Array[RuntimeList]
   maps : Array[RuntimeMap]
+  map_entries : Array[RuntimeMapEntryValue]
   sequences : Array[RuntimeSequence]
+  iterators : Array[RuntimeIterator]
   modules : Array[RuntimeModule]
   loader : (String, String) -> ModuleLoadResult
   mut current_source : String
@@ -95,12 +135,15 @@ fn RuntimeContext::new_with_loader(
 ) -> RuntimeContext {
   {
     output: [],
+    output_line_open: false,
     closures: [],
     classes: [],
     instances: [],
     lists: [],
     maps: [],
+    map_entries: [],
     sequences: [],
+    iterators: [],
     modules: [],
     loader,
     current_source: source_name,
@@ -140,9 +183,44 @@ fn RuntimeContext::new_sequence(
   self : RuntimeContext,
   items : Array[Value],
 ) -> Value {
+  self.new_sequence_kind(SequenceSnapshot(items))
+}
+
+///|
+fn RuntimeContext::new_sequence_kind(
+  self : RuntimeContext,
+  kind : RuntimeSequenceKind,
+) -> Value {
   let identifier = self.sequences.length()
-  self.sequences.push({ items, })
+  self.sequences.push({ kind, })
   Value::sequence(identifier)
+}
+
+///|
+fn RuntimeContext::new_map_entry(
+  self : RuntimeContext,
+  key : Value,
+  value : Value,
+) -> Value {
+  let identifier = self.map_entries.length()
+  self.map_entries.push({ key, value, })
+  Value::map_entry(identifier)
+}
+
+///|
+fn bind_core_globals(environment : Environment) -> Unit {
+  ignore(environment.bind("System", Value::system()))
+  ignore(environment.bind("Object", Value::core_class(ObjectClass)))
+  ignore(environment.bind("Bool", Value::core_class(BoolClass)))
+  ignore(environment.bind("Class", Value::core_class(ClassClass)))
+  ignore(environment.bind("Fn", Value::core_class(FnClass)))
+  ignore(environment.bind("List", Value::core_class(ListClass)))
+  ignore(environment.bind("Map", Value::core_class(MapClass)))
+  ignore(environment.bind("Null", Value::core_class(NullClass)))
+  ignore(environment.bind("Num", Value::core_class(NumClass)))
+  ignore(environment.bind("Range", Value::core_class(RangeClass)))
+  ignore(environment.bind("Sequence", Value::core_class(SequenceClass)))
+  ignore(environment.bind("String", Value::core_class(StringClass)))
 }
 
 ///|
@@ -163,7 +241,8 @@ fn is_valid_map_key(value : Value) -> Bool {
     | NumberValue(_)
     | StringValue(_)
     | RangeValue(_, _, _)
-    | ClassValue(_) => true
+    | ClassValue(_)
+    | CoreClassValue(_) => true
     _ => false
   }
 }
@@ -245,15 +324,29 @@ fn runtime_value_to_text(
       if identifier < 0 || identifier >= context.sequences.length() {
         "<sequence>"
       } else {
-        let items = context.sequences[identifier].items
-        let mut text = "("
-        for index = 0; index < items.length(); index = index + 1 {
-          if index > 0 {
-            text = text + ", "
+        match context.sequences[identifier].kind {
+          SequenceSnapshot(items) => {
+            let mut text = "("
+            for index = 0; index < items.length(); index = index + 1 {
+              if index > 0 {
+                text = text + ", "
+              }
+              text = text +
+                runtime_value_to_text(items[index], context, depth + 1)
+            }
+            text + ")"
           }
-          text = text + runtime_value_to_text(items[index], context, depth + 1)
+          _ => "<sequence>"
         }
-        text + ")"
+      }
+    MapEntryValue(identifier) =>
+      if identifier < 0 || identifier >= context.map_entries.length() {
+        "<map entry>"
+      } else {
+        let entry = context.map_entries[identifier]
+        runtime_value_to_text(entry.key, context, depth + 1) +
+        ":" +
+        runtime_value_to_text(entry.value, context, depth + 1)
       }
     _ => value.to_text()
   }
@@ -475,6 +568,7 @@ fn evaluate_binary_values(
   left : Value,
   right : Value,
   span : SourceSpan,
+  context : RuntimeContext,
 ) -> EvaluationResult {
   match operator {
     EqualTo => EvaluationSucceeded(Value::bool(left == right))
@@ -485,7 +579,75 @@ fn evaluate_binary_values(
           number_binary(Add, left, right, span)
         (StringValue(left), StringValue(right)) =>
           EvaluationSucceeded(Value::string(left + right))
+        (ListValue(identifier), iterable) => {
+          if identifier < 0 || identifier >= context.lists.length() {
+            return evaluation_error(
+              InvalidOperand,
+              "list is not available",
+              span,
+            )
+          }
+          let values : Array[Value] = []
+          for value in context.lists[identifier].items {
+            values.push(value)
+          }
+          match collect_iterable_values(iterable, span, context) {
+            ValueCollectionFailed(issue) => EvaluationFailed(issue)
+            ValuesCollected(other) => {
+              for value in other {
+                values.push(value)
+              }
+              EvaluationSucceeded(context.new_list(values))
+            }
+          }
+        }
         _ => invalid_binary("+", left, right, span)
+      }
+    Multiply =>
+      match (left, right) {
+        (NumberValue(left), NumberValue(right)) =>
+          number_binary(Multiply, left, right, span)
+        (StringValue(text), count_value) =>
+          match non_negative_count(count_value) {
+            None =>
+              evaluation_error(
+                InvalidOperand,
+                "String repetition count must be a non-negative integer",
+                span,
+              )
+            Some(count) => {
+              let mut result = ""
+              for index = 0; index < count; index = index + 1 {
+                result = result + text
+              }
+              EvaluationSucceeded(Value::string(result))
+            }
+          }
+        (ListValue(identifier), count_value) =>
+          if identifier < 0 || identifier >= context.lists.length() {
+            evaluation_error(InvalidOperand, "list is not available", span)
+          } else {
+            match non_negative_count(count_value) {
+              None =>
+                evaluation_error(
+                  InvalidOperand,
+                  "List repetition count must be a non-negative integer",
+                  span,
+                )
+              Some(count) => {
+                let values : Array[Value] = []
+                for repeat_index = 0
+                    repeat_index < count
+                    repeat_index = repeat_index + 1 {
+                  for value in context.lists[identifier].items {
+                    values.push(value)
+                  }
+                }
+                EvaluationSucceeded(context.new_list(values))
+              }
+            }
+          }
+        _ => invalid_binary("*", left, right, span)
       }
     InclusiveRange | ExclusiveRange =>
       match (left, right) {
@@ -535,6 +697,62 @@ fn class_is_subclass(
 }
 
 ///|
+fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
+  match value {
+    NullValue => Value::core_class(NullClass)
+    BoolValue(_) => Value::core_class(BoolClass)
+    NumberValue(_) => Value::core_class(NumClass)
+    StringValue(_) => Value::core_class(StringClass)
+    RangeValue(_, _, _) => Value::core_class(RangeClass)
+    ListValue(_) => Value::core_class(ListClass)
+    MapValue(_) => Value::core_class(MapClass)
+    SequenceValue(_) => Value::core_class(SequenceClass)
+    FunctionValue(_) => Value::core_class(FnClass)
+    InstanceValue(identifier) =>
+      if identifier >= 0 && identifier < context.instances.length() {
+        Value::class_value(context.instances[identifier].class_identifier)
+      } else {
+        Value::core_class(ObjectClass)
+      }
+    ClassValue(_) | CoreClassValue(_) | SystemValue =>
+      Value::core_class(ClassClass)
+    MapEntryValue(_) | IteratorValue(_) => Value::core_class(ObjectClass)
+    SuperValue(_, instance_identifier, _) =>
+      if instance_identifier >= 0 &&
+        instance_identifier < context.instances.length() {
+        Value::class_value(
+          context.instances[instance_identifier].class_identifier,
+        )
+      } else {
+        Value::core_class(ObjectClass)
+      }
+    SuperClassValue(_, _) => Value::core_class(ClassClass)
+  }
+}
+
+///|
+fn value_is_core_class(value : Value, target : CoreClass) -> Bool {
+  if target == ObjectClass {
+    return true
+  }
+  match value {
+    NullValue => target == NullClass
+    BoolValue(_) => target == BoolClass
+    NumberValue(_) => target == NumClass
+    StringValue(_) => target == StringClass || target == SequenceClass
+    RangeValue(_, _, _) => target == RangeClass || target == SequenceClass
+    ListValue(_) => target == ListClass || target == SequenceClass
+    MapValue(_) => target == MapClass || target == SequenceClass
+    SequenceValue(_) => target == SequenceClass
+    FunctionValue(_) => target == FnClass
+    ClassValue(_) | CoreClassValue(_) | SystemValue => target == ClassClass
+    InstanceValue(_) | MapEntryValue(_) | IteratorValue(_) => false
+    SuperValue(_, _, _) => false
+    SuperClassValue(_, _) => target == ClassClass
+  }
+}
+
+///|
 fn evaluate_is_type(
   value : Value,
   type_value : Value,
@@ -542,6 +760,8 @@ fn evaluate_is_type(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match type_value {
+    CoreClassValue(target) =>
+      EvaluationSucceeded(Value::bool(value_is_core_class(value, target)))
     ClassValue(target) =>
       match value {
         InstanceValue(identifier) =>
@@ -1386,6 +1606,29 @@ fn invalid_string_argument(
 }
 
 ///|
+fn string_index_of(text : String, needle : String, start : Int) -> Int {
+  let source = text.to_array()
+  let search = needle.to_array()
+  if search.length() == 0 {
+    return start
+  }
+  for index = start
+      index + search.length() <= source.length()
+      index = index + 1 {
+    let mut matches = true
+    for offset = 0; offset < search.length(); offset = offset + 1 {
+      if source[index + offset] != search[offset] {
+        matches = false
+      }
+    }
+    if matches {
+      return index
+    }
+  }
+  -1
+}
+
+///|
 fn invoke_string_method(
   text : String,
   name : String,
@@ -1397,7 +1640,7 @@ fn invoke_string_method(
     return indexed_iterator("String", string_items(text), name, arguments, span)
   }
   match name {
-    "contains" | "startsWith" | "endsWith" | "indexOf" | "split" =>
+    "contains" | "startsWith" | "endsWith" | "split" =>
       if arguments.length() != 1 {
         invalid_collection_arity("String", name, 1, arguments.length(), span)
       } else {
@@ -1411,16 +1654,6 @@ fn invoke_string_method(
             EvaluationSucceeded(Value::bool(text.has_prefix(needle)))
           "endsWith" =>
             EvaluationSucceeded(Value::bool(text.has_suffix(needle)))
-          "indexOf" =>
-            match text.find(needle) {
-              None => EvaluationSucceeded(Value::number(-1.0))
-              Some(offset) =>
-                EvaluationSucceeded(
-                  Value::number(
-                    Double::from_int(text.char_length(end_offset=offset)),
-                  ),
-                )
-            }
           "split" =>
             if needle == "" {
               evaluation_error(
@@ -1439,6 +1672,79 @@ fn invoke_string_method(
             evaluation_error(UndefinedMethod, "unreachable String method", span)
         }
       }
+    "indexOf" => {
+      if arguments.length() != 1 && arguments.length() != 2 {
+        return evaluation_error(
+          InvalidArity,
+          "String.indexOf expects one or two arguments, received \{arguments.length()}",
+          span,
+        )
+      }
+      let needle = match arguments[0] {
+        StringValue(value) => value
+        value => return invalid_string_argument(name, 1, value, span)
+      }
+      let length = text.char_length()
+      let start = if arguments.length() == 1 {
+        0
+      } else {
+        match arguments[1] {
+          NumberValue(number) => {
+            let raw = number.to_int()
+            if Double::from_int(raw) != number {
+              return evaluation_error(
+                InvalidOperand,
+                "String.indexOf start must be an integer",
+                span,
+              )
+            }
+            let normalized = if raw < 0 { length + raw } else { raw }
+            if normalized < 0 || normalized > length {
+              return evaluation_error(
+                IndexOutOfBounds,
+                "String.indexOf start is outside the valid range",
+                span,
+              )
+            }
+            normalized
+          }
+          value =>
+            return evaluation_error(
+              InvalidOperand,
+              "String.indexOf start must be a Num, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+      EvaluationSucceeded(
+        Value::number(Double::from_int(string_index_of(text, needle, start))),
+      )
+    }
+    "trim" | "trimStart" | "trimEnd" => {
+      if arguments.length() > 1 {
+        return evaluation_error(
+          InvalidArity,
+          "String.\{name} expects zero or one argument, received \{arguments.length()}",
+          span,
+        )
+      }
+      let characters = if arguments.length() == 0 {
+        "\t\n\r "
+      } else {
+        match arguments[0] {
+          StringValue(value) => value
+          value => return invalid_string_argument(name, 1, value, span)
+        }
+      }
+      let result = if name == "trim" {
+        text.trim(chars=characters).to_owned()
+      } else if name == "trimStart" {
+        text.trim_start(chars=characters).to_owned()
+      } else {
+        text.trim_end(chars=characters).to_owned()
+      }
+      EvaluationSucceeded(Value::string(result))
+    }
     "replace" =>
       if arguments.length() != 2 {
         invalid_collection_arity("String", name, 2, arguments.length(), span)
@@ -1464,10 +1770,12 @@ fn invoke_string_method(
         }
       }
     _ =>
-      evaluation_error(
-        UndefinedMethod,
-        "String does not implement method '\{name}'",
+      invoke_sequence_operation(
+        Value::string(text),
+        name,
+        arguments,
         span,
+        context,
       )
   }
 }
@@ -1480,12 +1788,15 @@ fn invoke_range_method(
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
+  context : RuntimeContext,
 ) -> EvaluationResult {
   if name != "iterate" && name != "iteratorValue" {
-    return evaluation_error(
-      UndefinedMethod,
-      "Range does not implement method '\{name}'",
+    return invoke_sequence_operation(
+      Value::range(from, to, inclusive),
+      name,
+      arguments,
       span,
+      context,
     )
   }
   if arguments.length() != 1 {
@@ -1532,6 +1843,426 @@ fn invoke_range_method(
 }
 
 ///|
+fn advance_iterable(
+  iterable : Value,
+  iterator : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> IteratorAdvanceResult {
+  match invoke_method(iterable, "iterate", [iterator], span, context) {
+    EvaluationFailed(issue) => IteratorAdvanceFailed(issue)
+    EvaluationSucceeded(BoolValue(false)) => IteratorComplete
+    EvaluationSucceeded(next) =>
+      match invoke_method(iterable, "iteratorValue", [next], span, context) {
+        EvaluationFailed(issue) => IteratorAdvanceFailed(issue)
+        EvaluationSucceeded(value) => IteratorAdvanced(next, value)
+      }
+  }
+}
+
+///|
+fn advance_sequence_iterator(
+  iterator_identifier : Int,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if iterator_identifier < 0 ||
+    iterator_identifier >= context.iterators.length() {
+    return evaluation_error(
+      InvalidOperand,
+      "sequence iterator is not available",
+      span,
+    )
+  }
+  let iterator = context.iterators[iterator_identifier]
+  if iterator.completed {
+    return EvaluationSucceeded(Value::bool(false))
+  }
+  let sequence_identifier = iterator.sequence_identifier
+  if sequence_identifier < 0 ||
+    sequence_identifier >= context.sequences.length() {
+    return evaluation_error(InvalidOperand, "sequence is not available", span)
+  }
+  let complete = fn() -> EvaluationResult {
+    iterator.completed = true
+    EvaluationSucceeded(Value::bool(false))
+  }
+  match context.sequences[sequence_identifier].kind {
+    SequenceSnapshot(items) =>
+      if iterator.yielded >= items.length() {
+        complete()
+      } else {
+        iterator.current = items[iterator.yielded]
+        iterator.yielded = iterator.yielded + 1
+        EvaluationSucceeded(Value::iterator(iterator_identifier))
+      }
+    SequenceMap(source, function_identifier) =>
+      match advance_iterable(source, iterator.source_iterator, span, context) {
+        IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
+        IteratorComplete => complete()
+        IteratorAdvanced(next, value) => {
+          iterator.source_iterator = next
+          match invoke_function(function_identifier, [value], span, context) {
+            EvaluationFailed(issue) => EvaluationFailed(issue)
+            EvaluationSucceeded(mapped) => {
+              iterator.current = mapped
+              iterator.yielded = iterator.yielded + 1
+              EvaluationSucceeded(Value::iterator(iterator_identifier))
+            }
+          }
+        }
+      }
+    SequenceWhere(source, function_identifier) => {
+      while true {
+        match
+          advance_iterable(source, iterator.source_iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete => return complete()
+          IteratorAdvanced(next, value) => {
+            iterator.source_iterator = next
+            match invoke_function(function_identifier, [value], span, context) {
+              EvaluationFailed(issue) => return EvaluationFailed(issue)
+              EvaluationSucceeded(selected) =>
+                if selected.is_truthy() {
+                  iterator.current = value
+                  iterator.yielded = iterator.yielded + 1
+                  return EvaluationSucceeded(
+                    Value::iterator(iterator_identifier),
+                  )
+                }
+            }
+          }
+        }
+      }
+      complete()
+    }
+    SequenceSkip(source, count) => {
+      if !iterator.started {
+        iterator.started = true
+        for skip_index = 0; skip_index < count; skip_index = skip_index + 1 {
+          match
+            advance_iterable(source, iterator.source_iterator, span, context) {
+            IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+            IteratorComplete => return complete()
+            IteratorAdvanced(next, _) => iterator.source_iterator = next
+          }
+        }
+      }
+      match advance_iterable(source, iterator.source_iterator, span, context) {
+        IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
+        IteratorComplete => complete()
+        IteratorAdvanced(next, value) => {
+          iterator.source_iterator = next
+          iterator.current = value
+          iterator.yielded = iterator.yielded + 1
+          EvaluationSucceeded(Value::iterator(iterator_identifier))
+        }
+      }
+    }
+    SequenceTake(source, count) =>
+      if iterator.yielded >= count {
+        complete()
+      } else {
+        match
+          advance_iterable(source, iterator.source_iterator, span, context) {
+          IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
+          IteratorComplete => complete()
+          IteratorAdvanced(next, value) => {
+            iterator.source_iterator = next
+            iterator.current = value
+            iterator.yielded = iterator.yielded + 1
+            EvaluationSucceeded(Value::iterator(iterator_identifier))
+          }
+        }
+      }
+  }
+}
+
+///|
+fn collect_iterable_values(
+  iterable : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> CollectedValuesResult {
+  let values : Array[Value] = []
+  let mut iterator = Value::null()
+  while true {
+    match invoke_method(iterable, "iterate", [iterator], span, context) {
+      EvaluationFailed(issue) => return ValueCollectionFailed(issue)
+      EvaluationSucceeded(BoolValue(false)) => break
+      EvaluationSucceeded(next) => iterator = next
+    }
+    match invoke_method(iterable, "iteratorValue", [iterator], span, context) {
+      EvaluationFailed(issue) => return ValueCollectionFailed(issue)
+      EvaluationSucceeded(value) => values.push(value)
+    }
+  }
+  ValuesCollected(values)
+}
+
+///|
+fn expect_function_identifier(value : Value) -> Int? {
+  match value {
+    FunctionValue(identifier) => Some(identifier)
+    _ => None
+  }
+}
+
+///|
+fn non_negative_count(value : Value) -> Int? {
+  match value {
+    NumberValue(number) => {
+      let count = number.to_int()
+      if count >= 0 && Double::from_int(count) == number {
+        Some(count)
+      } else {
+        None
+      }
+    }
+    _ => None
+  }
+}
+
+///|
+fn invalid_function_argument(
+  owner : String,
+  name : String,
+  span : SourceSpan,
+) -> EvaluationResult {
+  evaluation_error(
+    InvalidOperand,
+    "\{owner}.\{name} expects a function argument",
+    span,
+  )
+}
+
+///|
+fn invoke_sequence_operation(
+  receiver : Value,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let owner = receiver.type_name()
+  match name {
+    "all" | "any" | "count" | "each" | "map" | "where" => {
+      if arguments.length() != 1 {
+        return invalid_collection_arity(
+          owner,
+          name,
+          1,
+          arguments.length(),
+          span,
+        )
+      }
+      let function_identifier = match expect_function_identifier(arguments[0]) {
+        Some(identifier) => identifier
+        None => return invalid_function_argument(owner, name, span)
+      }
+      if name == "map" {
+        return EvaluationSucceeded(
+          context.new_sequence_kind(SequenceMap(receiver, function_identifier)),
+        )
+      }
+      if name == "where" {
+        return EvaluationSucceeded(
+          context.new_sequence_kind(
+            SequenceWhere(receiver, function_identifier),
+          ),
+        )
+      }
+      let mut iterator = Value::null()
+      let mut count = 0
+      while true {
+        let value = match advance_iterable(receiver, iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete => break
+          IteratorAdvanced(next, value) => {
+            iterator = next
+            value
+          }
+        }
+        match invoke_function(function_identifier, [value], span, context) {
+          EvaluationFailed(issue) => return EvaluationFailed(issue)
+          EvaluationSucceeded(result) => {
+            if name == "all" && !result.is_truthy() {
+              return EvaluationSucceeded(Value::bool(false))
+            }
+            if name == "any" && result.is_truthy() {
+              return EvaluationSucceeded(Value::bool(true))
+            }
+            if name == "count" && result.is_truthy() {
+              count = count + 1
+            }
+          }
+        }
+      }
+      if name == "all" {
+        EvaluationSucceeded(Value::bool(true))
+      } else if name == "any" {
+        EvaluationSucceeded(Value::bool(false))
+      } else if name == "count" {
+        EvaluationSucceeded(Value::number(Double::from_int(count)))
+      } else {
+        EvaluationSucceeded(Value::null())
+      }
+    }
+    "contains" => {
+      if arguments.length() != 1 {
+        return invalid_collection_arity(
+          owner,
+          name,
+          1,
+          arguments.length(),
+          span,
+        )
+      }
+      let mut iterator = Value::null()
+      while true {
+        match advance_iterable(receiver, iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete => break
+          IteratorAdvanced(next, value) => {
+            iterator = next
+            if value == arguments[0] {
+              return EvaluationSucceeded(Value::bool(true))
+            }
+          }
+        }
+      }
+      EvaluationSucceeded(Value::bool(false))
+    }
+    "join" => {
+      if arguments.length() > 1 {
+        return evaluation_error(
+          InvalidArity,
+          "\{owner}.join expects zero or one argument, received \{arguments.length()}",
+          span,
+        )
+      }
+      let separator = if arguments.length() == 0 {
+        ""
+      } else {
+        match arguments[0] {
+          StringValue(value) => value
+          value =>
+            return evaluation_error(
+              InvalidOperand,
+              "\{owner}.join separator must be a String, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+      let mut iterator = Value::null()
+      let mut text = ""
+      let mut first = true
+      while true {
+        match advance_iterable(receiver, iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete => break
+          IteratorAdvanced(next, value) => {
+            iterator = next
+            if first {
+              first = false
+            } else {
+              text = text + separator
+            }
+            text = text + runtime_value_to_text(value, context, 0)
+          }
+        }
+      }
+      EvaluationSucceeded(Value::string(text))
+    }
+    "reduce" => {
+      if arguments.length() != 1 && arguments.length() != 2 {
+        return evaluation_error(
+          InvalidArity,
+          "\{owner}.reduce expects one or two arguments, received \{arguments.length()}",
+          span,
+        )
+      }
+      let function_position = arguments.length() - 1
+      let function_identifier = match
+        expect_function_identifier(arguments[function_position]) {
+        Some(identifier) => identifier
+        None => return invalid_function_argument(owner, name, span)
+      }
+      let mut iterator = Value::null()
+      let mut accumulator = arguments[0]
+      if arguments.length() == 1 {
+        match advance_iterable(receiver, iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete =>
+            return evaluation_error(
+              InvalidOperand,
+              "\{owner}.reduce cannot reduce an empty sequence without a seed",
+              span,
+            )
+          IteratorAdvanced(next, value) => {
+            iterator = next
+            accumulator = value
+          }
+        }
+      }
+      while true {
+        let value = match advance_iterable(receiver, iterator, span, context) {
+          IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+          IteratorComplete => break
+          IteratorAdvanced(next, value) => {
+            iterator = next
+            value
+          }
+        }
+        match
+          invoke_function(
+            function_identifier,
+            [accumulator, value],
+            span,
+            context,
+          ) {
+          EvaluationFailed(issue) => return EvaluationFailed(issue)
+          EvaluationSucceeded(value) => accumulator = value
+        }
+      }
+      EvaluationSucceeded(accumulator)
+    }
+    "skip" | "take" => {
+      if arguments.length() != 1 {
+        return invalid_collection_arity(
+          owner,
+          name,
+          1,
+          arguments.length(),
+          span,
+        )
+      }
+      let count = match non_negative_count(arguments[0]) {
+        Some(value) => value
+        None =>
+          return evaluation_error(
+            InvalidOperand,
+            "\{owner}.\{name} count must be a non-negative integer",
+            span,
+          )
+      }
+      let kind = if name == "skip" {
+        SequenceSkip(receiver, count)
+      } else {
+        SequenceTake(receiver, count)
+      }
+      EvaluationSucceeded(context.new_sequence_kind(kind))
+    }
+    _ =>
+      evaluation_error(
+        UndefinedMethod,
+        "\{owner} does not implement method '\{name}'",
+        span,
+      )
+  }
+}
+
+///|
 fn invoke_sequence_method(
   identifier : Int,
   name : String,
@@ -1542,13 +2273,81 @@ fn invoke_sequence_method(
   if identifier < 0 || identifier >= context.sequences.length() {
     return evaluation_error(InvalidOperand, "sequence is not available", span)
   }
-  indexed_iterator(
-    "Sequence",
-    context.sequences[identifier].items,
-    name,
-    arguments,
-    span,
-  )
+  if name != "iterate" && name != "iteratorValue" {
+    return invoke_sequence_operation(
+      Value::sequence(identifier),
+      name,
+      arguments,
+      span,
+      context,
+    )
+  }
+  if arguments.length() != 1 {
+    return invalid_collection_arity(
+      "Sequence",
+      name,
+      1,
+      arguments.length(),
+      span,
+    )
+  }
+  if name == "iteratorValue" {
+    return match arguments[0] {
+      IteratorValue(iterator_identifier) =>
+        if iterator_identifier < 0 ||
+          iterator_identifier >= context.iterators.length() ||
+          context.iterators[iterator_identifier].sequence_identifier !=
+          identifier ||
+          context.iterators[iterator_identifier].completed {
+          evaluation_error(
+            InvalidOperand,
+            "Sequence iterator is outside the valid range",
+            span,
+          )
+        } else {
+          EvaluationSucceeded(context.iterators[iterator_identifier].current)
+        }
+      value =>
+        evaluation_error(
+          InvalidOperand,
+          "Sequence iterator must be an Iterator, received \{value.type_name()}",
+          span,
+        )
+    }
+  }
+  let iterator_identifier = match arguments[0] {
+    NullValue => {
+      let next = context.iterators.length()
+      context.iterators.push({
+        sequence_identifier: identifier,
+        source_iterator: Value::null(),
+        current: Value::null(),
+        yielded: 0,
+        started: false,
+        completed: false,
+      })
+      next
+    }
+    IteratorValue(existing) =>
+      if existing < 0 ||
+        existing >= context.iterators.length() ||
+        context.iterators[existing].sequence_identifier != identifier {
+        return evaluation_error(
+          InvalidOperand,
+          "Sequence iterator does not belong to this sequence",
+          span,
+        )
+      } else {
+        existing
+      }
+    value =>
+      return evaluation_error(
+        InvalidOperand,
+        "Sequence iterator must be null or Iterator, received \{value.type_name()}",
+        span,
+      )
+  }
+  advance_sequence_iterator(iterator_identifier, span, context)
 }
 
 ///|
@@ -1573,6 +2372,20 @@ fn invoke_list_method(
       } else {
         items.push(arguments[0])
         EvaluationSucceeded(arguments[0])
+      }
+    "addAll" =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("List", name, 1, arguments.length(), span)
+      } else {
+        match collect_iterable_values(arguments[0], span, context) {
+          ValueCollectionFailed(issue) => EvaluationFailed(issue)
+          ValuesCollected(values) => {
+            for value in values {
+              items.push(value)
+            }
+            EvaluationSucceeded(arguments[0])
+          }
+        }
       }
     "insert" =>
       if arguments.length() != 2 {
@@ -1676,6 +2489,60 @@ fn invoke_list_method(
         items[right] = temporary
         EvaluationSucceeded(Value::null())
       }
+    "sort" => {
+      if arguments.length() > 1 {
+        return evaluation_error(
+          InvalidArity,
+          "List.sort expects zero or one argument, received \{arguments.length()}",
+          span,
+        )
+      }
+      let comparer = if arguments.length() == 0 {
+        None
+      } else {
+        match arguments[0] {
+          FunctionValue(identifier) => Some(identifier)
+          _ => return invalid_function_argument("List", name, span)
+        }
+      }
+      for index = 1; index < items.length(); index = index + 1 {
+        let mut position = index
+        while position > 0 {
+          let before = match comparer {
+            Some(identifier) =>
+              match
+                invoke_function(
+                  identifier,
+                  [items[position], items[position - 1]],
+                  span,
+                  context,
+                ) {
+                EvaluationFailed(issue) => return EvaluationFailed(issue)
+                EvaluationSucceeded(value) => value.is_truthy()
+              }
+            None =>
+              match (items[position], items[position - 1]) {
+                (NumberValue(left), NumberValue(right)) => left < right
+                (StringValue(left), StringValue(right)) => left < right
+                (left, right) =>
+                  return evaluation_error(
+                    InvalidOperand,
+                    "List.sort cannot compare \{left.type_name()} and \{right.type_name()}",
+                    span,
+                  )
+              }
+          }
+          if !before {
+            break
+          }
+          let temporary = items[position]
+          items[position] = items[position - 1]
+          items[position - 1] = temporary
+          position = position - 1
+        }
+      }
+      EvaluationSucceeded(Value::list(identifier))
+    }
     "clear" =>
       if arguments.length() != 0 {
         invalid_collection_arity("List", name, 0, arguments.length(), span)
@@ -1686,10 +2553,12 @@ fn invoke_list_method(
         EvaluationSucceeded(Value::null())
       }
     _ =>
-      evaluation_error(
-        UndefinedMethod,
-        "List does not implement method '\{name}'",
+      invoke_sequence_operation(
+        Value::list(identifier),
+        name,
+        arguments,
         span,
+        context,
       )
   }
 }
@@ -1706,6 +2575,43 @@ fn invoke_map_method(
     return evaluation_error(InvalidOperand, "map is not available", span)
   }
   let entries = context.maps[identifier].entries
+  if name == "iterate" || name == "iteratorValue" {
+    if arguments.length() != 1 {
+      return invalid_collection_arity("Map", name, 1, arguments.length(), span)
+    }
+    let sequence_identifier = match arguments[0] {
+      NullValue => {
+        let values : Array[Value] = []
+        for entry in entries {
+          values.push(context.new_map_entry(entry.key, entry.value))
+        }
+        match context.new_sequence(values) {
+          SequenceValue(sequence_identifier) => sequence_identifier
+          _ => abort("new_sequence must return a Sequence")
+        }
+      }
+      IteratorValue(iterator_identifier) =>
+        if iterator_identifier < 0 ||
+          iterator_identifier >= context.iterators.length() {
+          return evaluation_error(
+            InvalidOperand,
+            "Map iterator is not available",
+            span,
+          )
+        } else {
+          context.iterators[iterator_identifier].sequence_identifier
+        }
+      value =>
+        return evaluation_error(
+          InvalidOperand,
+          "Map iterator must be null or Iterator, received \{value.type_name()}",
+          span,
+        )
+    }
+    return invoke_sequence_method(
+      sequence_identifier, name, arguments, span, context,
+    )
+  }
   match name {
     "containsKey" =>
       if arguments.length() != 1 {
@@ -1749,12 +2655,349 @@ fn invoke_map_method(
         EvaluationSucceeded(Value::null())
       }
     _ =>
+      invoke_sequence_operation(
+        Value::map(identifier),
+        name,
+        arguments,
+        span,
+        context,
+      )
+  }
+}
+
+///|
+fn parse_decimal_string(text : String) -> Double? {
+  let characters = text.to_array()
+  if characters.length() == 0 {
+    return None
+  }
+  let mut index = 0
+  let mut sign = 1.0
+  if characters[index].to_int() == 45 || characters[index].to_int() == 43 {
+    if characters[index].to_int() == 45 {
+      sign = -1.0
+    }
+    index = index + 1
+  }
+  let mut value = 0.0
+  let mut digits = 0
+  while index < characters.length() && is_digit(characters[index].to_int()) {
+    value = value * 10.0 + Double::from_int(characters[index].to_int() - 48)
+    digits = digits + 1
+    index = index + 1
+  }
+  if index < characters.length() && characters[index].to_int() == 46 {
+    index = index + 1
+    let mut place = 0.1
+    while index < characters.length() && is_digit(characters[index].to_int()) {
+      value = value + Double::from_int(characters[index].to_int() - 48) * place
+      place = place * 0.1
+      digits = digits + 1
+      index = index + 1
+    }
+  }
+  if digits == 0 {
+    return None
+  }
+  if index < characters.length() &&
+    (characters[index].to_int() == 69 || characters[index].to_int() == 101) {
+    index = index + 1
+    let mut exponent_sign = 1
+    if index < characters.length() &&
+      (characters[index].to_int() == 45 || characters[index].to_int() == 43) {
+      if characters[index].to_int() == 45 {
+        exponent_sign = -1
+      }
+      index = index + 1
+    }
+    let mut exponent = 0
+    let mut exponent_digits = 0
+    while index < characters.length() && is_digit(characters[index].to_int()) {
+      if exponent <= 400 {
+        exponent = exponent * 10 + characters[index].to_int() - 48
+      }
+      exponent_digits = exponent_digits + 1
+      index = index + 1
+    }
+    if exponent_digits == 0 {
+      return None
+    }
+    if exponent > 400 {
+      value = if exponent_sign > 0 {
+        if value == 0.0 {
+          0.0
+        } else {
+          @double.infinity
+        }
+      } else {
+        0.0
+      }
+    } else {
+      let mut factor = 1.0
+      for power_index = 0; power_index < exponent; power_index = power_index + 1 {
+        if exponent_sign > 0 {
+          factor = factor * 10.0
+        } else {
+          factor = factor * 0.1
+        }
+      }
+      value = value * factor
+    }
+  }
+  if index != characters.length() {
+    None
+  } else {
+    Some(value * sign)
+  }
+}
+
+///|
+fn invoke_core_class_method(
+  class_value : CoreClass,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  match (class_value, name) {
+    (ObjectClass, "same") =>
+      if arguments.length() != 2 {
+        invalid_collection_arity("Object", name, 2, arguments.length(), span)
+      } else {
+        EvaluationSucceeded(Value::bool(arguments[0] == arguments[1]))
+      }
+    (FnClass, "new") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("Fn", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          FunctionValue(_) => EvaluationSucceeded(arguments[0])
+          value =>
+            evaluation_error(
+              InvalidOperand,
+              "Fn.new expects a function, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+    (ListClass, "new") =>
+      if arguments.length() != 0 {
+        invalid_collection_arity("List", name, 0, arguments.length(), span)
+      } else {
+        EvaluationSucceeded(context.new_list([]))
+      }
+    (ListClass, "filled") =>
+      if arguments.length() != 2 {
+        invalid_collection_arity("List", name, 2, arguments.length(), span)
+      } else {
+        match non_negative_count(arguments[0]) {
+          None =>
+            evaluation_error(
+              InvalidOperand,
+              "List.filled size must be a non-negative integer",
+              span,
+            )
+          Some(count) => {
+            let values : Array[Value] = []
+            for index = 0; index < count; index = index + 1 {
+              values.push(arguments[1])
+            }
+            EvaluationSucceeded(context.new_list(values))
+          }
+        }
+      }
+    (MapClass, "new") =>
+      if arguments.length() != 0 {
+        invalid_collection_arity("Map", name, 0, arguments.length(), span)
+      } else {
+        EvaluationSucceeded(context.new_map())
+      }
+    (NumClass, "fromString") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("Num", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          StringValue(text) =>
+            match parse_decimal_string(text) {
+              Some(number) => EvaluationSucceeded(Value::number(number))
+              None => EvaluationSucceeded(Value::null())
+            }
+          value =>
+            evaluation_error(
+              InvalidOperand,
+              "Num.fromString expects a String, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+    (StringClass, "fromCodePoint") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("String", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          NumberValue(number) => {
+            let code_point = number.to_int()
+            if Double::from_int(code_point) != number ||
+              code_point < 0 ||
+              code_point > 0x10ffff ||
+              (code_point >= 0xd800 && code_point <= 0xdfff) {
+              evaluation_error(
+                InvalidOperand,
+                "String.fromCodePoint expects a valid Unicode code point",
+                span,
+              )
+            } else {
+              EvaluationSucceeded(
+                Value::string(code_point.unsafe_to_char().to_string()),
+              )
+            }
+          }
+          value =>
+            evaluation_error(
+              InvalidOperand,
+              "String.fromCodePoint expects a Num, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+    (StringClass, "fromByte") =>
+      if arguments.length() != 1 {
+        invalid_collection_arity("String", name, 1, arguments.length(), span)
+      } else {
+        match arguments[0] {
+          NumberValue(number) => {
+            let byte = number.to_int()
+            if Double::from_int(byte) != number || byte < 0 || byte > 255 {
+              evaluation_error(
+                InvalidOperand,
+                "String.fromByte expects an integer from 0 through 255",
+                span,
+              )
+            } else {
+              EvaluationSucceeded(
+                Value::string(byte.unsafe_to_char().to_string()),
+              )
+            }
+          }
+          value =>
+            evaluation_error(
+              InvalidOperand,
+              "String.fromByte expects a Num, received \{value.type_name()}",
+              span,
+            )
+        }
+      }
+    _ =>
       evaluation_error(
         UndefinedMethod,
-        "Map does not implement method '\{name}'",
+        "\{class_value.name()} does not implement static method '\{name}'",
         span,
       )
   }
+}
+
+///|
+fn number_argument(value : Value) -> Double? {
+  match value {
+    NumberValue(number) => Some(number)
+    _ => None
+  }
+}
+
+///|
+fn invoke_number_method(
+  number : Double,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name != "atan" &&
+    name != "min" &&
+    name != "max" &&
+    name != "pow" &&
+    name != "clamp" {
+    return evaluation_error(
+      UndefinedMethod,
+      "Num does not implement method '\{name}'",
+      span,
+    )
+  }
+  let expected = if name == "clamp" { 2 } else { 1 }
+  if arguments.length() != expected {
+    return invalid_collection_arity(
+      "Num",
+      name,
+      expected,
+      arguments.length(),
+      span,
+    )
+  }
+  let first = match number_argument(arguments[0]) {
+    Some(value) => value
+    None =>
+      return evaluation_error(
+        InvalidOperand,
+        "Num.\{name} expects Num arguments",
+        span,
+      )
+  }
+  match name {
+    "atan" => EvaluationSucceeded(Value::number(@math.atan2(number, first)))
+    "min" => EvaluationSucceeded(Value::number(number.min(first)))
+    "max" => EvaluationSucceeded(Value::number(number.max(first)))
+    "pow" => EvaluationSucceeded(Value::number(@math.pow(number, first)))
+    "clamp" => {
+      let maximum = match number_argument(arguments[1]) {
+        Some(value) => value
+        None =>
+          return evaluation_error(
+            InvalidOperand,
+            "Num.clamp expects Num arguments",
+            span,
+          )
+      }
+      if first > maximum {
+        evaluation_error(
+          InvalidOperand,
+          "Num.clamp minimum must not exceed maximum",
+          span,
+        )
+      } else {
+        EvaluationSucceeded(
+          Value::number(
+            if number < first {
+              first
+            } else if number > maximum {
+              maximum
+            } else {
+              number
+            },
+          ),
+        )
+      }
+    }
+    _ =>
+      evaluation_error(
+        UndefinedMethod,
+        "Num does not implement method '\{name}'",
+        span,
+      )
+  }
+}
+
+///|
+fn RuntimeContext::write_output(
+  self : RuntimeContext,
+  text : String,
+  newline : Bool,
+) -> Unit {
+  if self.output_line_open {
+    let index = self.output.length() - 1
+    self.output[index] = self.output[index] + text
+  } else {
+    self.output.push(text)
+  }
+  self.output_line_open = !newline
 }
 
 ///|
@@ -1767,20 +3010,58 @@ fn invoke_method(
 ) -> EvaluationResult {
   match receiver {
     SystemValue =>
-      if name == "print" {
+      if name == "print" || name == "write" {
         if arguments.length() == 0 {
-          context.output.push("")
-          EvaluationSucceeded(Value::null())
+          if name == "write" {
+            evaluation_error(
+              InvalidArity,
+              "System.write expects one argument, received zero",
+              span,
+            )
+          } else {
+            context.write_output("", true)
+            EvaluationSucceeded(Value::null())
+          }
         } else if arguments.length() == 1 {
           let value = arguments[0]
-          context.output.push(runtime_value_to_text(value, context, 0))
+          context.write_output(
+            runtime_value_to_text(value, context, 0),
+            name == "print",
+          )
           EvaluationSucceeded(value)
         } else {
           evaluation_error(
             InvalidArity,
-            "System.print expects zero or one argument, received \{arguments.length()}",
+            "System.\{name} expects \{if name == "print" { "zero or one" } else { "one" }} argument, received \{arguments.length()}",
             span,
           )
+        }
+      } else if name == "printAll" || name == "writeAll" {
+        if arguments.length() != 1 {
+          return invalid_collection_arity(
+            "System",
+            name,
+            1,
+            arguments.length(),
+            span,
+          )
+        }
+        match collect_iterable_values(arguments[0], span, context) {
+          ValueCollectionFailed(issue) => EvaluationFailed(issue)
+          ValuesCollected(values) => {
+            let mut text = ""
+            for value in values {
+              text = text + runtime_value_to_text(value, context, 0)
+            }
+            context.write_output(text, name == "printAll")
+            EvaluationSucceeded(Value::null())
+          }
+        }
+      } else if name == "gc" {
+        if arguments.length() != 0 {
+          invalid_collection_arity("System", name, 0, arguments.length(), span)
+        } else {
+          EvaluationSucceeded(Value::null())
         }
       } else {
         evaluation_error(
@@ -1799,6 +3080,7 @@ fn invoke_method(
           span,
         )
       }
+    NumberValue(number) => invoke_number_method(number, name, arguments, span)
     StringValue(text) =>
       invoke_string_method(text, name, arguments, span, context)
     ListValue(identifier) =>
@@ -1808,7 +3090,9 @@ fn invoke_method(
     SequenceValue(identifier) =>
       invoke_sequence_method(identifier, name, arguments, span, context)
     RangeValue(from, to, inclusive) =>
-      invoke_range_method(from, to, inclusive, name, arguments, span)
+      invoke_range_method(from, to, inclusive, name, arguments, span, context)
+    CoreClassValue(class_value) =>
+      invoke_core_class_method(class_value, name, arguments, span, context)
     ClassValue(identifier) =>
       match
         find_method_in_class(
@@ -1880,6 +3164,134 @@ fn invoke_method(
 }
 
 ///|
+fn read_sequence_property(
+  receiver : Value,
+  name : String,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if name == "toString" {
+    return EvaluationSucceeded(
+      Value::string(runtime_value_to_text(receiver, context, 0)),
+    )
+  }
+  if name != "count" && name != "isEmpty" && name != "toList" {
+    return evaluation_error(
+      UndefinedMethod,
+      "\{receiver.type_name()} does not implement getter '\{name}'",
+      span,
+    )
+  }
+  if name == "isEmpty" {
+    return match advance_iterable(receiver, Value::null(), span, context) {
+      IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
+      IteratorComplete => EvaluationSucceeded(Value::bool(true))
+      IteratorAdvanced(_, _) => EvaluationSucceeded(Value::bool(false))
+    }
+  }
+  match collect_iterable_values(receiver, span, context) {
+    ValueCollectionFailed(issue) => EvaluationFailed(issue)
+    ValuesCollected(values) =>
+      if name == "count" {
+        EvaluationSucceeded(Value::number(Double::from_int(values.length())))
+      } else {
+        EvaluationSucceeded(context.new_list(values))
+      }
+  }
+}
+
+///|
+fn read_core_class_property(
+  class_value : CoreClass,
+  name : String,
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name == "name" || name == "toString" {
+    return EvaluationSucceeded(Value::string(class_value.name()))
+  }
+  if name == "supertype" {
+    return if class_value == ObjectClass {
+      EvaluationSucceeded(Value::null())
+    } else if class_value == ListClass ||
+      class_value == MapClass ||
+      class_value == RangeClass ||
+      class_value == StringClass {
+      EvaluationSucceeded(Value::core_class(SequenceClass))
+    } else {
+      EvaluationSucceeded(Value::core_class(ObjectClass))
+    }
+  }
+  if class_value == NumClass {
+    return match name {
+      "infinity" => EvaluationSucceeded(Value::number(@double.infinity))
+      "nan" => EvaluationSucceeded(Value::number(@double.not_a_number))
+      "pi" => EvaluationSucceeded(Value::number(@math.PI))
+      "tau" => EvaluationSucceeded(Value::number(@math.PI * 2.0))
+      "largest" => EvaluationSucceeded(Value::number(1.7976931348623157e308))
+      "smallest" => EvaluationSucceeded(Value::number(5.0e-324))
+      "maxSafeInteger" => EvaluationSucceeded(Value::number(9007199254740991.0))
+      "minSafeInteger" =>
+        EvaluationSucceeded(Value::number(-9007199254740991.0))
+      _ =>
+        evaluation_error(
+          UndefinedMethod,
+          "Num does not implement static getter '\{name}'",
+          span,
+        )
+    }
+  }
+  evaluation_error(
+    UndefinedMethod,
+    "\{class_value.name()} does not implement static getter '\{name}'",
+    span,
+  )
+}
+
+///|
+fn read_number_property(
+  number : Double,
+  name : String,
+  span : SourceSpan,
+) -> EvaluationResult {
+  let truncated = if number < 0.0 { number.ceil() } else { number.floor() }
+  match name {
+    "abs" => EvaluationSucceeded(Value::number(number.abs()))
+    "acos" => EvaluationSucceeded(Value::number(@math.acos(number)))
+    "asin" => EvaluationSucceeded(Value::number(@math.asin(number)))
+    "atan" => EvaluationSucceeded(Value::number(@math.atan(number)))
+    "cbrt" => EvaluationSucceeded(Value::number(@math.cbrt(number)))
+    "ceil" => EvaluationSucceeded(Value::number(number.ceil()))
+    "cos" => EvaluationSucceeded(Value::number(@math.cos(number)))
+    "exp" => EvaluationSucceeded(Value::number(@math.exp(number)))
+    "floor" => EvaluationSucceeded(Value::number(number.floor()))
+    "fraction" => EvaluationSucceeded(Value::number(number - truncated))
+    "isInfinity" => EvaluationSucceeded(Value::bool(number.is_inf()))
+    "isInteger" =>
+      EvaluationSucceeded(
+        Value::bool(!number.is_nan() && !number.is_inf() && truncated == number),
+      )
+    "isNan" => EvaluationSucceeded(Value::bool(number.is_nan()))
+    "log" => EvaluationSucceeded(Value::number(@math.ln(number)))
+    "log2" => EvaluationSucceeded(Value::number(@math.log2(number)))
+    "round" => EvaluationSucceeded(Value::number(number.round()))
+    "sign" => EvaluationSucceeded(Value::number(number.signum()))
+    "sin" => EvaluationSucceeded(Value::number(@math.sin(number)))
+    "sqrt" => EvaluationSucceeded(Value::number(number.sqrt()))
+    "tan" => EvaluationSucceeded(Value::number(@math.tan(number)))
+    "truncate" => EvaluationSucceeded(Value::number(truncated))
+    "toString" =>
+      EvaluationSucceeded(Value::string(Value::number(number).to_text()))
+    "type" => EvaluationSucceeded(Value::core_class(NumClass))
+    _ =>
+      evaluation_error(
+        UndefinedMethod,
+        "Num does not implement getter '\{name}'",
+        span,
+      )
+  }
+}
+
+///|
 fn read_property(
   receiver : Value,
   name : String,
@@ -1908,6 +3320,8 @@ fn read_property(
             EvaluationSucceeded(
               Value::string("\{class_definition.name} instance"),
             )
+          } else if name == "type" {
+            EvaluationSucceeded(Value::class_value(class_identifier))
           } else {
             evaluation_error(
               UndefinedMethod,
@@ -1935,8 +3349,16 @@ fn read_property(
         Some(resolved) =>
           invoke_static_method(identifier, resolved, [], span, context)
         None =>
-          if name == "toString" {
+          if name == "toString" || name == "name" {
             EvaluationSucceeded(Value::string(context.classes[identifier].name))
+          } else if name == "type" {
+            EvaluationSucceeded(Value::core_class(ClassClass))
+          } else if name == "supertype" {
+            match context.classes[identifier].superclass {
+              Some(superclass) =>
+                EvaluationSucceeded(Value::class_value(superclass))
+              None => EvaluationSucceeded(Value::core_class(ObjectClass))
+            }
           } else {
             evaluation_error(
               UndefinedMethod,
@@ -1944,6 +3366,12 @@ fn read_property(
               span,
             )
           }
+      }
+    CoreClassValue(class_value) =>
+      if name == "type" {
+        EvaluationSucceeded(Value::core_class(ClassClass))
+      } else {
+        read_core_class_property(class_value, name, span)
       }
     SuperClassValue(superclass, receiver_class) =>
       match
@@ -1957,6 +3385,29 @@ fn read_property(
             span,
           )
       }
+    FunctionValue(identifier) =>
+      if name == "arity" {
+        if identifier < 0 || identifier >= context.closures.length() {
+          evaluation_error(InvalidOperand, "function is not available", span)
+        } else {
+          EvaluationSucceeded(
+            Value::number(
+              Double::from_int(context.closures[identifier].parameters.length()),
+            ),
+          )
+        }
+      } else if name == "type" {
+        EvaluationSucceeded(Value::core_class(FnClass))
+      } else if name == "toString" {
+        EvaluationSucceeded(Value::string("<fn>"))
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "Fn does not implement getter '\{name}'",
+          span,
+        )
+      }
+    NumberValue(number) => read_number_property(number, name, span)
     StringValue(text) =>
       match name {
         "count" =>
@@ -1964,12 +3415,43 @@ fn read_property(
             Value::number(Double::from_int(text.char_length())),
           )
         "toString" => EvaluationSucceeded(receiver)
-        _ =>
-          evaluation_error(
-            UndefinedMethod,
-            "String does not implement getter '\{name}'",
-            span,
-          )
+        "bytes" => {
+          let values : Array[Value] = []
+          for character in text.to_array() {
+            let code = character.to_int()
+            if code <= 0x7f {
+              values.push(Value::number(Double::from_int(code)))
+            } else if code <= 0x7ff {
+              values.push(Value::number(Double::from_int(0xc0 | (code >> 6))))
+              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
+            } else if code <= 0xffff {
+              values.push(Value::number(Double::from_int(0xe0 | (code >> 12))))
+              values.push(
+                Value::number(Double::from_int(0x80 | ((code >> 6) & 0x3f))),
+              )
+              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
+            } else {
+              values.push(Value::number(Double::from_int(0xf0 | (code >> 18))))
+              values.push(
+                Value::number(Double::from_int(0x80 | ((code >> 12) & 0x3f))),
+              )
+              values.push(
+                Value::number(Double::from_int(0x80 | ((code >> 6) & 0x3f))),
+              )
+              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
+            }
+          }
+          EvaluationSucceeded(context.new_sequence(values))
+        }
+        "codePoints" => {
+          let values : Array[Value] = []
+          for character in text.to_array() {
+            values.push(Value::number(Double::from_int(character.to_int())))
+          }
+          EvaluationSucceeded(context.new_sequence(values))
+        }
+        "type" => EvaluationSucceeded(Value::core_class(StringClass))
+        _ => read_sequence_property(receiver, name, span, context)
       }
     RangeValue(from, to, inclusive) =>
       match name {
@@ -1981,12 +3463,8 @@ fn read_property(
         "max" =>
           EvaluationSucceeded(Value::number(if from > to { from } else { to }))
         "isInclusive" => EvaluationSucceeded(Value::bool(inclusive))
-        _ =>
-          evaluation_error(
-            UndefinedMethod,
-            "Range does not implement getter '\{name}'",
-            span,
-          )
+        "type" => EvaluationSucceeded(Value::core_class(RangeClass))
+        _ => read_sequence_property(receiver, name, span, context)
       }
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
@@ -2003,12 +3481,8 @@ fn read_property(
             EvaluationSucceeded(
               Value::string(runtime_value_to_text(receiver, context, 0)),
             )
-          _ =>
-            evaluation_error(
-              UndefinedMethod,
-              "List does not implement getter '\{name}'",
-              span,
-            )
+          "type" => EvaluationSucceeded(Value::core_class(ListClass))
+          _ => read_sequence_property(receiver, name, span, context)
         }
       }
     MapValue(identifier) =>
@@ -2040,40 +3514,58 @@ fn read_property(
             }
             EvaluationSucceeded(context.new_sequence(values))
           }
-          _ =>
-            evaluation_error(
-              UndefinedMethod,
-              "Map does not implement getter '\{name}'",
-              span,
-            )
+          "type" => EvaluationSucceeded(Value::core_class(MapClass))
+          _ => read_sequence_property(receiver, name, span, context)
         }
       }
     SequenceValue(identifier) =>
       if identifier < 0 || identifier >= context.sequences.length() {
         evaluation_error(InvalidOperand, "sequence is not available", span)
+      } else if name == "type" {
+        EvaluationSucceeded(Value::core_class(SequenceClass))
       } else {
+        read_sequence_property(receiver, name, span, context)
+      }
+    MapEntryValue(identifier) =>
+      if identifier < 0 || identifier >= context.map_entries.length() {
+        evaluation_error(InvalidOperand, "map entry is not available", span)
+      } else {
+        let entry = context.map_entries[identifier]
         match name {
-          "count" =>
-            EvaluationSucceeded(
-              Value::number(
-                Double::from_int(context.sequences[identifier].items.length()),
-              ),
-            )
+          "key" => EvaluationSucceeded(entry.key)
+          "value" => EvaluationSucceeded(entry.value)
           "toString" =>
             EvaluationSucceeded(
               Value::string(runtime_value_to_text(receiver, context, 0)),
             )
+          "type" => EvaluationSucceeded(Value::core_class(ObjectClass))
           _ =>
             evaluation_error(
               UndefinedMethod,
-              "Sequence does not implement getter '\{name}'",
+              "MapEntry does not implement getter '\{name}'",
               span,
             )
         }
       }
+    SystemValue =>
+      if name == "name" || name == "toString" {
+        EvaluationSucceeded(Value::string("System"))
+      } else if name == "type" {
+        EvaluationSucceeded(Value::core_class(ClassClass))
+      } else if name == "supertype" {
+        EvaluationSucceeded(Value::core_class(ObjectClass))
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "System does not implement static getter '\{name}'",
+          span,
+        )
+      }
     value =>
       if name == "toString" {
         EvaluationSucceeded(Value::string(value.to_text()))
+      } else if name == "type" {
+        EvaluationSucceeded(core_class_for_value(value, context))
       } else {
         evaluation_error(
           UndefinedMethod,
@@ -2352,7 +3844,9 @@ fn evaluate_expression_in(
           match evaluate_expression_in(right, environment, context) {
             EvaluationFailed(issue) => EvaluationFailed(issue)
             EvaluationSucceeded(right_value) =>
-              evaluate_binary_values(operator, left_value, right_value, span)
+              evaluate_binary_values(
+                operator, left_value, right_value, span, context,
+              )
           }
       }
     Conditional(condition, then_branch, else_branch, _) =>
@@ -2432,6 +3926,7 @@ fn execute_iterable_for_in(
   match iterable {
     RangeValue(_, _, _)
     | ListValue(_)
+    | MapValue(_)
     | StringValue(_)
     | SequenceValue(_)
     | InstanceValue(_) => ()
@@ -2536,7 +4031,7 @@ fn execute_module_source(
     None => ()
   }
   let environment = Environment::new()
-  ignore(environment.bind("System", Value::system()))
+  bind_core_globals(environment)
   let module_index = context.modules.length()
   context.modules.push({ name, environment, state: 0, })
   let statements = match parse_program(source) {
@@ -2829,7 +4324,7 @@ pub fn evaluate(source : String) -> EvaluationResult {
   match parse_expression(source) {
     ExpressionParsed(expression) => {
       let environment = Environment::new()
-      ignore(environment.bind("System", Value::system()))
+      bind_core_globals(environment)
       evaluate_expression_in(
         expression,
         environment,

@@ -1,1 +1,4 @@
-
+import {
+  "moonbitlang/core/double",
+  "moonbitlang/core/math",
+}
