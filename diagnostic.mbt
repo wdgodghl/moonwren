@@ -44,6 +44,8 @@ pub(all) enum DiagnosticCode {
   BreakOutsideLoop
   ContinueOutsideLoop
   ForeignBindingMissing
+  ForeignClassBindingMissing
+  ForeignObjectAllocationFailed
   ForeignCallFailed
   InvalidFiberState
   FiberAborted

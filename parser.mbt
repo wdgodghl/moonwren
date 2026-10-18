@@ -891,7 +891,11 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
 }
 
 ///|
-fn Parser::class_declaration(self : Parser, start : Token) -> Stmt {
+fn Parser::class_declaration(
+  self : Parser,
+  start : Token,
+  is_foreign : Bool,
+) -> Stmt {
   let name = self.consume(Identifier, "expected class name")
   self.skip_newlines()
   let superclass = if self.take(IsKeyword) {
@@ -913,6 +917,7 @@ fn Parser::class_declaration(self : Parser, start : Token) -> Stmt {
     name.lexeme,
     superclass,
     methods,
+    is_foreign,
     SourceSpan::merge(start.span, closing.span),
   )
 }
@@ -950,7 +955,10 @@ fn Parser::declaration(self : Parser) -> Stmt {
   if self.take(ImportKeyword) {
     self.import_declaration(start)
   } else if self.take(ClassKeyword) {
-    self.class_declaration(start)
+    self.class_declaration(start, false)
+  } else if self.take(ForeignKeyword) {
+    ignore(self.consume(ClassKeyword, "expected 'class' after 'foreign'"))
+    self.class_declaration(start, true)
   } else if self.take(VarKeyword) {
     self.variable_declaration(start)
   } else {

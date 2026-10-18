@@ -15,13 +15,32 @@ test "parser accepts foreign instance static and getter declarations" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParseFailed(issues) => fail(issues[0].message)
-    @moonwren.ProgramParsed([@moonwren.ClassStatement(_, _, methods, _)]) => {
+    @moonwren.ProgramParsed([@moonwren.ClassStatement(_, _, methods, _, _)]) => {
       assert_eq(methods.length(), 3)
       assert_true(methods[0].is_foreign)
       assert_true(methods[0].is_static)
       assert_true(methods[2].is_getter)
     }
     _ => fail("expected one class declaration")
+  }
+}
+
+///|
+test "parser marks foreign class declarations" {
+  let source = "foreign class Counter {\n" +
+    "  construct new(value) {}\n" +
+    "  foreign increment(amount)\n" +
+    "}\n"
+  match @moonwren.parse_program(source) {
+    @moonwren.ProgramParsed(
+      [@moonwren.ClassStatement("Counter", None, methods, true, _)]
+    ) => {
+      assert_eq(methods.length(), 2)
+      assert_true(methods[0].is_constructor)
+      assert_true(methods[1].is_foreign)
+    }
+    @moonwren.ProgramParseFailed(issues) => fail(issues[0].message)
+    _ => fail("expected one foreign class declaration")
   }
 }
 
@@ -143,5 +162,115 @@ test "foreign bindings use the canonical imported module name" {
     ]) {
     @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["1.0"])
     @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "foreign classes allocate host handles and expose them to methods" {
+  let values : Array[Double] = []
+  let finalized : Array[Int] = []
+  let class_binding = @moonwren.ForeignClassBinding::new(
+    "main",
+    "Counter",
+    fn(arguments) {
+      match arguments[0] {
+        @moonwren.NumberValue(value) => {
+          let handle = values.length()
+          values.push(value)
+          @moonwren.ForeignAllocationSucceeded(handle)
+        }
+        _ => @moonwren.ForeignAllocationFailed("start must be a number")
+      }
+    },
+    fn(handle) { finalized.push(handle) },
+  )
+  let increment = @moonwren.ForeignMethodBinding::new_for_foreign_class(
+    "main",
+    "Counter",
+    "increment(_)",
+    fn(handle, arguments) {
+      match arguments[0] {
+        @moonwren.NumberValue(amount) => {
+          values[handle] = values[handle] + amount
+          @moonwren.ForeignCallSucceeded(
+            @moonwren.Value::number(values[handle]),
+          )
+        }
+        _ => @moonwren.ForeignCallFailed("amount must be a number")
+      }
+    },
+  )
+  let value = @moonwren.ForeignMethodBinding::new_for_foreign_class(
+    "main",
+    "Counter",
+    "value",
+    fn(handle, _) {
+      @moonwren.ForeignCallSucceeded(@moonwren.Value::number(values[handle]))
+    },
+  )
+  let source = "foreign class Counter {\n" +
+    "  construct new(start) {}\n" +
+    "  foreign increment(amount)\n" +
+    "  foreign value\n" +
+    "  doubled { return this.value * 2 }\n" +
+    "}\n" +
+    "var counter = Counter.new(20)\n" +
+    "System.print(counter.increment(1))\n" +
+    "System.print(counter.value)\n" +
+    "System.print(counter.doubled)\n"
+  match
+    @moonwren.run_with_foreign_bindings(
+      "main",
+      source,
+      100000,
+      no_foreign_modules,
+      [increment, value],
+      [class_binding],
+    ) {
+    @moonwren.ProgramCompleted(_, output) => {
+      assert_eq(output, ["21", "21", "42"])
+      assert_eq(finalized, [0])
+    }
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
+test "foreign class binding and allocation failures are structured" {
+  let source = "foreign class Resource { construct open() {} }\n"
+  match
+    @moonwren.run_with_foreign_bindings(
+      "main",
+      source,
+      100000,
+      no_foreign_modules,
+      [],
+      [],
+    ) {
+    @moonwren.ProgramCompleted(_, _) =>
+      fail("missing class binding should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.ForeignClassBindingMissing)
+  }
+  let binding = @moonwren.ForeignClassBinding::new(
+    "main",
+    "Resource",
+    fn(_) { @moonwren.ForeignAllocationFailed("resource unavailable") },
+    fn(_) { () },
+  )
+  match
+    @moonwren.run_with_foreign_bindings(
+      "main",
+      source + "Resource.open()\n",
+      100000,
+      no_foreign_modules,
+      [],
+      [binding],
+    ) {
+    @moonwren.ProgramCompleted(_, _) => fail("allocation should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.ForeignObjectAllocationFailed)
+      assert_true(issues[0].message.contains("resource unavailable"))
+    }
   }
 }

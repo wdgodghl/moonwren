@@ -123,7 +123,7 @@ pub(all) enum Stmt {
   BreakStatement(SourceSpan)
   ContinueStatement(SourceSpan)
   ImportStatement(String, Array[ImportBinding], SourceSpan)
-  ClassStatement(String, String?, Array[MethodDecl], SourceSpan)
+  ClassStatement(String, String?, Array[MethodDecl], Bool, SourceSpan)
 } derive(Eq, Debug)
 
 ///|
@@ -145,7 +145,7 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | BreakStatement(span)
     | ContinueStatement(span)
     | ImportStatement(_, _, span)
-    | ClassStatement(_, _, _, span) => span
+    | ClassStatement(_, _, _, _, span) => span
   }
 }
 

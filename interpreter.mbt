@@ -27,7 +27,7 @@ pub fn run_with_loader(
   max_steps : Int,
   loader : (String, String) -> ModuleLoadResult,
 ) -> ProgramRunResult {
-  run_with_foreign_methods(source_name, source, max_steps, loader, [])
+  run_with_foreign_bindings(source_name, source, max_steps, loader, [], [])
 }
 
 ///|
@@ -40,16 +40,39 @@ pub fn run_with_foreign_methods(
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
 ) -> ProgramRunResult {
+  run_with_foreign_bindings(
+    source_name,
+    source,
+    max_steps,
+    loader,
+    foreign_methods,
+    [],
+  )
+}
+
+///|
+/// Run one named entry module with host implementations for foreign methods
+/// and host-owned foreign class state.
+pub fn run_with_foreign_bindings(
+  source_name : String,
+  source : String,
+  max_steps : Int,
+  loader : (String, String) -> ModuleLoadResult,
+  foreign_methods : Array[ForeignMethodBinding],
+  foreign_classes : Array[ForeignClassBinding],
+) -> ProgramRunResult {
   if max_steps <= 0 {
     return invalid_execution_limit(source_name)
   }
   let context = RuntimeContext::new_with_loader(
-    max_steps, source_name, loader, foreign_methods,
+    max_steps, source_name, loader, foreign_methods, foreign_classes,
   )
-  match execute_module_source(source_name, source, context) {
+  let result = match execute_module_source(source_name, source, context) {
     ModuleExecuted(_, value) => ProgramCompleted(value, context.output)
     ModuleExecutionFailed(issues) => ProgramFailed(issues, context.output)
   }
+  finalize_foreign_instances(context)
+  result
 }
 
 ///|

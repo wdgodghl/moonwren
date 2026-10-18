@@ -17,6 +17,8 @@ priv struct ClassDefinition {
   name : String
   superclass : Int?
   methods : Array[MethodDecl]
+  is_foreign : Bool
+  foreign_binding : Int?
   environment : Environment
   static_fields : Array[InstanceField]
   source_name : String
@@ -38,6 +40,8 @@ priv struct InstanceField {
 priv struct Instance {
   class_identifier : Int
   fields : Array[InstanceField]
+  foreign_handle : Int?
+  mut finalized : Bool
 }
 
 ///|
@@ -136,6 +140,7 @@ priv struct RuntimeContext {
   fibers : Array[RuntimeFiber]
   modules : Array[RuntimeModule]
   foreign_methods : Array[ForeignMethodBinding]
+  foreign_classes : Array[ForeignClassBinding]
   loader : (String, String) -> ModuleLoadResult
   mut current_source : String
   mut steps : Int
@@ -151,6 +156,7 @@ fn RuntimeContext::new_with_loader(
   source_name : String,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
+  foreign_classes : Array[ForeignClassBinding],
 ) -> RuntimeContext {
   {
     output: [],
@@ -180,6 +186,7 @@ fn RuntimeContext::new_with_loader(
     ],
     modules: [],
     foreign_methods,
+    foreign_classes,
     loader,
     current_source: source_name,
     steps: 0,
@@ -196,6 +203,7 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
     max_steps,
     "<source>",
     fn(_, name) { ModuleLoadFailed("module '\{name}' is not available") },
+    [],
     [],
   )
 }
@@ -1018,6 +1026,20 @@ fn method_signature(declaration : MethodDecl) -> String {
 }
 
 ///|
+fn find_foreign_class_binding(
+  context : RuntimeContext,
+  module_name : String,
+  class_name : String,
+) -> Int? {
+  for index = 0; index < context.foreign_classes.length(); index = index + 1 {
+    if context.foreign_classes[index].matches(module_name, class_name) {
+      return Some(index)
+    }
+  }
+  None
+}
+
+///|
 fn invoke_foreign_method(
   receiver : Value,
   owner : ClassDefinition,
@@ -1034,7 +1056,22 @@ fn invoke_foreign_method(
         declaration.is_static,
         signature,
       ) {
-      return match binding.call(receiver, arguments) {
+      let call_result = match receiver {
+        InstanceValue(identifier) =>
+          if identifier >= 0 &&
+            identifier < context.instances.length() &&
+            binding.accepts_handle() {
+            match context.instances[identifier].foreign_handle {
+              Some(handle) => binding.call_handle(handle, arguments)
+              None =>
+                ForeignCallFailed("receiver does not contain foreign data")
+            }
+          } else {
+            binding.call(receiver, arguments)
+          }
+        _ => binding.call(receiver, arguments)
+      }
+      return match call_result {
         ForeignCallSucceeded(value) => EvaluationSucceeded(value)
         ForeignCallFailed(message) =>
           evaluation_error(
@@ -1284,7 +1321,35 @@ fn construct_instance(
       )
     Some(resolved) => {
       let instance_identifier = context.instances.length()
-      context.instances.push({ class_identifier, fields: [], })
+      let foreign_handle = if class_definition.is_foreign {
+        match class_definition.foreign_binding {
+          None =>
+            return evaluation_error(
+              ForeignClassBindingMissing,
+              "no foreign class binding for \{class_definition.source_name}:\{class_definition.name}",
+              span,
+            )
+          Some(binding_identifier) =>
+            match
+              context.foreign_classes[binding_identifier].allocate(arguments) {
+              ForeignAllocationSucceeded(handle) => Some(handle)
+              ForeignAllocationFailed(message) =>
+                return evaluation_error(
+                  ForeignObjectAllocationFailed,
+                  "foreign class \{class_definition.name} allocation failed: \{message}",
+                  span,
+                )
+            }
+        }
+      } else {
+        None
+      }
+      context.instances.push({
+        class_identifier,
+        fields: [],
+        foreign_handle,
+        finalized: false,
+      })
       match
         invoke_user_method(
           instance_identifier, resolved, arguments, span, context,
@@ -5566,7 +5631,7 @@ fn execute_statement_in(
           StatementCompleted(Value::null())
         }
       }
-    ClassStatement(name, superclass_name, methods, span) => {
+    ClassStatement(name, superclass_name, methods, is_foreign, span) => {
       for index = 0; index < methods.length(); index = index + 1 {
         for other = index + 1; other < methods.length(); other = other + 1 {
           let left = methods[index]
@@ -5622,11 +5687,30 @@ fn execute_statement_in(
               )
           }
       }
+      let foreign_binding = if is_foreign {
+        match
+          find_foreign_class_binding(context, context.current_source, name) {
+          Some(binding) => Some(binding)
+          None =>
+            return StatementFailed(
+              Diagnostic::new(
+                Runtime,
+                ForeignClassBindingMissing,
+                "no foreign class binding for \{context.current_source}:\{name}",
+                span,
+              ),
+            )
+        }
+      } else {
+        None
+      }
       let identifier = context.classes.length()
       context.classes.push({
         name,
         superclass,
         methods,
+        is_foreign,
+        foreign_binding,
         environment: environment.capture(),
         static_fields: [],
         source_name: context.current_source,
@@ -5634,6 +5718,28 @@ fn execute_statement_in(
       let value = Value::class_value(identifier)
       ignore(environment.assign(name, value))
       StatementCompleted(value)
+    }
+  }
+}
+
+///|
+fn finalize_foreign_instances(context : RuntimeContext) -> Unit {
+  for instance in context.instances {
+    if instance.finalized {
+      continue
+    }
+    match instance.foreign_handle {
+      None => ()
+      Some(handle) => {
+        let class_definition = context.classes[instance.class_identifier]
+        match class_definition.foreign_binding {
+          Some(binding_identifier) => {
+            context.foreign_classes[binding_identifier].finalize(handle)
+            instance.finalized = true
+          }
+          None => ()
+        }
+      }
     }
   }
 }
