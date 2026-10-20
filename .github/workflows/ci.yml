@@ -23,3 +23,6 @@ jobs:
         run: moon build
       - name: Run tests
         run: moon test
+      - name: Compare Wren 0.4.0 fixtures
+        shell: pwsh
+        run: ./tools/check-conformance.ps1

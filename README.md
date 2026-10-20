@@ -1,6 +1,6 @@
 # MoonWren
 
-MoonWren is a Wren-compatible scripting language implementation written in
+MoonWren is a Wren 0.4.0-compatible scripting language implementation written in
 MoonBit. It is designed as an embeddable interpreter with a small public API, a
 standalone command-line runner, and behavior-focused compatibility tests.
 
@@ -29,6 +29,13 @@ direct function-call statements, initializers, and returns.
 - make embedding scripts straightforward through a small API;
 - track compatibility explicitly instead of silently accepting unsupported
   syntax.
+
+The compatibility endpoint is the official Wren `0.4.0` release at tag commit
+`4a18fc489f9ea3d253b20dd40f02c6097a8e2508`. It includes byte-accurate String
+behavior (including invalid UTF-8) and Fiber suspension through arbitrary Wren
+calls and callbacks. The precise definition of done, exclusions, and official
+input/output comparison cases are recorded in
+[`docs/wren-0.4-conformance.md`](docs/wren-0.4-conformance.md).
 
 ## Development
 
@@ -147,8 +154,9 @@ System.print(total) // 82
 See [`examples/collections.wren`](examples/collections.wren) for a complete
 example including nested collections and removal.
 
-Strings expose character-based indexing, slicing, counting, and iteration, so
-surrogate pairs are never returned as partial characters. The core methods
+Strings are being aligned with Wren's UTF-8 byte-offset rules; the checked-in
+Wren 0.4.0 differential suite makes the remaining byte-level gaps visible
+until they are closed. The core methods
 include `contains`, `startsWith`, `endsWith`, `indexOf`, `split`, `replace`,
 trimming, UTF-8 byte views, and code-point views. `Num` provides parsing,
 constants, predicates, rounding, trigonometry, logarithms, powers, and clamping.
@@ -262,7 +270,8 @@ lookup advances from each method's declaring class, so multi-level `super`
 calls remain correct. Static methods, getters, and class-owned fields use the
 same signature and superclass lookup model. See
 [`docs/compatibility.md`](docs/compatibility.md) for the current feature
-matrix and planned order of implementation.
+matrix and planned order of implementation. The current-status matrix is kept
+separate from the fixed Wren 0.4.0 completion contract.
 
 Program execution has both a configurable statement-step budget and a call
 depth guard. These limits turn unbounded loops and runaway recursion into

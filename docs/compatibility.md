@@ -1,7 +1,10 @@
 # Compatibility roadmap
 
-MoonWren targets source-level compatibility with Wren while keeping the
-implementation idiomatic to MoonBit.
+MoonWren targets the official Wren 0.4.0 language and embedding semantics while
+keeping the implementation idiomatic to MoonBit. The fixed completion criteria,
+reference commit, edge cases, and exclusions are defined in
+[`wren-0.4-conformance.md`](wren-0.4-conformance.md). This table reports current
+progress and does not redefine that endpoint.
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -14,14 +17,14 @@ implementation idiomatic to MoonBit.
 | Core class model | Implemented subset | `Object`, `Bool`, `Class`, `Fn`, `List`, `Map`, `Null`, `Num`, `Range`, `Sequence`, and `String` globals; `type`, `name`, `supertype`, and `is` |
 | Core `System` class | Partial | Captured `print`, `write`, `printAll`, `writeAll`; no-op `gc`; `clock` pending |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Core `String` class | Partial | Unicode character indexes, slices, iteration, search, split, replace, trim, bytes/code points, static scalar construction |
+| Core `String` class | Implemented subset | UTF-8 byte-offset scalar indexing/search, invalid `fromByte` storage, directly indexable byte/code-point views, iteration, split, replace, trim; byte-range slicing and mixed valid/invalid concatenation remain |
 | Core `List` class | Partial | Construction, negative indexes, slices, mutation/search, sorting, concatenation, repetition, iteration |
 | Core `Map` class | Partial | Construction, immutable keys, mutation, entry iteration, key/value sequence views |
 | Core `Num` class | Implemented subset | Parsing, constants, predicates, rounding, trigonometry, logs, powers, min/max/clamp |
 | Core `Sequence` class | Implemented subset | Aggregation, predicates, joining, reduction, lazy `map`/`where`/`skip`/`take`, materialization |
 | Functions and closures | Partial | Construction, arity, multiline bodies, `return`, calls, recursion, captured cells |
 | Classes | Partial | Instance/static members, inheritance, overriding, `this`, `super` |
-| Fibers | Implemented subset | Lazy creation, nested block/branch/loop suspension, direct called-function suspension, `current`, `call`, `try`, `yield`, `suspend`, worker/main `transfer`, abort/error/completion state |
+| Fibers | Implemented subset | Lazy creation, nested block/branch/loop suspension, direct called-function suspension, suspension through `Sequence.each` callbacks, `current`, `call`, `try`, `yield`, `suspend`, worker/main `transfer`, abort/error/completion state |
 | Modules | Implemented subset | Explicit imports, aliases, isolated scopes, caching, cycle detection, loader API |
 | Foreign methods | Implemented | Instance/static methods and getters, canonical module binding, values and structured host failures |
 | Foreign classes | Implemented subset | Host allocation handles, handle-aware methods, mixed Wren methods, shutdown finalization; reachability GC pending |
@@ -71,20 +74,26 @@ printable.
 for built-in and user-defined objects. Range, List, String, Map, and lazy
 Sequence values implement this protocol. Sequence transformations keep their
 source and callback until iteration, and each traversal receives independent
-iterator state. Predicates and membership checks short-circuit. String indexes
-and `count` deliberately operate on Unicode characters instead of Wren's raw
-UTF-8 byte offsets; slices and iteration therefore never split a character.
-`String.fromByte` currently covers scalar-safe byte values rather than creating
-arbitrary invalid UTF-8. These two documented differences remain compatibility
-work rather than silent behavior.
+iterator state. Predicates and membership checks short-circuit. String scalar
+indexes and `indexOf` use Wren's UTF-8 byte offsets. A scalar subscript at a
+valid boundary returns the code point, while a subscript inside a multibyte
+sequence preserves the selected byte. `bytes` and `codePoints` support direct
+byte-offset subscripting, including `-1` for a continuation or invalid byte,
+and `String.fromByte` preserves every value through 255. Iteration still emits
+complete code points. Byte-based range slicing and full operations on strings
+assembled from mixed valid and invalid bytes remain compatibility work.
 
 Fiber bodies keep a persistent captured environment and resume values through
 statement continuations. Suspension preserves lexical scopes and execution
 positions inside blocks, conditionals, `while`, and `for`, including repeated
 loop yields without replaying earlier side effects. A directly called function
 may suspend when the call is an expression statement, variable initializer, or
-return value; arbitrary nested method and operator call stacks remain future
-work. Transfers between workers form a non-local scheduling chain: each source
+return value. `Sequence.each` callbacks also preserve the callback and outer
+sequence position across repeated yields, covering the official full-coroutine
+example. User-defined instance/static methods, getters, operators, and the
+other callback-taking sequence operations still need the same general
+continuation path before the 0.4.0 endpoint is complete. Transfers between
+workers form a non-local scheduling chain: each source
 stores its continuation, the target receives the transferred value, and a later
 transfer back resumes the saved expression. Transfers to the main Fiber return
 control to the embedding call site. `transferError` marks its target aborted
