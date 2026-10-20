@@ -82,7 +82,16 @@ semantics from the target.
 Cases under `conformance/wren-0.4.0` contain a Wren input and the output
 captured from the official 0.4.0 CLI. `tools/check-conformance.ps1` runs the
 same inputs through MoonWren and compares their output byte-for-byte. When an
-official `wren` executable is supplied, `tools/refresh-reference.ps1` can
-independently reproduce the reference output and rejects a different Wren
-version.
+official `wren` executable is supplied, the reference can be independently
+reproduced and version-checked with:
+
+```text
+./tools/verify-official-wren.ps1 -WrenExecutable /path/to/wren
+```
+
+Normative references:
+
+- [Wren 0.4.0 release](https://github.com/wren-lang/wren/releases/tag/0.4.0)
+- [String byte and code-point semantics](https://wren.io/modules/core/string.html)
+- [Fiber full-coroutine semantics](https://wren.io/concurrency.html#full-coroutines)
 

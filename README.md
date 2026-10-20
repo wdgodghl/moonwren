@@ -45,6 +45,7 @@ The project requires MoonBit `0.10.14` or newer.
 moon check
 moon test
 moon run cmd/main
+./tools/check-conformance.ps1
 ```
 
 Running the command without arguments executes the bundled summation example
