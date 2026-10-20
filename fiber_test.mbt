@@ -234,6 +234,19 @@ test "called functions keep the visible fiber identity" {
 }
 
 ///|
+test "fibers suspend and resume through Sequence each callbacks" {
+  let source = "var worker = Fiber.new {\n" +
+    "  (1..3).each(Fn.new { |number| Fiber.yield(number * 2) })\n" +
+    "  return \"done\"\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call())\n"
+  expect_fiber_output(source, ["2", "4", "6", "done"])
+}
+
+///|
 test "worker fibers transfer control and values directly" {
   let source = "var main = Fiber.current\n" +
     "var left = null\n" +

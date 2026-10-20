@@ -69,6 +69,7 @@ priv struct RuntimeMapEntryValue {
 ///|
 priv enum RuntimeSequenceKind {
   SequenceSnapshot(Array[Value])
+  SequenceStringCodePoints(Array[Value], Array[Value])
   SequenceMap(Value, Int)
   SequenceWhere(Value, Int)
   SequenceSkip(Value, Int)
@@ -336,6 +337,7 @@ fn is_valid_map_key(value : Value) -> Bool {
     | BoolValue(_)
     | NumberValue(_)
     | StringValue(_)
+    | RawStringValue(_)
     | RangeValue(_, _, _)
     | ClassValue(_)
     | CoreClassValue(_) => true
@@ -432,6 +434,7 @@ fn runtime_value_to_text(
             }
             text + ")"
           }
+          SequenceStringCodePoints(_, _) => "<sequence>"
           _ => "<sequence>"
         }
       }
@@ -798,7 +801,7 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
     NullValue => Value::core_class(NullClass)
     BoolValue(_) => Value::core_class(BoolClass)
     NumberValue(_) => Value::core_class(NumClass)
-    StringValue(_) => Value::core_class(StringClass)
+    StringValue(_) | RawStringValue(_) => Value::core_class(StringClass)
     RangeValue(_, _, _) => Value::core_class(RangeClass)
     ListValue(_) => Value::core_class(ListClass)
     MapValue(_) => Value::core_class(MapClass)
@@ -836,7 +839,8 @@ fn value_is_core_class(value : Value, target : CoreClass) -> Bool {
     NullValue => target == NullClass
     BoolValue(_) => target == BoolClass
     NumberValue(_) => target == NumClass
-    StringValue(_) => target == StringClass || target == SequenceClass
+    StringValue(_) | RawStringValue(_) =>
+      target == StringClass || target == SequenceClass
     RangeValue(_, _, _) => target == RangeClass || target == SequenceClass
     ListValue(_) => target == ListClass || target == SequenceClass
     MapValue(_) => target == MapClass || target == SequenceClass
@@ -1666,18 +1670,61 @@ fn read_subscript(
         }
       }
     StringValue(text) => {
-      let characters = text.to_array()
+      let byte_length = utf8_bytes(text).length()
       match index {
         RangeValue(from, to, inclusive) =>
           read_string_range(text, from, to, inclusive, span)
         value =>
-          match collection_index(value, characters.length(), false, span) {
+          match collection_index(value, byte_length, false, span) {
             CollectionIndexSucceeded(index) =>
-              EvaluationSucceeded(Value::string(characters[index].to_string()))
+              match string_value_at_byte(text, index) {
+                Some(value) => EvaluationSucceeded(value)
+                None =>
+                  evaluation_error(
+                    IndexOutOfBounds,
+                    "string index is outside the valid range",
+                    span,
+                  )
+              }
             CollectionIndexFailed(issue) => EvaluationFailed(issue)
           }
       }
     }
+    RawStringValue(bytes) =>
+      match index {
+        RangeValue(_, _, _) =>
+          evaluation_error(
+            InvalidOperand,
+            "raw byte String slicing is not implemented",
+            span,
+          )
+        value =>
+          match collection_index(value, bytes.length(), false, span) {
+            CollectionIndexSucceeded(position) =>
+              EvaluationSucceeded(Value::raw_string([bytes[position]]))
+            CollectionIndexFailed(issue) => EvaluationFailed(issue)
+          }
+      }
+    SequenceValue(identifier) =>
+      if identifier < 0 || identifier >= context.sequences.length() {
+        evaluation_error(InvalidOperand, "sequence is not available", span)
+      } else {
+        let indexed = match context.sequences[identifier].kind {
+          SequenceSnapshot(items) => items
+          SequenceStringCodePoints(items, _) => items
+          _ =>
+            return evaluation_error(
+              InvalidOperand,
+              "lazy Sequence values cannot be indexed",
+              span,
+            )
+        }
+        match collection_index(index, indexed.length(), false, span) {
+          CollectionIndexSucceeded(position) =>
+            EvaluationSucceeded(indexed[position])
+          CollectionIndexFailed(issue) => EvaluationFailed(issue)
+        }
+      }
     other =>
       evaluation_error(
         InvalidOperand,
@@ -1717,7 +1764,7 @@ fn write_subscript(
       } else {
         evaluation_error(InvalidOperand, "map is not available", span)
       }
-    StringValue(_) =>
+    StringValue(_) | RawStringValue(_) =>
       evaluation_error(
         InvalidOperand,
         "String values are immutable and cannot be assigned by subscript",
@@ -1820,6 +1867,79 @@ fn indexed_iterator(
 }
 
 ///|
+fn utf8_bytes(text : String) -> Array[Int] {
+  let bytes : Array[Int] = []
+  for character in text.to_array() {
+    let code = character.to_int()
+    if code <= 0x7f {
+      bytes.push(code)
+    } else if code <= 0x7ff {
+      bytes.push(0xc0 | (code >> 6))
+      bytes.push(0x80 | (code & 0x3f))
+    } else if code <= 0xffff {
+      bytes.push(0xe0 | (code >> 12))
+      bytes.push(0x80 | ((code >> 6) & 0x3f))
+      bytes.push(0x80 | (code & 0x3f))
+    } else {
+      bytes.push(0xf0 | (code >> 18))
+      bytes.push(0x80 | ((code >> 12) & 0x3f))
+      bytes.push(0x80 | ((code >> 6) & 0x3f))
+      bytes.push(0x80 | (code & 0x3f))
+    }
+  }
+  bytes
+}
+
+///|
+fn utf8_width(code : Int) -> Int {
+  if code <= 0x7f {
+    1
+  } else if code <= 0x7ff {
+    2
+  } else if code <= 0xffff {
+    3
+  } else {
+    4
+  }
+}
+
+///|
+fn string_code_point_views(text : String) -> (Array[Value], Array[Value]) {
+  let indexed : Array[Value] = []
+  let iterated : Array[Value] = []
+  for character in text.to_array() {
+    let code = character.to_int()
+    let value = Value::number(Double::from_int(code))
+    indexed.push(value)
+    iterated.push(value)
+    for offset = 1; offset < utf8_width(code); offset = offset + 1 {
+      indexed.push(Value::number(-1.0))
+    }
+  }
+  (indexed, iterated)
+}
+
+///|
+fn string_value_at_byte(text : String, byte_index : Int) -> Value? {
+  let bytes = utf8_bytes(text)
+  if byte_index < 0 || byte_index >= bytes.length() {
+    return None
+  }
+  let mut offset = 0
+  for character in text.to_array() {
+    let width = utf8_width(character.to_int())
+    if offset == byte_index {
+      return Some(Value::string(character.to_string()))
+    }
+    if byte_index < offset + width {
+      return Some(Value::raw_string([bytes[byte_index]]))
+    }
+    offset = offset + width
+  }
+  None
+}
+
+///|
 fn string_items(text : String) -> Array[Value] {
   let items : Array[Value] = []
   for character in text.to_array() {
@@ -1844,8 +1964,8 @@ fn invalid_string_argument(
 
 ///|
 fn string_index_of(text : String, needle : String, start : Int) -> Int {
-  let source = text.to_array()
-  let search = needle.to_array()
+  let source = utf8_bytes(text)
+  let search = utf8_bytes(needle)
   if search.length() == 0 {
     return start
   }
@@ -1921,7 +2041,7 @@ fn invoke_string_method(
         StringValue(value) => value
         value => return invalid_string_argument(name, 1, value, span)
       }
-      let length = text.char_length()
+      let length = utf8_bytes(text).length()
       let start = if arguments.length() == 1 {
         0
       } else {
@@ -2015,6 +2135,41 @@ fn invoke_string_method(
         context,
       )
   }
+}
+
+///|
+fn raw_string_items(bytes : Array[Int]) -> Array[Value] {
+  let items : Array[Value] = []
+  for byte in bytes {
+    items.push(Value::raw_string([byte]))
+  }
+  items
+}
+
+///|
+fn invoke_raw_string_method(
+  bytes : Array[Int],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  if name == "iterate" || name == "iteratorValue" {
+    return indexed_iterator(
+      "String",
+      raw_string_items(bytes),
+      name,
+      arguments,
+      span,
+    )
+  }
+  invoke_sequence_operation(
+    Value::raw_string(bytes),
+    name,
+    arguments,
+    span,
+    context,
+  )
 }
 
 ///|
@@ -2130,6 +2285,14 @@ fn advance_sequence_iterator(
         complete()
       } else {
         iterator.current = items[iterator.yielded]
+        iterator.yielded = iterator.yielded + 1
+        EvaluationSucceeded(Value::iterator(iterator_identifier))
+      }
+    SequenceStringCodePoints(_, iterated) =>
+      if iterator.yielded >= iterated.length() {
+        complete()
+      } else {
+        iterator.current = iterated[iterator.yielded]
         iterator.yielded = iterator.yielded + 1
         EvaluationSucceeded(Value::iterator(iterator_identifier))
       }
@@ -2514,6 +2677,96 @@ fn resume_fiber_function_call(
 }
 
 ///|
+fn resume_fiber_each_callback(
+  call_identifier : Int,
+  input : Value,
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match resume_runtime_fiber(call_identifier, input, span, context) {
+    EvaluationFailed(issue) => FiberStatementFailed(issue)
+    EvaluationSucceeded(value) => {
+      let call_fiber = context.fibers[call_identifier]
+      if call_fiber.state == 2 {
+        FiberStatementYielded(value, fn(resumed) {
+          resume_fiber_each_callback(
+            call_identifier, resumed, iterable, iterator, function_identifier, span,
+            context,
+          )
+        })
+      } else {
+        execute_fiber_each(
+          iterable, iterator, function_identifier, span, context,
+        )
+      }
+    }
+  }
+}
+
+///|
+fn execute_fiber_each(
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match advance_iterable(iterable, iterator, span, context) {
+    IteratorAdvanceFailed(issue) => FiberStatementFailed(issue)
+    IteratorComplete =>
+      FiberStatementCompleted(StatementCompleted(Value::null()))
+    IteratorAdvanced(next, value) => {
+      let call_identifier = context.new_function_fiber(
+        function_identifier,
+        [value],
+        context.current_fiber,
+      )
+      resume_fiber_each_callback(
+        call_identifier,
+        Value::null(),
+        iterable,
+        next,
+        function_identifier,
+        span,
+        context,
+      )
+    }
+  }
+}
+
+///|
+fn prepare_fiber_each_call(
+  receiver : Expr,
+  callback : Expr,
+  span : SourceSpan,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep? {
+  let iterable = match evaluate_expression_in(receiver, environment, context) {
+    EvaluationFailed(issue) => return Some(FiberStatementFailed(issue))
+    EvaluationSucceeded(value) => value
+  }
+  let function_identifier = match
+    evaluate_expression_in(callback, environment, context) {
+    EvaluationFailed(issue) => return Some(FiberStatementFailed(issue))
+    EvaluationSucceeded(FunctionValue(identifier)) => identifier
+    EvaluationSucceeded(_) => return None
+  }
+  Some(
+    execute_fiber_each(
+      iterable,
+      Value::null(),
+      function_identifier,
+      span,
+      context,
+    ),
+  )
+}
+
+///|
 fn prepare_direct_fiber_function_call(
   receiver : Expr,
   arguments : Array[Expr],
@@ -2586,6 +2839,22 @@ fn prepare_fiber_statement(
   context : RuntimeContext,
 ) -> FiberStatementStep {
   match statement {
+    ExpressionStatement(MethodCall(receiver, "each", arguments, call_span), _) => {
+      if arguments.length() == 1 {
+        match
+          prepare_fiber_each_call(
+            receiver,
+            arguments[0],
+            call_span,
+            environment,
+            context,
+          ) {
+          Some(step) => return step
+          None => ()
+        }
+      }
+      FiberStatementReady
+    }
     ExpressionStatement(MethodCall(receiver, "call", arguments, call_span), _) => {
       match
         prepare_fiber_expression(
@@ -4279,10 +4548,12 @@ fn invoke_core_class_method(
                 "String.fromByte expects an integer from 0 through 255",
                 span,
               )
-            } else {
+            } else if byte <= 0x7f {
               EvaluationSucceeded(
                 Value::string(byte.unsafe_to_char().to_string()),
               )
+            } else {
+              EvaluationSucceeded(Value::raw_string([byte]))
             }
           }
           value =>
@@ -4491,6 +4762,8 @@ fn invoke_method(
     NumberValue(number) => invoke_number_method(number, name, arguments, span)
     StringValue(text) =>
       invoke_string_method(text, name, arguments, span, context)
+    RawStringValue(bytes) =>
+      invoke_raw_string_method(bytes, name, arguments, span, context)
     ListValue(identifier) =>
       invoke_list_method(identifier, name, arguments, span, context)
     MapValue(identifier) =>
@@ -4829,38 +5102,46 @@ fn read_property(
         "toString" => EvaluationSucceeded(receiver)
         "bytes" => {
           let values : Array[Value] = []
-          for character in text.to_array() {
-            let code = character.to_int()
-            if code <= 0x7f {
-              values.push(Value::number(Double::from_int(code)))
-            } else if code <= 0x7ff {
-              values.push(Value::number(Double::from_int(0xc0 | (code >> 6))))
-              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
-            } else if code <= 0xffff {
-              values.push(Value::number(Double::from_int(0xe0 | (code >> 12))))
-              values.push(
-                Value::number(Double::from_int(0x80 | ((code >> 6) & 0x3f))),
-              )
-              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
-            } else {
-              values.push(Value::number(Double::from_int(0xf0 | (code >> 18))))
-              values.push(
-                Value::number(Double::from_int(0x80 | ((code >> 12) & 0x3f))),
-              )
-              values.push(
-                Value::number(Double::from_int(0x80 | ((code >> 6) & 0x3f))),
-              )
-              values.push(Value::number(Double::from_int(0x80 | (code & 0x3f))))
-            }
+          for byte in utf8_bytes(text) {
+            values.push(Value::number(Double::from_int(byte)))
           }
           EvaluationSucceeded(context.new_sequence(values))
         }
         "codePoints" => {
+          let (indexed, iterated) = string_code_point_views(text)
+          EvaluationSucceeded(
+            context.new_sequence_kind(
+              SequenceStringCodePoints(indexed, iterated),
+            ),
+          )
+        }
+        "type" => EvaluationSucceeded(Value::core_class(StringClass))
+        _ => read_sequence_property(receiver, name, span, context)
+      }
+    RawStringValue(bytes) =>
+      match name {
+        "count" =>
+          EvaluationSucceeded(Value::number(Double::from_int(bytes.length())))
+        "toString" => EvaluationSucceeded(receiver)
+        "bytes" => {
           let values : Array[Value] = []
-          for character in text.to_array() {
-            values.push(Value::number(Double::from_int(character.to_int())))
+          for byte in bytes {
+            values.push(Value::number(Double::from_int(byte)))
           }
           EvaluationSucceeded(context.new_sequence(values))
+        }
+        "codePoints" => {
+          let indexed : Array[Value] = []
+          let iterated : Array[Value] = []
+          for _ in bytes {
+            indexed.push(Value::number(-1.0))
+            iterated.push(Value::number(-1.0))
+          }
+          EvaluationSucceeded(
+            context.new_sequence_kind(
+              SequenceStringCodePoints(indexed, iterated),
+            ),
+          )
         }
         "type" => EvaluationSucceeded(Value::core_class(StringClass))
         _ => read_sequence_property(receiver, name, span, context)

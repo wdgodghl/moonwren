@@ -908,8 +908,8 @@ test "string count uses Unicode characters" {
 }
 
 ///|
-test "string subscripts use character indexes and negative offsets" {
-  let source = "var text = \"A🤣中\"\ntext[1] + text[-1]\n"
+test "string subscripts use Wren UTF-8 byte offsets" {
+  let source = "var text = \"A🤣中\"\ntext[1] + text[-3]\n"
   expect_program_value(source, @moonwren.Value::string("🤣中"))
 }
 
@@ -939,10 +939,10 @@ test "string search predicates support Unicode text" {
 }
 
 ///|
-test "string indexOf returns character positions" {
+test "string indexOf returns Wren UTF-8 byte offsets" {
   let source = "var text = \"A🤣中🤣\"\n" +
     "text.indexOf(\"中\") + text.indexOf(\"missing\")\n"
-  expect_program_value(source, @moonwren.Value::number(1.0))
+  expect_program_value(source, @moonwren.Value::number(4.0))
 }
 
 ///|

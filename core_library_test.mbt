@@ -91,6 +91,26 @@ test "String byte and code point views are iterable" {
 }
 
 ///|
+test "String indexes and search use Wren UTF-8 byte offsets" {
+  let source = "var text = \"Aé𐍈\"\n" +
+    "System.print(text.count)\n" +
+    "System.print(text.bytes.count)\n" +
+    "System.print(text.indexOf(\"𐍈\"))\n" +
+    "System.print(text[1])\n" +
+    "System.print(text.codePoints[2])\n"
+  expect_core_output(source, ["3", "7", "3", "é", "-1"])
+}
+
+///|
+test "String.fromByte preserves invalid UTF-8 bytes" {
+  let source = "var raw = String.fromByte(255)\n" +
+    "System.print(raw.count)\n" +
+    "System.print(raw.bytes[0])\n" +
+    "System.print(raw.codePoints[0])\n"
+  expect_core_output(source, ["1", "255", "-1"])
+}
+
+///|
 test "List addAll concatenation repetition and default sort work" {
   let source = "var values = [3, 1]\n" +
     "values.addAll(2..4)\n" +

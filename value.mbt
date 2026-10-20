@@ -45,6 +45,7 @@ pub(all) enum Value {
   BoolValue(Bool)
   NumberValue(Double)
   StringValue(String)
+  RawStringValue(Array[Int])
   RangeValue(Double, Double, Bool)
   ListValue(Int)
   MapValue(Int)
@@ -85,6 +86,13 @@ pub fn Value::number(value : Double) -> Value {
 ///|
 pub fn Value::string(value : String) -> Value {
   StringValue(value)
+}
+
+///|
+/// Construct a String from bytes that are not required to be valid UTF-8.
+/// This is used by Wren's byte-oriented String primitives.
+fn Value::raw_string(bytes : Array[Int]) -> Value {
+  RawStringValue(bytes)
 }
 
 ///|
@@ -162,7 +170,7 @@ pub fn Value::type_name(self : Value) -> String {
     NullValue => "Null"
     BoolValue(_) => "Bool"
     NumberValue(_) => "Num"
-    StringValue(_) => "String"
+    StringValue(_) | RawStringValue(_) => "String"
     RangeValue(_, _, _) => "Range"
     ListValue(_) => "List"
     MapValue(_) => "Map"
@@ -189,6 +197,7 @@ pub fn Value::to_text(self : Value) -> String {
     BoolValue(false) => "false"
     NumberValue(number) => "\{number}"
     StringValue(text) => text
+    RawStringValue(_) => "�"
     RangeValue(from, to, true) => "\{from}..\{to}"
     RangeValue(from, to, false) => "\{from}...\{to}"
     ListValue(_) => "<list>"
