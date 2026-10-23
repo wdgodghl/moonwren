@@ -9,15 +9,15 @@ progress and does not redefine that endpoint.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Source spans and diagnostics | Implemented | File, line, column, and cross-module call frames |
-| Lexical analysis | Implemented | Punctuation, literals, comments, and keywords |
+| Lexical analysis | Implemented | Punctuation, literals, nested interpolation, comments, and keywords |
 | Primitive expressions | Implemented | Precedence, arithmetic, comparison, logic, ranges |
 | Variables and blocks | Implemented | Declaration, assignment, lexical environments |
 | Branching and loops | Implemented subset | `if`, `while`, protocol-based `for`, `break`, `continue` |
-| Method and getter calls | Partial | Chaining, signatures by arity, user getters, core type metadata |
+| Method and getter calls | Implemented subset | Chaining, signatures by arity, getters, setters, unary/binary operators, single-index subscripts, trailing block arguments |
 | Core class model | Implemented subset | `Object`, `Bool`, `Class`, `Fn`, `List`, `Map`, `Null`, `Num`, `Range`, `Sequence`, and `String` globals; `type`, `name`, `supertype`, and `is` |
-| Core `System` class | Partial | Captured `print`, `write`, `printAll`, `writeAll`; no-op `gc`; `clock` pending |
+| Core `System` class | Implemented | Captured `print`, `write`, `printAll`, `writeAll`; no-op `gc`; monotonic `clock` |
 | Core `Range` class | Partial | Bounds, endpoint mode, text conversion, numeric iteration |
-| Core `String` class | Implemented subset | UTF-8 byte-offset scalar indexing/search, invalid `fromByte` storage, directly indexable byte/code-point views, iteration, split, replace, trim; byte-range slicing and mixed valid/invalid concatenation remain |
+| Core `String` class | Implemented subset | UTF-8 byte-offset scalar indexing/search/ranges, invalid `fromByte` storage, typed byte/code-point views, mixed valid/invalid concatenation, iteration, split, replace, trim |
 | Core `List` class | Partial | Construction, negative indexes, slices, mutation/search, sorting, concatenation, repetition, iteration |
 | Core `Map` class | Partial | Construction, immutable keys, mutation, entry iteration, key/value sequence views |
 | Core `Num` class | Implemented subset | Parsing, constants, predicates, rounding, trigonometry, logs, powers, min/max/clamp |
@@ -80,8 +80,9 @@ valid boundary returns the code point, while a subscript inside a multibyte
 sequence preserves the selected byte. `bytes` and `codePoints` support direct
 byte-offset subscripting, including `-1` for a continuation or invalid byte,
 and `String.fromByte` preserves every value through 255. Iteration still emits
-complete code points. Byte-based range slicing and full operations on strings
-assembled from mixed valid and invalid bytes remain compatibility work.
+complete code points. Byte-based range slicing includes valid code points whose
+leading byte lies in the range and preserves standalone invalid bytes. Normal
+and byte-assembled strings compare and combine using the stored bytes.
 
 Fiber bodies keep a persistent captured environment and resume values through
 statement continuations. Suspension preserves lexical scopes and execution
@@ -90,9 +91,11 @@ loop yields without replaying earlier side effects. A directly called function
 may suspend when the call is an expression statement, variable initializer, or
 return value. `Sequence.each` callbacks also preserve the callback and outer
 sequence position across repeated yields, covering the official full-coroutine
-example. User-defined instance/static methods, getters, operators, and the
-other callback-taking sequence operations still need the same general
-continuation path before the 0.4.0 endpoint is complete. Transfers between
+example. User-defined constructors (including `super`), instance/static methods,
+getters, operators, and subscript methods share the general call-frame
+continuation path. `Sequence.all`, `any`, `count`, and `each` preserve callback
+state; lazy `map`/`where` consumption and `reduce` still need the same path before
+the 0.4.0 endpoint is complete. Transfers between
 workers form a non-local scheduling chain: each source
 stores its continuation, the target receives the transferred value, and a later
 transfer back resumes the saved expression. Transfers to the main Fiber return

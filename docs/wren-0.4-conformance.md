@@ -2,7 +2,7 @@
 
 MoonWren targets the language and embedding semantics of the official Wren
 0.4.0 release. The reference baseline is `wren-lang/wren` tag `0.4.0`, commit
-`4a18fc489f9ea3d253b20dd40f02c6097a8e2508`.
+`4a18fc489f9ea3d253b20dd40f4cdad0d6bb40eb`.
 
 ## Definition of done
 
