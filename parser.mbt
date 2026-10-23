@@ -176,7 +176,84 @@ fn decode_string(text : String) -> String {
   .replace_all(old="\\r", new="\r")
   .replace_all(old="\\t", new="\t")
   .replace_all(old="\\\"", new="\"")
+  .replace_all(old="\\%", new="%")
   .replace_all(old="\\\\", new="\\")
+}
+
+///|
+fn Parser::interpolated_string(self : Parser, token : Token) -> Expr {
+  let content = token.lexeme[1:token.lexeme.length() - 1].to_owned()
+  let parts : Array[Expr] = []
+  let mut segment_start = 0
+  let mut index = 0
+  while index + 1 < content.length() {
+    let code = content.unsafe_get(index).to_int()
+    if code == 92 {
+      index = index + 2
+      continue
+    }
+    if code != 37 || content.unsafe_get(index + 1).to_int() != 40 {
+      index = index + 1
+      continue
+    }
+    let prefix = content[segment_start:index].to_owned()
+    parts.push(
+      Literal(Value::string(decode_string("\"" + prefix + "\"")), token.span),
+    )
+    let expression_start = index + 2
+    let mut cursor = expression_start
+    let mut depth = 1
+    let mut in_string = false
+    while cursor < content.length() && depth > 0 {
+      let current = content.unsafe_get(cursor).to_int()
+      if in_string {
+        if current == 92 {
+          cursor = cursor + 2
+          continue
+        }
+        if current == 34 {
+          in_string = false
+        }
+      } else if current == 34 {
+        in_string = true
+      } else if current == 40 {
+        depth = depth + 1
+      } else if current == 41 {
+        depth = depth - 1
+      }
+      cursor = cursor + 1
+    }
+    if depth != 0 {
+      self.report(
+        ExpectedToken,
+        "unterminated interpolation expression",
+        token.span,
+      )
+      return Literal(Value::string(decode_string(token.lexeme)), token.span)
+    }
+    let source = content[expression_start:cursor - 1].to_owned()
+    let expression = match parse_expression(source) {
+      ExpressionParsed(expression) => expression
+      ExpressionParseFailed(issues) => {
+        for issue in issues {
+          self.diagnostics.push(issue)
+        }
+        Literal(Value::null(), token.span)
+      }
+    }
+    parts.push(PropertyGet(expression, "toString", token.span))
+    segment_start = cursor
+    index = cursor
+  }
+  let suffix = content[segment_start:content.length()].to_owned()
+  parts.push(
+    Literal(Value::string(decode_string("\"" + suffix + "\"")), token.span),
+  )
+  let mut result = parts[0]
+  for part_index = 1; part_index < parts.length(); part_index = part_index + 1 {
+    result = Binary(result, Add, parts[part_index], token.span)
+  }
+  result
 }
 
 ///|
@@ -191,7 +268,11 @@ fn Parser::primary(self : Parser) -> Expr {
   } else if self.take(Number) {
     Literal(Value::number(parse_number_value(token.lexeme)), token.span)
   } else if self.take(StringLiteral) {
-    Literal(Value::string(decode_string(token.lexeme)), token.span)
+    if token.lexeme.contains("%(") {
+      self.interpolated_string(token)
+    } else {
+      Literal(Value::string(decode_string(token.lexeme)), token.span)
+    }
   } else if self.take(Identifier) {
     Variable(token.lexeme, token.span)
   } else if self.take(Field) {
@@ -365,6 +446,28 @@ fn Parser::method_call(self : Parser) -> Expr {
           name.lexeme,
           SourceSpan::merge(receiver.span(), name.span),
         )
+      }
+      if !is_function_literal && self.check(LeftBrace) {
+        let literal = self.function_literal(receiver.span())
+        receiver = match receiver {
+          MethodCall(owner, method_name, arguments, call_span) => {
+            arguments.push(literal)
+            MethodCall(
+              owner,
+              method_name,
+              arguments,
+              SourceSpan::merge(call_span, literal.span()),
+            )
+          }
+          PropertyGet(owner, method_name, call_span) =>
+            MethodCall(
+              owner,
+              method_name,
+              [literal],
+              SourceSpan::merge(call_span, literal.span()),
+            )
+          expression => expression
+        }
       }
     } else if self.take(LeftBracket) {
       self.skip_newlines()
@@ -634,10 +737,17 @@ fn Parser::assignment(self : Parser) -> Expr {
           value,
           SourceSpan::merge(target_span, value.span()),
         )
+      PropertyGet(receiver, name, target_span) =>
+        PropertySet(
+          receiver,
+          name,
+          value,
+          SourceSpan::merge(target_span, value.span()),
+        )
       _ => {
         self.report(
           UnexpectedToken,
-          "assignment target must be a variable, field, or subscript",
+          "assignment target must be a variable, field, property, or subscript",
           target.span(),
         )
         target
@@ -840,9 +950,89 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
   if is_static && is_constructor {
     self.report(UnexpectedToken, "constructors cannot be static", start.span)
   }
-  let name = self.consume(Identifier, "expected method name")
-  let has_parameters = self.take(LeftParen)
-  let parameters = if has_parameters { self.parameter_list() } else { [] }
+  let name_start = self.current_token()
+  let mut method_name = ""
+  let parameters : Array[String] = []
+  let mut has_parameters = false
+  let mut is_operator = false
+  if self.take(LeftBracket) {
+    is_operator = true
+    has_parameters = true
+    self.skip_newlines()
+    parameters.push(
+      self.consume(Identifier, "expected subscript parameter name").lexeme,
+    )
+    self.skip_newlines()
+    ignore(self.consume(RightBracket, "expected ']' after subscript parameter"))
+    if self.take(Equal) {
+      method_name = "[]="
+      ignore(self.consume(LeftParen, "expected '(' after subscript setter"))
+      parameters.push(
+        self.consume(Identifier, "expected subscript setter value parameter").lexeme,
+      )
+      ignore(
+        self.consume(RightParen, "expected ')' after subscript setter value"),
+      )
+    } else {
+      method_name = "[]"
+    }
+  } else if self.check(Bang) ||
+    self.check(Tilde) ||
+    self.check(Minus) ||
+    self.check(Plus) ||
+    self.check(Slash) ||
+    self.check(Star) ||
+    self.check(Percent) ||
+    self.check(Less) ||
+    self.check(LessEqual) ||
+    self.check(Greater) ||
+    self.check(GreaterEqual) ||
+    self.check(EqualEqual) ||
+    self.check(BangEqual) ||
+    self.check(Ampersand) ||
+    self.check(Pipe) ||
+    self.check(Caret) ||
+    self.check(LessLess) ||
+    self.check(GreaterGreater) ||
+    self.check(DotDot) ||
+    self.check(DotDotDot) {
+    is_operator = true
+    let operator = self.advance()
+    method_name = operator.lexeme
+    if self.take(LeftParen) {
+      has_parameters = true
+      let parsed = self.parameter_list()
+      for parameter in parsed {
+        parameters.push(parameter)
+      }
+    } else if operator.kind != Bang &&
+      operator.kind != Tilde &&
+      operator.kind != Minus {
+      self.report(
+        ExpectedToken,
+        "expected '(' after binary operator",
+        self.current_token().span,
+      )
+    }
+  } else {
+    let name = self.consume(Identifier, "expected method name")
+    method_name = name.lexeme
+    if self.take(Equal) {
+      method_name = method_name + "="
+      has_parameters = true
+      ignore(self.consume(LeftParen, "expected '(' after setter name"))
+      let parsed = self.parameter_list()
+      for parameter in parsed {
+        parameters.push(parameter)
+      }
+    } else if self.take(LeftParen) {
+      has_parameters = true
+      let parsed = self.parameter_list()
+      for parameter in parsed {
+        parameters.push(parameter)
+      }
+    }
+  }
   if is_constructor && !has_parameters {
     self.report(
       ExpectedToken,
@@ -858,14 +1048,18 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
     )
   }
   if is_foreign {
-    let end_span = if has_parameters { self.previous().span } else { name.span }
+    let end_span = if has_parameters {
+      self.previous().span
+    } else {
+      name_start.span
+    }
     self.finish_statement()
     return {
-      name: name.lexeme,
+      name: method_name,
       parameters,
       body: [],
       is_constructor,
-      is_getter: !is_constructor && !has_parameters,
+      is_getter: !is_constructor && !has_parameters && !is_operator,
       is_static,
       is_foreign,
       span: SourceSpan::merge(start.span, end_span),
@@ -877,11 +1071,11 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
   match block {
     BlockStatement(body, span) =>
       {
-        name: name.lexeme,
+        name: method_name,
         parameters,
         body,
         is_constructor,
-        is_getter: !is_constructor && !has_parameters,
+        is_getter: !is_constructor && !has_parameters && !is_operator,
         is_static,
         is_foreign,
         span: SourceSpan::merge(start.span, span),

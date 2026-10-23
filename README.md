@@ -31,7 +31,7 @@ direct function-call statements, initializers, and returns.
   syntax.
 
 The compatibility endpoint is the official Wren `0.4.0` release at tag commit
-`4a18fc489f9ea3d253b20dd40f02c6097a8e2508`. It includes byte-accurate String
+`4a18fc489f9ea3d253b20dd40f4cdad0d6bb40eb`. It includes byte-accurate String
 behavior (including invalid UTF-8) and Fiber suspension through arbitrary Wren
 calls and callbacks. The precise definition of done, exclusions, and official
 input/output comparison cases are recorded in
@@ -155,9 +155,9 @@ System.print(total) // 82
 See [`examples/collections.wren`](examples/collections.wren) for a complete
 example including nested collections and removal.
 
-Strings are being aligned with Wren's UTF-8 byte-offset rules; the checked-in
-Wren 0.4.0 differential suite makes the remaining byte-level gaps visible
-until they are closed. The core methods
+Strings use Wren's UTF-8 byte-offset rules, including range slicing and
+operations that preserve invalid bytes created by `String.fromByte`. The
+checked-in Wren 0.4.0 differential suite locks these behaviors down. Core methods
 include `contains`, `startsWith`, `endsWith`, `indexOf`, `split`, `replace`,
 trimming, UTF-8 byte views, and code-point views. `Num` provides parsing,
 constants, predicates, rounding, trigonometry, logarithms, powers, and clamping.
@@ -262,7 +262,7 @@ it once when the interpreter run shuts down. See
 
 MoonWren is not yet a complete Wren implementation. The method dispatcher
 supports constructor signatures, overloaded instance methods by arity,
-user-defined getters, core class metadata and constructors, captured
+  user-defined getters, setters, operators and subscripts, core class metadata and constructors, captured
 `System.print`/`write` output, and the standard `from`, `to`, `min`, `max`, and
 `isInclusive` range properties. Collection and
 String subscripts produce structured invalid-index and bounds diagnostics, and

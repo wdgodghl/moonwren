@@ -111,6 +111,36 @@ test "String.fromByte preserves invalid UTF-8 bytes" {
 }
 
 ///|
+test "mixed valid and invalid String bytes share complete operations" {
+  let source = "var invalid = String.fromByte(255)\n" +
+    "var mixed = \"A\" + invalid + \"é\"\n" +
+    "System.print(mixed.count)\n" +
+    "System.print(mixed.bytes.toList)\n" +
+    "System.print(mixed.codePoints.toList)\n" +
+    "System.print(mixed[1..3].bytes.toList)\n" +
+    "System.print(mixed[3..1].bytes.toList)\n" +
+    "System.print(mixed.contains(invalid))\n" +
+    "System.print(mixed.indexOf(\"é\"))\n" +
+    "System.print(mixed.replace(invalid, \"?\").bytes.toList)\n"
+  expect_core_output(source, [
+    "3", "[65, 255, 195, 169]", "[65, -1, 233]", "[255, 195, 169]", "[195, 169, 255]",
+    "true", "2", "[65, 63, 195, 169]",
+  ])
+}
+
+///|
+test "byte-identical Strings compare and hash as the same Map key" {
+  let source = "var left = String.fromByte(255) + \"A\"\n" +
+    "var right = String.fromByte(255) + String.fromByte(65)\n" +
+    "var values = {}\n" +
+    "values[left] = 42\n" +
+    "System.print(left == right)\n" +
+    "System.print(Object.same(left, right))\n" +
+    "System.print(values[right])\n"
+  expect_core_output(source, ["true", "true", "42"])
+}
+
+///|
 test "List addAll concatenation repetition and default sort work" {
   let source = "var values = [3, 1]\n" +
     "values.addAll(2..4)\n" +
@@ -209,6 +239,24 @@ test "System exposes class metadata" {
     "System.print(System.type.name)\n" +
     "System.print(System.supertype.name)\n"
   expect_core_output(source, ["System", "Class", "Object"])
+}
+
+///|
+test "System clock is a non-negative monotonic duration" {
+  expect_core_output(
+    "System.print(System.clock >= 0)\nSystem.print(System.clock >= 0)\n",
+    ["true", "true"],
+  )
+}
+
+///|
+test "string views expose their Wren core classes" {
+  let source = "var text = \"Aé\"\n" +
+    "System.print(text.bytes is StringByteSequence)\n" +
+    "System.print(text.codePoints is StringCodePointSequence)\n" +
+    "System.print(text.bytes is Sequence)\n" +
+    "System.print(StringByteSequence.supertype.name)\n"
+  expect_core_output(source, ["true", "true", "true", "Sequence"])
 }
 
 ///|

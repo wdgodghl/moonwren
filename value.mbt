@@ -8,11 +8,14 @@ pub(all) enum CoreClass {
   FnClass
   ListClass
   MapClass
+  MapEntryClass
   NullClass
   NumClass
   RangeClass
   SequenceClass
   StringClass
+  StringByteSequenceClass
+  StringCodePointSequenceClass
 } derive(Eq, Debug)
 
 ///|
@@ -31,11 +34,14 @@ pub fn CoreClass::name(self : CoreClass) -> String {
     FnClass => "Fn"
     ListClass => "List"
     MapClass => "Map"
+    MapEntryClass => "MapEntry"
     NullClass => "Null"
     NumClass => "Num"
     RangeClass => "Range"
     SequenceClass => "Sequence"
     StringClass => "String"
+    StringByteSequenceClass => "StringByteSequence"
+    StringCodePointSequenceClass => "StringCodePointSequence"
   }
 }
 

@@ -222,10 +222,16 @@ fn valid_escape(code : Int) -> Bool {
 
 ///|
 fn Lexer::string(self : Lexer) -> Unit {
-  while !self.at_end() && self.peek() != 34 {
-    if self.peek() == 10 {
+  let mut interpolation_depth = 0
+  let mut expression_string = false
+  while !self.at_end() {
+    let code = self.peek()
+    if interpolation_depth == 0 && code == 34 {
+      break
+    }
+    if code == 10 {
       self.consume_newline()
-    } else if self.peek() == 92 {
+    } else if code == 92 {
       ignore(self.advance())
       if self.at_end() {
         break
@@ -234,11 +240,28 @@ fn Lexer::string(self : Lexer) -> Unit {
       if !valid_escape(escaped) {
         self.report(InvalidEscape, "invalid string escape")
       }
+    } else if interpolation_depth == 0 && code == 37 && self.peek_next() == 40 {
+      ignore(self.advance())
+      ignore(self.advance())
+      interpolation_depth = 1
+    } else if interpolation_depth > 0 {
+      ignore(self.advance())
+      if expression_string {
+        if code == 34 {
+          expression_string = false
+        }
+      } else if code == 34 {
+        expression_string = true
+      } else if code == 40 {
+        interpolation_depth = interpolation_depth + 1
+      } else if code == 41 {
+        interpolation_depth = interpolation_depth - 1
+      }
     } else {
       ignore(self.advance())
     }
   }
-  if self.at_end() {
+  if self.at_end() || interpolation_depth != 0 {
     self.report(UnterminatedString, "unterminated string")
     return
   }

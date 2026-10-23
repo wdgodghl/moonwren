@@ -247,6 +247,103 @@ test "fibers suspend and resume through Sequence each callbacks" {
 }
 
 ///|
+test "fibers suspend through instance static methods and getters" {
+  let source = "class Worker {\n" +
+    "  construct new() {}\n" +
+    "  run(value) {\n" +
+    "    System.print(\"method-before\")\n" +
+    "    var resumed = Fiber.yield(value)\n" +
+    "    System.print(\"method-after\")\n" +
+    "    return resumed + 1\n" +
+    "  }\n" +
+    "  answer { return Fiber.yield(20) + 2 }\n" +
+    "  static twice(value) { return Fiber.yield(value) * 2 }\n" +
+    "}\n" +
+    "var worker = Fiber.new {\n" +
+    "  var instance = Worker.new()\n" +
+    "  var first = 1 + instance.run(10) * 2\n" +
+    "  var second = instance.answer\n" +
+    "  var third = Worker.twice(30)\n" +
+    "  return first + second + third\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call(3))\n" +
+    "System.print(worker.call(4))\n" +
+    "System.print(worker.call(5))\n"
+  expect_fiber_output(source, [
+    "method-before", "10", "method-after", "20", "30", "25",
+  ])
+}
+
+///|
+test "nested Fiber calls do not replay completed arguments" {
+  let source = "var sideEffects = 0\n" +
+    "var pause = Fn.new { |value| return Fiber.yield(value) }\n" +
+    "var worker = Fiber.new {\n" +
+    "  sideEffects = sideEffects + 1\n" +
+    "  var result = [sideEffects, pause.call(7), sideEffects]\n" +
+    "  return result\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call(9))\n" +
+    "System.print(sideEffects)\n"
+  expect_fiber_output(source, ["7", "[1, 9, 1]", "1"])
+}
+
+///|
+test "fibers suspend through operator and subscript methods" {
+  let source = "class Yielding {\n" +
+    "  construct new() {}\n" +
+    "  +(right) { return Fiber.yield(\"operator\") + right }\n" +
+    "  [index] { return Fiber.yield(\"get\") + index }\n" +
+    "  [index]=(value) { return Fiber.yield(\"set\") + index + value }\n" +
+    "}\n" +
+    "var fiber = Fiber.new {\n" +
+    "  var object = Yielding.new()\n" +
+    "  var first = object + 2\n" +
+    "  var second = object[3]\n" +
+    "  var third = object[4] = 5\n" +
+    "  return first + second + third\n" +
+    "}\n" +
+    "System.print(fiber.call())\n" +
+    "System.print(fiber.call(10))\n" +
+    "System.print(fiber.call(20))\n" +
+    "System.print(fiber.call(30))\n"
+  expect_fiber_output(source, ["operator", "get", "set", "74"])
+}
+
+///|
+test "fiber sequence predicates resume callback state" {
+  let source = "var fiber = Fiber.new {\n" +
+    "  var all = [1, 2].all {|n| Fiber.yield(\"all%(n)\")\n n > 0 }\n" +
+    "  var any = [1, 2, 3].any {|n| Fiber.yield(\"any%(n)\")\n n == 2 }\n" +
+    "  var count = [1, 2, 3].count {|n| Fiber.yield(\"count%(n)\")\n n > 1 }\n" +
+    "  return \"%(all)|%(any)|%(count)\"\n" +
+    "}\n" +
+    "while (!fiber.isDone) { System.print(fiber.call()) }\n"
+  expect_fiber_output(source, [
+    "all1", "all2", "any1", "any2", "count1", "count2", "count3", "true|true|2",
+  ])
+}
+
+///|
+test "fibers suspend through constructors and super constructors" {
+  let source = "class Base {\n" +
+    "  construct new() { _base = Fiber.yield(\"base\") }\n" +
+    "  base { return _base }\n" +
+    "}\n" +
+    "class Child is Base {\n" +
+    "  construct new() { super()\n _child = Fiber.yield(\"child\") }\n" +
+    "  total { return this.base + _child }\n" +
+    "}\n" +
+    "var fiber = Fiber.new { var child = Child.new()\n return child.total }\n" +
+    "System.print(fiber.call())\n" +
+    "System.print(fiber.call(20))\n" +
+    "System.print(fiber.call(22))\n"
+  expect_fiber_output(source, ["base", "child", "42"])
+}
+
+///|
 test "worker fibers transfer control and values directly" {
   let source = "var main = Fiber.current\n" +
     "var left = null\n" +

@@ -57,9 +57,24 @@ pub(all) enum Expr {
   SubscriptGet(Expr, Expr, SourceSpan)
   SubscriptSet(Expr, Expr, Expr, SourceSpan)
   PropertyGet(Expr, String, SourceSpan)
+  PropertySet(Expr, String, Expr, SourceSpan)
   MethodCall(Expr, String, Array[Expr], SourceSpan)
   SuperConstructorCall(Array[Expr], SourceSpan)
   FunctionLiteral(Array[String], Array[Stmt], SourceSpan)
+  // Internal continuation node used only while a Fiber is suspended in a call.
+  FiberCallResume(Int, Value, Value?, SourceSpan)
+  // Internal continuation for callback-driven Sequence operations.
+  FiberSequenceResume(
+    Int,
+    Value,
+    Value,
+    Value,
+    Int,
+    String,
+    Value,
+    Int,
+    SourceSpan
+  )
   Unary(UnaryOperator, Expr, SourceSpan)
   Binary(Expr, BinaryOperator, Expr, SourceSpan)
   Conditional(Expr, Expr, Expr, SourceSpan)
@@ -87,9 +102,12 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | SubscriptGet(_, _, span)
     | SubscriptSet(_, _, _, span)
     | PropertyGet(_, _, span)
+    | PropertySet(_, _, _, span)
     | MethodCall(_, _, _, span)
     | SuperConstructorCall(_, span)
     | FunctionLiteral(_, _, span)
+    | FiberCallResume(_, _, _, span)
+    | FiberSequenceResume(_, _, _, _, _, _, _, _, span)
     | Unary(_, _, span)
     | Binary(_, _, _, span)
     | Conditional(_, _, _, span)

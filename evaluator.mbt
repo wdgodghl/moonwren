@@ -69,6 +69,7 @@ priv struct RuntimeMapEntryValue {
 ///|
 priv enum RuntimeSequenceKind {
   SequenceSnapshot(Array[Value])
+  SequenceStringBytes(Array[Value])
   SequenceStringCodePoints(Array[Value], Array[Value])
   SequenceMap(Value, Int)
   SequenceWhere(Value, Int)
@@ -128,6 +129,7 @@ priv struct RuntimeModule {
 
 ///|
 priv struct RuntimeContext {
+  start_clock : @bench.Timestamp
   output : Array[String]
   mut output_line_open : Bool
   closures : Array[Closure]
@@ -161,6 +163,7 @@ fn RuntimeContext::new_with_loader(
   foreign_classes : Array[ForeignClassBinding],
 ) -> RuntimeContext {
   {
+    start_clock: @bench.monotonic_clock_start(),
     output: [],
     output_line_open: false,
     closures: [],
@@ -313,21 +316,56 @@ fn bind_core_globals(environment : Environment) -> Unit {
   ignore(environment.bind("Fn", Value::core_class(FnClass)))
   ignore(environment.bind("List", Value::core_class(ListClass)))
   ignore(environment.bind("Map", Value::core_class(MapClass)))
+  ignore(environment.bind("MapEntry", Value::core_class(MapEntryClass)))
   ignore(environment.bind("Null", Value::core_class(NullClass)))
   ignore(environment.bind("Num", Value::core_class(NumClass)))
   ignore(environment.bind("Range", Value::core_class(RangeClass)))
   ignore(environment.bind("Sequence", Value::core_class(SequenceClass)))
   ignore(environment.bind("String", Value::core_class(StringClass)))
+  ignore(
+    environment.bind(
+      "StringByteSequence",
+      Value::core_class(StringByteSequenceClass),
+    ),
+  )
+  ignore(
+    environment.bind(
+      "StringCodePointSequence",
+      Value::core_class(StringCodePointSequenceClass),
+    ),
+  )
 }
 
 ///|
 fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int? {
   for index = 0; index < entries.length(); index = index + 1 {
-    if entries[index].key == key {
+    if runtime_values_equal(entries[index].key, key) {
       return Some(index)
     }
   }
   None
+}
+
+///|
+fn integer_arrays_equal(left : Array[Int], right : Array[Int]) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for index = 0; index < left.length(); index = index + 1 {
+    if left[index] != right[index] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn runtime_values_equal(left : Value, right : Value) -> Bool {
+  match (string_bytes_of(left), string_bytes_of(right)) {
+    (Some(left_bytes), Some(right_bytes)) =>
+      integer_arrays_equal(left_bytes, right_bytes)
+    _ => left == right
+  }
 }
 
 ///|
@@ -387,6 +425,7 @@ fn runtime_value_to_text(
     }
   }
   match value {
+    RawStringValue(bytes) => string_display_from_bytes(bytes)
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
         "<list>"
@@ -434,6 +473,7 @@ fn runtime_value_to_text(
             }
             text + ")"
           }
+          SequenceStringBytes(_) => "<sequence>"
           SequenceStringCodePoints(_, _) => "<sequence>"
           _ => "<sequence>"
         }
@@ -597,7 +637,29 @@ fn evaluate_unary(
   operator : UnaryOperator,
   value : Value,
   span : SourceSpan,
+  context : RuntimeContext,
 ) -> EvaluationResult {
+  match value {
+    InstanceValue(identifier) => {
+      let name = match operator {
+        LogicalNot => "!"
+        Negate => "-"
+        BitwiseNot => "~"
+      }
+      if identifier >= 0 && identifier < context.instances.length() {
+        let class_identifier = context.instances[identifier].class_identifier
+        match
+          find_method_in_class(
+            context, class_identifier, name, 0, false, false, false,
+          ) {
+          Some(resolved) =>
+            return invoke_user_method(identifier, resolved, [], span, context)
+          None => ()
+        }
+      }
+    }
+    _ => ()
+  }
   match (operator, value) {
     (LogicalNot, value) => EvaluationSucceeded(Value::bool(!value.is_truthy()))
     (Negate, NumberValue(number)) => EvaluationSucceeded(Value::number(-number))
@@ -669,15 +731,74 @@ fn evaluate_binary_values(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
+  match left {
+    InstanceValue(identifier) if operator != IsType => {
+      let name = match operator {
+        Add => "+"
+        Subtract => "-"
+        Multiply => "*"
+        Divide => "/"
+        Remainder => "%"
+        EqualTo => "=="
+        NotEqualTo => "!="
+        LessThan => "<"
+        LessThanOrEqual => "<="
+        GreaterThan => ">"
+        GreaterThanOrEqual => ">="
+        BitwiseAnd => "&"
+        BitwiseOr => "|"
+        BitwiseXor => "^"
+        ShiftLeft => "<<"
+        ShiftRight => ">>"
+        InclusiveRange => ".."
+        ExclusiveRange => "..."
+        LogicalAnd | LogicalOr | IsType => ""
+      }
+      if name != "" &&
+        identifier >= 0 &&
+        identifier < context.instances.length() {
+        let class_identifier = context.instances[identifier].class_identifier
+        match
+          find_method_in_class(
+            context, class_identifier, name, 1, false, false, false,
+          ) {
+          Some(resolved) =>
+            return invoke_user_method(
+              identifier,
+              resolved,
+              [right],
+              span,
+              context,
+            )
+          None => ()
+        }
+      }
+    }
+    _ => ()
+  }
   match operator {
-    EqualTo => EvaluationSucceeded(Value::bool(left == right))
-    NotEqualTo => EvaluationSucceeded(Value::bool(left != right))
+    EqualTo =>
+      EvaluationSucceeded(Value::bool(runtime_values_equal(left, right)))
+    NotEqualTo =>
+      EvaluationSucceeded(Value::bool(!runtime_values_equal(left, right)))
     Add =>
       match (left, right) {
         (NumberValue(left), NumberValue(right)) =>
           number_binary(Add, left, right, span)
-        (StringValue(left), StringValue(right)) =>
-          EvaluationSucceeded(Value::string(left + right))
+        (StringValue(_) | RawStringValue(_), StringValue(_) | RawStringValue(_)) => {
+          let left_bytes = match string_bytes_of(left) {
+            Some(bytes) => bytes
+            None => []
+          }
+          let right_bytes = match string_bytes_of(right) {
+            Some(bytes) => bytes
+            None => []
+          }
+          for byte in right_bytes {
+            left_bytes.push(byte)
+          }
+          EvaluationSucceeded(string_value_from_bytes(left_bytes))
+        }
         (ListValue(identifier), iterable) => {
           if identifier < 0 || identifier >= context.lists.length() {
             return evaluation_error(
@@ -706,7 +827,7 @@ fn evaluate_binary_values(
       match (left, right) {
         (NumberValue(left), NumberValue(right)) =>
           number_binary(Multiply, left, right, span)
-        (StringValue(text), count_value) =>
+        (StringValue(_) | RawStringValue(_), count_value) =>
           match non_negative_count(count_value) {
             None =>
               evaluation_error(
@@ -715,11 +836,17 @@ fn evaluate_binary_values(
                 span,
               )
             Some(count) => {
-              let mut result = ""
-              for index = 0; index < count; index = index + 1 {
-                result = result + text
+              let bytes = match string_bytes_of(left) {
+                Some(bytes) => bytes
+                None => []
               }
-              EvaluationSucceeded(Value::string(result))
+              let result : Array[Int] = []
+              for index = 0; index < count; index = index + 1 {
+                for byte in bytes {
+                  result.push(byte)
+                }
+              }
+              EvaluationSucceeded(string_value_from_bytes(result))
             }
           }
         (ListValue(identifier), count_value) =>
@@ -805,7 +932,17 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
     RangeValue(_, _, _) => Value::core_class(RangeClass)
     ListValue(_) => Value::core_class(ListClass)
     MapValue(_) => Value::core_class(MapClass)
-    SequenceValue(_) => Value::core_class(SequenceClass)
+    SequenceValue(identifier) =>
+      if identifier >= 0 && identifier < context.sequences.length() {
+        match context.sequences[identifier].kind {
+          SequenceStringBytes(_) => Value::core_class(StringByteSequenceClass)
+          SequenceStringCodePoints(_, _) =>
+            Value::core_class(StringCodePointSequenceClass)
+          _ => Value::core_class(SequenceClass)
+        }
+      } else {
+        Value::core_class(SequenceClass)
+      }
     FunctionValue(_) => Value::core_class(FnClass)
     FiberValue(_) => Value::core_class(FiberClass)
     InstanceValue(identifier) =>
@@ -816,7 +953,8 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
       }
     ClassValue(_) | CoreClassValue(_) | SystemValue =>
       Value::core_class(ClassClass)
-    MapEntryValue(_) | IteratorValue(_) => Value::core_class(ObjectClass)
+    MapEntryValue(_) => Value::core_class(MapEntryClass)
+    IteratorValue(_) => Value::core_class(ObjectClass)
     SuperValue(_, instance_identifier, _) =>
       if instance_identifier >= 0 &&
         instance_identifier < context.instances.length() {
@@ -831,7 +969,11 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
 }
 
 ///|
-fn value_is_core_class(value : Value, target : CoreClass) -> Bool {
+fn value_is_core_class(
+  value : Value,
+  target : CoreClass,
+  context : RuntimeContext,
+) -> Bool {
   if target == ObjectClass {
     return true
   }
@@ -844,11 +986,24 @@ fn value_is_core_class(value : Value, target : CoreClass) -> Bool {
     RangeValue(_, _, _) => target == RangeClass || target == SequenceClass
     ListValue(_) => target == ListClass || target == SequenceClass
     MapValue(_) => target == MapClass || target == SequenceClass
-    SequenceValue(_) => target == SequenceClass
+    SequenceValue(identifier) =>
+      if target == SequenceClass {
+        true
+      } else if identifier >= 0 && identifier < context.sequences.length() {
+        match context.sequences[identifier].kind {
+          SequenceStringBytes(_) => target == StringByteSequenceClass
+          SequenceStringCodePoints(_, _) =>
+            target == StringCodePointSequenceClass
+          _ => false
+        }
+      } else {
+        false
+      }
     FunctionValue(_) => target == FnClass
     FiberValue(_) => target == FiberClass
     ClassValue(_) | CoreClassValue(_) | SystemValue => target == ClassClass
-    InstanceValue(_) | MapEntryValue(_) | IteratorValue(_) => false
+    MapEntryValue(_) => target == MapEntryClass
+    InstanceValue(_) | IteratorValue(_) => false
     SuperValue(_, _, _) => false
     SuperClassValue(_, _) => target == ClassClass
   }
@@ -863,7 +1018,9 @@ fn evaluate_is_type(
 ) -> EvaluationResult {
   match type_value {
     CoreClassValue(target) =>
-      EvaluationSucceeded(Value::bool(value_is_core_class(value, target)))
+      EvaluationSucceeded(
+        Value::bool(value_is_core_class(value, target, context)),
+      )
     ClassValue(target) =>
       match value {
         InstanceValue(identifier) =>
@@ -1571,18 +1728,17 @@ fn read_list_range(
 
 ///|
 fn read_string_range(
-  text : String,
+  bytes : Array[Int],
   from : Double,
   to : Double,
   inclusive : Bool,
   span : SourceSpan,
 ) -> EvaluationResult {
-  let characters = text.to_array()
   let endpoint_allows_end = !inclusive
   let start = match
     collection_index(
       Value::number(from),
-      characters.length(),
+      bytes.length(),
       endpoint_allows_end,
       span,
     ) {
@@ -1592,14 +1748,14 @@ fn read_string_range(
   let end = match
     collection_index(
       Value::number(to),
-      characters.length(),
+      bytes.length(),
       endpoint_allows_end,
       span,
     ) {
     CollectionIndexFailed(issue) => return EvaluationFailed(issue)
     CollectionIndexSucceeded(index) => index
   }
-  if start == characters.length() && start != end {
+  if start == bytes.length() && start != end {
     return evaluation_error(
       IndexOutOfBounds,
       "string slice starts outside the valid range",
@@ -1608,7 +1764,7 @@ fn read_string_range(
   }
   let step = if start <= end { 1 } else { -1 }
   let mut index = start
-  let mut result = ""
+  let result : Array[Int] = []
   while (if step > 0 {
           if inclusive {
             index <= end
@@ -1620,17 +1776,26 @@ fn read_string_range(
         } else {
           index > end
         }) {
-    if index < 0 || index >= characters.length() {
+    if index < 0 || index >= bytes.length() {
       return evaluation_error(
         IndexOutOfBounds,
         "string slice crosses outside the valid range",
         span,
       )
     }
-    result = result + characters[index].to_string()
+    match decode_utf8_at(bytes, index) {
+      Some((_, width)) =>
+        for offset = 0; offset < width; offset = offset + 1 {
+          result.push(bytes[index + offset])
+        }
+      None =>
+        if !byte_is_valid_continuation_at(bytes, index) {
+          result.push(bytes[index])
+        }
+    }
     index = index + step
   }
-  EvaluationSucceeded(Value::string(result))
+  EvaluationSucceeded(string_value_from_bytes(result))
 }
 
 ///|
@@ -1641,6 +1806,8 @@ fn read_subscript(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match receiver {
+    InstanceValue(identifier) =>
+      invoke_instance_method(identifier, "[]", [index], span, context)
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
         evaluation_error(InvalidOperand, "list is not available", span)
@@ -1669,15 +1836,19 @@ fn read_subscript(
           None => EvaluationSucceeded(Value::null())
         }
       }
-    StringValue(text) => {
-      let byte_length = utf8_bytes(text).length()
+    StringValue(_) | RawStringValue(_) => {
+      let bytes = match string_bytes_of(receiver) {
+        Some(bytes) => bytes
+        None => []
+      }
+      let byte_length = bytes.length()
       match index {
         RangeValue(from, to, inclusive) =>
-          read_string_range(text, from, to, inclusive, span)
+          read_string_range(bytes, from, to, inclusive, span)
         value =>
           match collection_index(value, byte_length, false, span) {
             CollectionIndexSucceeded(index) =>
-              match string_value_at_byte(text, index) {
+              match string_value_at_byte_from_bytes(bytes, index) {
                 Some(value) => EvaluationSucceeded(value)
                 None =>
                   evaluation_error(
@@ -1690,27 +1861,13 @@ fn read_subscript(
           }
       }
     }
-    RawStringValue(bytes) =>
-      match index {
-        RangeValue(_, _, _) =>
-          evaluation_error(
-            InvalidOperand,
-            "raw byte String slicing is not implemented",
-            span,
-          )
-        value =>
-          match collection_index(value, bytes.length(), false, span) {
-            CollectionIndexSucceeded(position) =>
-              EvaluationSucceeded(Value::raw_string([bytes[position]]))
-            CollectionIndexFailed(issue) => EvaluationFailed(issue)
-          }
-      }
     SequenceValue(identifier) =>
       if identifier < 0 || identifier >= context.sequences.length() {
         evaluation_error(InvalidOperand, "sequence is not available", span)
       } else {
         let indexed = match context.sequences[identifier].kind {
           SequenceSnapshot(items) => items
+          SequenceStringBytes(items) => items
           SequenceStringCodePoints(items, _) => items
           _ =>
             return evaluation_error(
@@ -1743,6 +1900,8 @@ fn write_subscript(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match receiver {
+    InstanceValue(identifier) =>
+      invoke_instance_method(identifier, "[]=", [index, value], span, context)
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
         evaluation_error(InvalidOperand, "list is not available", span)
@@ -1891,61 +2050,200 @@ fn utf8_bytes(text : String) -> Array[Int] {
 }
 
 ///|
-fn utf8_width(code : Int) -> Int {
-  if code <= 0x7f {
-    1
-  } else if code <= 0x7ff {
-    2
-  } else if code <= 0xffff {
-    3
-  } else {
-    4
+fn string_bytes_of(value : Value) -> Array[Int]? {
+  match value {
+    StringValue(text) => Some(utf8_bytes(text))
+    RawStringValue(bytes) => {
+      let copied : Array[Int] = []
+      for byte in bytes {
+        copied.push(byte)
+      }
+      Some(copied)
+    }
+    _ => None
   }
 }
 
 ///|
-fn string_code_point_views(text : String) -> (Array[Value], Array[Value]) {
+fn is_continuation_byte(byte : Int) -> Bool {
+  byte >= 0x80 && byte <= 0xbf
+}
+
+///|
+fn decode_utf8_at(bytes : Array[Int], index : Int) -> (Int, Int)? {
+  if index < 0 || index >= bytes.length() {
+    return None
+  }
+  let first = bytes[index]
+  if first >= 0 && first <= 0x7f {
+    return Some((first, 1))
+  }
+  if first >= 0xc2 && first <= 0xdf && index + 1 < bytes.length() {
+    let second = bytes[index + 1]
+    if is_continuation_byte(second) {
+      return Some((((first & 0x1f) << 6) | (second & 0x3f), 2))
+    }
+  }
+  if first >= 0xe0 && first <= 0xef && index + 2 < bytes.length() {
+    let second = bytes[index + 1]
+    let third = bytes[index + 2]
+    let second_valid = is_continuation_byte(second) &&
+      (first != 0xe0 || second >= 0xa0) &&
+      (first != 0xed || second <= 0x9f)
+    if second_valid && is_continuation_byte(third) {
+      return Some(
+        (((first & 0x0f) << 12) | ((second & 0x3f) << 6) | (third & 0x3f), 3),
+      )
+    }
+  }
+  if first >= 0xf0 && first <= 0xf4 && index + 3 < bytes.length() {
+    let second = bytes[index + 1]
+    let third = bytes[index + 2]
+    let fourth = bytes[index + 3]
+    let second_valid = is_continuation_byte(second) &&
+      (first != 0xf0 || second >= 0x90) &&
+      (first != 0xf4 || second <= 0x8f)
+    if second_valid &&
+      is_continuation_byte(third) &&
+      is_continuation_byte(fourth) {
+      return Some(
+        (
+          ((first & 0x07) << 18) |
+          ((second & 0x3f) << 12) |
+          ((third & 0x3f) << 6) |
+          (fourth & 0x3f),
+          4,
+        ),
+      )
+    }
+  }
+  None
+}
+
+///|
+fn byte_is_valid_continuation_at(bytes : Array[Int], index : Int) -> Bool {
+  for distance = 1; distance <= 3; distance = distance + 1 {
+    let start = index - distance
+    if start < 0 {
+      break
+    }
+    match decode_utf8_at(bytes, start) {
+      Some((_, width)) => if start + width > index { return true }
+      None => ()
+    }
+  }
+  false
+}
+
+///|
+fn string_value_from_bytes(bytes : Array[Int]) -> Value {
+  let characters : Array[Char] = []
+  let mut index = 0
+  while index < bytes.length() {
+    match decode_utf8_at(bytes, index) {
+      Some((code_point, width)) => {
+        characters.push(code_point.unsafe_to_char())
+        index = index + width
+      }
+      None => return Value::raw_string(bytes)
+    }
+  }
+  Value::string(String::from_array(characters))
+}
+
+///|
+fn string_display_from_bytes(bytes : Array[Int]) -> String {
+  let characters : Array[Char] = []
+  let mut index = 0
+  while index < bytes.length() {
+    match decode_utf8_at(bytes, index) {
+      Some((code_point, width)) => {
+        characters.push(code_point.unsafe_to_char())
+        index = index + width
+      }
+      None => {
+        characters.push((0xfffd).unsafe_to_char())
+        index = index + 1
+      }
+    }
+  }
+  String::from_array(characters)
+}
+
+///|
+fn string_code_point_views_from_bytes(
+  bytes : Array[Int],
+) -> (Array[Value], Array[Value]) {
   let indexed : Array[Value] = []
   let iterated : Array[Value] = []
-  for character in text.to_array() {
-    let code = character.to_int()
-    let value = Value::number(Double::from_int(code))
-    indexed.push(value)
-    iterated.push(value)
-    for offset = 1; offset < utf8_width(code); offset = offset + 1 {
-      indexed.push(Value::number(-1.0))
+  let mut index = 0
+  while index < bytes.length() {
+    match decode_utf8_at(bytes, index) {
+      Some((code_point, width)) => {
+        let value = Value::number(Double::from_int(code_point))
+        indexed.push(value)
+        iterated.push(value)
+        for offset = 1; offset < width; offset = offset + 1 {
+          indexed.push(Value::number(-1.0))
+        }
+        index = index + width
+      }
+      None => {
+        indexed.push(Value::number(-1.0))
+        iterated.push(Value::number(-1.0))
+        index = index + 1
+      }
     }
   }
   (indexed, iterated)
 }
 
 ///|
-fn string_value_at_byte(text : String, byte_index : Int) -> Value? {
-  let bytes = utf8_bytes(text)
+fn string_value_at_byte_from_bytes(
+  bytes : Array[Int],
+  byte_index : Int,
+) -> Value? {
   if byte_index < 0 || byte_index >= bytes.length() {
     return None
   }
-  let mut offset = 0
-  for character in text.to_array() {
-    let width = utf8_width(character.to_int())
-    if offset == byte_index {
-      return Some(Value::string(character.to_string()))
+  match decode_utf8_at(bytes, byte_index) {
+    Some((_, width)) => {
+      let selected : Array[Int] = []
+      for offset = 0; offset < width; offset = offset + 1 {
+        selected.push(bytes[byte_index + offset])
+      }
+      Some(string_value_from_bytes(selected))
     }
-    if byte_index < offset + width {
-      return Some(Value::raw_string([bytes[byte_index]]))
-    }
-    offset = offset + width
+    None => Some(Value::raw_string([bytes[byte_index]]))
   }
-  None
 }
 
 ///|
-fn string_items(text : String) -> Array[Value] {
+fn string_items_from_bytes(bytes : Array[Int]) -> Array[Value] {
   let items : Array[Value] = []
-  for character in text.to_array() {
-    items.push(Value::string(character.to_string()))
+  let mut index = 0
+  while index < bytes.length() {
+    match decode_utf8_at(bytes, index) {
+      Some((_, width)) => {
+        let selected : Array[Int] = []
+        for offset = 0; offset < width; offset = offset + 1 {
+          selected.push(bytes[index + offset])
+        }
+        items.push(string_value_from_bytes(selected))
+        index = index + width
+      }
+      None => {
+        items.push(Value::raw_string([bytes[index]]))
+        index = index + 1
+      }
+    }
   }
   items
+}
+
+///|
+fn string_count_from_bytes(bytes : Array[Int]) -> Int {
+  string_items_from_bytes(bytes).length()
 }
 
 ///|
@@ -1963,9 +2261,11 @@ fn invalid_string_argument(
 }
 
 ///|
-fn string_index_of(text : String, needle : String, start : Int) -> Int {
-  let source = utf8_bytes(text)
-  let search = utf8_bytes(needle)
+fn string_index_of(
+  source : Array[Int],
+  search : Array[Int],
+  start : Int,
+) -> Int {
   if search.length() == 0 {
     return start
   }
@@ -1986,33 +2286,89 @@ fn string_index_of(text : String, needle : String, start : Int) -> Int {
 }
 
 ///|
-fn invoke_string_method(
-  text : String,
+fn bytes_have_prefix(source : Array[Int], prefix : Array[Int]) -> Bool {
+  if prefix.length() > source.length() {
+    return false
+  }
+  for index = 0; index < prefix.length(); index = index + 1 {
+    if source[index] != prefix[index] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn bytes_have_suffix(source : Array[Int], suffix : Array[Int]) -> Bool {
+  if suffix.length() > source.length() {
+    return false
+  }
+  let start = source.length() - suffix.length()
+  for index = 0; index < suffix.length(); index = index + 1 {
+    if source[start + index] != suffix[index] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn copy_byte_range(source : Array[Int], start : Int, end : Int) -> Array[Int] {
+  let result : Array[Int] = []
+  for index = start; index < end; index = index + 1 {
+    result.push(source[index])
+  }
+  result
+}
+
+///|
+fn byte_is_in(byte : Int, values : Array[Int]) -> Bool {
+  for value in values {
+    if value == byte {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn invoke_string_bytes_method(
+  receiver : Value,
+  bytes : Array[Int],
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
   if name == "iterate" || name == "iteratorValue" {
-    return indexed_iterator("String", string_items(text), name, arguments, span)
+    return indexed_iterator(
+      "String",
+      string_items_from_bytes(bytes),
+      name,
+      arguments,
+      span,
+    )
   }
   match name {
     "contains" | "startsWith" | "endsWith" | "split" =>
       if arguments.length() != 1 {
         invalid_collection_arity("String", name, 1, arguments.length(), span)
       } else {
-        let needle = match arguments[0] {
-          StringValue(value) => value
-          value => return invalid_string_argument(name, 1, value, span)
+        let needle = match string_bytes_of(arguments[0]) {
+          Some(value) => value
+          None => return invalid_string_argument(name, 1, arguments[0], span)
         }
         match name {
-          "contains" => EvaluationSucceeded(Value::bool(text.contains(needle)))
+          "contains" =>
+            EvaluationSucceeded(
+              Value::bool(string_index_of(bytes, needle, 0) >= 0),
+            )
           "startsWith" =>
-            EvaluationSucceeded(Value::bool(text.has_prefix(needle)))
+            EvaluationSucceeded(Value::bool(bytes_have_prefix(bytes, needle)))
           "endsWith" =>
-            EvaluationSucceeded(Value::bool(text.has_suffix(needle)))
+            EvaluationSucceeded(Value::bool(bytes_have_suffix(bytes, needle)))
           "split" =>
-            if needle == "" {
+            if needle.length() == 0 {
               evaluation_error(
                 InvalidOperand,
                 "String.split separator must not be empty",
@@ -2020,8 +2376,21 @@ fn invoke_string_method(
               )
             } else {
               let parts : Array[Value] = []
-              for part in text.split(needle) {
-                parts.push(Value::string(part.to_owned()))
+              let mut start = 0
+              while start <= bytes.length() {
+                let found = string_index_of(bytes, needle, start)
+                if found < 0 {
+                  parts.push(
+                    string_value_from_bytes(
+                      copy_byte_range(bytes, start, bytes.length()),
+                    ),
+                  )
+                  break
+                }
+                parts.push(
+                  string_value_from_bytes(copy_byte_range(bytes, start, found)),
+                )
+                start = found + needle.length()
               }
               EvaluationSucceeded(context.new_list(parts))
             }
@@ -2037,11 +2406,11 @@ fn invoke_string_method(
           span,
         )
       }
-      let needle = match arguments[0] {
-        StringValue(value) => value
-        value => return invalid_string_argument(name, 1, value, span)
+      let needle = match string_bytes_of(arguments[0]) {
+        Some(value) => value
+        None => return invalid_string_argument(name, 1, arguments[0], span)
       }
-      let length = utf8_bytes(text).length()
+      let length = bytes.length()
       let start = if arguments.length() == 1 {
         0
       } else {
@@ -2074,7 +2443,7 @@ fn invoke_string_method(
         }
       }
       EvaluationSucceeded(
-        Value::number(Double::from_int(string_index_of(text, needle, start))),
+        Value::number(Double::from_int(string_index_of(bytes, needle, start))),
       )
     }
     "trim" | "trimStart" | "trimEnd" => {
@@ -2086,64 +2455,89 @@ fn invoke_string_method(
         )
       }
       let characters = if arguments.length() == 0 {
-        "\t\n\r "
+        [9, 10, 13, 32]
       } else {
-        match arguments[0] {
-          StringValue(value) => value
-          value => return invalid_string_argument(name, 1, value, span)
+        match string_bytes_of(arguments[0]) {
+          Some(value) => value
+          None => return invalid_string_argument(name, 1, arguments[0], span)
         }
       }
-      let result = if name == "trim" {
-        text.trim(chars=characters).to_owned()
-      } else if name == "trimStart" {
-        text.trim_start(chars=characters).to_owned()
-      } else {
-        text.trim_end(chars=characters).to_owned()
+      let mut start = 0
+      let mut end = bytes.length()
+      if name == "trim" || name == "trimStart" {
+        while start < end && byte_is_in(bytes[start], characters) {
+          start = start + 1
+        }
       }
-      EvaluationSucceeded(Value::string(result))
+      if name == "trim" || name == "trimEnd" {
+        while end > start && byte_is_in(bytes[end - 1], characters) {
+          end = end - 1
+        }
+      }
+      EvaluationSucceeded(
+        string_value_from_bytes(copy_byte_range(bytes, start, end)),
+      )
     }
     "replace" =>
       if arguments.length() != 2 {
         invalid_collection_arity("String", name, 2, arguments.length(), span)
       } else {
-        let old = match arguments[0] {
-          StringValue(value) => value
-          value => return invalid_string_argument(name, 1, value, span)
+        let old = match string_bytes_of(arguments[0]) {
+          Some(value) => value
+          None => return invalid_string_argument(name, 1, arguments[0], span)
         }
-        let replacement = match arguments[1] {
-          StringValue(value) => value
-          value => return invalid_string_argument(name, 2, value, span)
+        let replacement = match string_bytes_of(arguments[1]) {
+          Some(value) => value
+          None => return invalid_string_argument(name, 2, arguments[1], span)
         }
-        if old == "" {
+        if old.length() == 0 {
           evaluation_error(
             InvalidOperand,
             "String.replace search text must not be empty",
             span,
           )
         } else {
-          EvaluationSucceeded(
-            Value::string(text.replace_all(old~, new=replacement)),
-          )
+          let result : Array[Int] = []
+          let mut start = 0
+          while start < bytes.length() {
+            let found = string_index_of(bytes, old, start)
+            if found < 0 {
+              for byte in copy_byte_range(bytes, start, bytes.length()) {
+                result.push(byte)
+              }
+              break
+            }
+            for byte in copy_byte_range(bytes, start, found) {
+              result.push(byte)
+            }
+            for byte in replacement {
+              result.push(byte)
+            }
+            start = found + old.length()
+          }
+          EvaluationSucceeded(string_value_from_bytes(result))
         }
       }
-    _ =>
-      invoke_sequence_operation(
-        Value::string(text),
-        name,
-        arguments,
-        span,
-        context,
-      )
+    _ => invoke_sequence_operation(receiver, name, arguments, span, context)
   }
 }
 
 ///|
-fn raw_string_items(bytes : Array[Int]) -> Array[Value] {
-  let items : Array[Value] = []
-  for byte in bytes {
-    items.push(Value::raw_string([byte]))
-  }
-  items
+fn invoke_string_method(
+  text : String,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  invoke_string_bytes_method(
+    Value::string(text),
+    utf8_bytes(text),
+    name,
+    arguments,
+    span,
+    context,
+  )
 }
 
 ///|
@@ -2154,17 +2548,9 @@ fn invoke_raw_string_method(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
-  if name == "iterate" || name == "iteratorValue" {
-    return indexed_iterator(
-      "String",
-      raw_string_items(bytes),
-      name,
-      arguments,
-      span,
-    )
-  }
-  invoke_sequence_operation(
+  invoke_string_bytes_method(
     Value::raw_string(bytes),
+    bytes,
     name,
     arguments,
     span,
@@ -2281,6 +2667,14 @@ fn advance_sequence_iterator(
   }
   match context.sequences[sequence_identifier].kind {
     SequenceSnapshot(items) =>
+      if iterator.yielded >= items.length() {
+        complete()
+      } else {
+        iterator.current = items[iterator.yielded]
+        iterator.yielded = iterator.yielded + 1
+        EvaluationSucceeded(Value::iterator(iterator_identifier))
+      }
+    SequenceStringBytes(items) =>
       if iterator.yielded >= items.length() {
         complete()
       } else {
@@ -2438,7 +2832,7 @@ fn invalid_function_argument(
 
 ///|
 priv enum FiberExpressionStep {
-  FiberExpressionReady
+  FiberExpressionReady(Expr)
   FiberExpressionYielded(Value, (Value) -> Expr)
   FiberExpressionFailed(Diagnostic)
 }
@@ -2452,37 +2846,541 @@ priv enum FiberStatementStep {
 }
 
 ///|
-fn fiber_yield_value(
+fn method_call_closure(
+  receiver : Value,
+  resolved : ResolvedMethod,
+  context : RuntimeContext,
+) -> Int? {
+  if resolved.owner_identifier < 0 ||
+    resolved.owner_identifier >= context.classes.length() ||
+    resolved.declaration.is_foreign {
+    return None
+  }
+  let owner = context.classes[resolved.owner_identifier]
+  let environment = owner.environment.capture()
+  environment.push_scope()
+  match receiver {
+    InstanceValue(instance_identifier) => {
+      ignore(environment.bind("this", receiver))
+      match owner.superclass {
+        Some(superclass) =>
+          ignore(
+            environment.bind(
+              "$super",
+              SuperValue(
+                superclass,
+                instance_identifier,
+                if resolved.declaration.is_constructor {
+                  resolved.declaration.name
+                } else {
+                  ""
+                },
+              ),
+            ),
+          )
+        None => ()
+      }
+    }
+    ClassValue(receiver_class) => {
+      ignore(environment.bind("this", receiver))
+      ignore(
+        environment.bind(
+          "$class",
+          Value::class_value(resolved.owner_identifier),
+        ),
+      )
+      match owner.superclass {
+        Some(superclass) =>
+          ignore(
+            environment.bind(
+              "$super",
+              SuperClassValue(superclass, receiver_class),
+            ),
+          )
+        None => ()
+      }
+    }
+    _ => return None
+  }
+  let identifier = context.closures.length()
+  context.closures.push({
+    parameters: resolved.declaration.parameters,
+    body: resolved.declaration.body,
+    environment,
+    source_name: owner.source_name,
+  })
+  Some(identifier)
+}
+
+///|
+fn instance_has_method(
+  receiver : Value,
   name : String,
-  arguments : Array[Expr],
+  arity : Int,
+  context : RuntimeContext,
+) -> Bool {
+  match receiver {
+    InstanceValue(identifier) =>
+      if identifier >= 0 && identifier < context.instances.length() {
+        let class_identifier = context.instances[identifier].class_identifier
+        match
+          find_method_in_class(
+            context, class_identifier, name, arity, false, false, false,
+          ) {
+          Some(_) => true
+          None => false
+        }
+      } else {
+        false
+      }
+    _ => false
+  }
+}
+
+///|
+fn unary_method_name(operator : UnaryOperator) -> String {
+  match operator {
+    LogicalNot => "!"
+    Negate => "-"
+    BitwiseNot => "~"
+  }
+}
+
+///|
+fn binary_method_name(operator : BinaryOperator) -> String {
+  match operator {
+    Add => "+"
+    Subtract => "-"
+    Multiply => "*"
+    Divide => "/"
+    Remainder => "%"
+    EqualTo => "=="
+    NotEqualTo => "!="
+    LessThan => "<"
+    LessThanOrEqual => "<="
+    GreaterThan => ">"
+    GreaterThanOrEqual => ">="
+    BitwiseAnd => "&"
+    BitwiseOr => "|"
+    BitwiseXor => "^"
+    ShiftLeft => "<<"
+    ShiftRight => ">>"
+    InclusiveRange => ".."
+    ExclusiveRange => "..."
+    LogicalAnd | LogicalOr | IsType => ""
+  }
+}
+
+///|
+fn finish_fiber_sequence_operation(
+  name : String,
+  aggregate : Value,
+  count : Int,
   span : SourceSpan,
-  environment : Environment,
+) -> FiberExpressionStep {
+  FiberExpressionReady(
+    Literal(
+      if name == "count" {
+        Value::number(Double::from_int(count))
+      } else if name == "each" {
+        Value::null()
+      } else {
+        aggregate
+      },
+      span,
+    ),
+  )
+}
+
+///|
+fn resume_fiber_sequence_callback(
+  call_identifier : Int,
+  input : Value,
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int,
+  name : String,
+  aggregate : Value,
+  count : Int,
+  span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
-  let valid_arity = if name == "suspend" {
-    arguments.length() == 0
-  } else {
-    arguments.length() <= 1
+  match resume_runtime_fiber(call_identifier, input, span, context) {
+    EvaluationFailed(issue) => FiberExpressionFailed(issue)
+    EvaluationSucceeded(result) => {
+      let call_fiber = context.fibers[call_identifier]
+      if call_fiber.state == 2 {
+        FiberExpressionYielded(result, fn(resumed) {
+          FiberSequenceResume(
+            call_identifier, resumed, iterable, iterator, function_identifier, name,
+            aggregate, count, span,
+          )
+        })
+      } else if name == "all" && !result.is_truthy() {
+        FiberExpressionReady(Literal(result, span))
+      } else if name == "any" && result.is_truthy() {
+        FiberExpressionReady(Literal(result, span))
+      } else {
+        execute_fiber_sequence_operation(
+          iterable,
+          iterator,
+          function_identifier,
+          name,
+          if name == "all" {
+            result
+          } else {
+            aggregate
+          },
+          if name == "count" && result.is_truthy() {
+            count + 1
+          } else {
+            count
+          },
+          span,
+          context,
+        )
+      }
+    }
   }
-  if !valid_arity {
+}
+
+///|
+fn execute_fiber_sequence_operation(
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int,
+  name : String,
+  aggregate : Value,
+  count : Int,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match advance_iterable(iterable, iterator, span, context) {
+    IteratorAdvanceFailed(issue) => FiberExpressionFailed(issue)
+    IteratorComplete =>
+      finish_fiber_sequence_operation(name, aggregate, count, span)
+    IteratorAdvanced(next, value) => {
+      let call_identifier = context.new_function_fiber(
+        function_identifier,
+        [value],
+        context.current_fiber,
+      )
+      resume_fiber_sequence_callback(
+        call_identifier,
+        Value::null(),
+        iterable,
+        next,
+        function_identifier,
+        name,
+        aggregate,
+        count,
+        span,
+        context,
+      )
+    }
+  }
+}
+
+///|
+fn resume_fiber_expression_call(
+  identifier : Int,
+  input : Value,
+  result_override : Value?,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match resume_runtime_fiber(identifier, input, span, context) {
+    EvaluationFailed(issue) => FiberExpressionFailed(issue)
+    EvaluationSucceeded(value) => {
+      let fiber = context.fibers[identifier]
+      if fiber.state == 2 {
+        FiberExpressionYielded(value, fn(resumed) {
+          FiberCallResume(identifier, resumed, result_override, span)
+        })
+      } else {
+        FiberExpressionReady(
+          Literal(
+            match result_override {
+              Some(overridden_result) => overridden_result
+              None => value
+            },
+            span,
+          ),
+        )
+      }
+    }
+  }
+}
+
+///|
+fn start_fiber_expression_call(
+  function_identifier : Int,
+  arguments : Array[Value],
+  result_override : Value?,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  if function_identifier < 0 || function_identifier >= context.closures.length() {
     return FiberExpressionFailed(
       Diagnostic::new(
         Runtime,
-        InvalidArity,
-        "Fiber.\{name} expects \{if name == "suspend" { "zero" } else { "zero or one" }} argument",
+        UndefinedMethod,
+        "function is not available in this runtime",
         span,
       ),
     )
   }
-  let yielded = if arguments.length() == 0 {
-    Value::null()
-  } else {
-    match evaluate_expression_in(arguments[0], environment, context) {
-      EvaluationSucceeded(value) => value
-      EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+  let closure = context.closures[function_identifier]
+  if arguments.length() < closure.parameters.length() {
+    return FiberExpressionFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidArity,
+        "function expects at least {closure.parameters.length()} arguments, received {arguments.length()}",
+        span,
+      ),
+    )
+  }
+  let identifier = context.new_function_fiber(
+    function_identifier,
+    arguments,
+    context.current_fiber,
+  )
+  resume_fiber_expression_call(
+    identifier,
+    Value::null(),
+    result_override,
+    span,
+    context,
+  )
+}
+
+///|
+fn prepare_evaluated_method_call(
+  receiver : Value,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  if (name == "all" || name == "any" || name == "count" || name == "each") &&
+    arguments.length() == 1 {
+    match arguments[0] {
+      FunctionValue(function_identifier) =>
+        return execute_fiber_sequence_operation(
+          receiver,
+          Value::null(),
+          function_identifier,
+          name,
+          Value::bool(name == "all"),
+          0,
+          span,
+          context,
+        )
+      _ => ()
     }
   }
-  FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
+  let resolved = match receiver {
+    InstanceValue(identifier) =>
+      if identifier >= 0 && identifier < context.instances.length() {
+        find_method_in_class(
+          context,
+          context.instances[identifier].class_identifier,
+          name,
+          arguments.length(),
+          false,
+          false,
+          false,
+        )
+      } else {
+        None
+      }
+    ClassValue(identifier) =>
+      find_method_in_class(
+        context,
+        identifier,
+        name,
+        arguments.length(),
+        false,
+        false,
+        true,
+      )
+    SuperValue(superclass, _, _) =>
+      find_method_in_class(
+        context,
+        superclass,
+        name,
+        arguments.length(),
+        false,
+        false,
+        false,
+      )
+    SuperClassValue(superclass, _) =>
+      find_method_in_class(
+        context,
+        superclass,
+        name,
+        arguments.length(),
+        false,
+        false,
+        true,
+      )
+    _ => None
+  }
+  match resolved {
+    Some(resolved) => {
+      let method_receiver = match receiver {
+        SuperValue(_, instance_identifier, _) =>
+          Value::instance(instance_identifier)
+        SuperClassValue(_, receiver_class) => Value::class_value(receiver_class)
+        value => value
+      }
+      match method_call_closure(method_receiver, resolved, context) {
+        Some(function_identifier) =>
+          start_fiber_expression_call(
+            function_identifier,
+            arguments,
+            None,
+            span,
+            context,
+          )
+        None =>
+          match invoke_method(receiver, name, arguments, span, context) {
+            EvaluationSucceeded(value) =>
+              FiberExpressionReady(Literal(value, span))
+            EvaluationFailed(issue) => FiberExpressionFailed(issue)
+          }
+      }
+    }
+    None =>
+      match receiver {
+        ClassValue(identifier) if identifier >= 0 &&
+          identifier < context.classes.length() => {
+          let class_definition = context.classes[identifier]
+          match
+            find_method_in_class(
+              context,
+              identifier,
+              name,
+              arguments.length(),
+              true,
+              false,
+              false,
+            ) {
+            Some(constructor_method) if !class_definition.is_foreign => {
+              let instance_identifier = context.instances.length()
+              let instance = Value::instance(instance_identifier)
+              context.instances.push({
+                class_identifier: identifier,
+                fields: [],
+                foreign_handle: None,
+                finalized: false,
+              })
+              match method_call_closure(instance, constructor_method, context) {
+                Some(function_identifier) =>
+                  start_fiber_expression_call(
+                    function_identifier,
+                    arguments,
+                    Some(instance),
+                    span,
+                    context,
+                  )
+                None =>
+                  match
+                    invoke_method(receiver, name, arguments, span, context) {
+                    EvaluationSucceeded(value) =>
+                      FiberExpressionReady(Literal(value, span))
+                    EvaluationFailed(issue) => FiberExpressionFailed(issue)
+                  }
+              }
+            }
+            _ =>
+              match invoke_method(receiver, name, arguments, span, context) {
+                EvaluationSucceeded(value) =>
+                  FiberExpressionReady(Literal(value, span))
+                EvaluationFailed(issue) => FiberExpressionFailed(issue)
+              }
+          }
+        }
+        FunctionValue(identifier) if name == "call" =>
+          start_fiber_expression_call(
+            identifier,
+            arguments,
+            None,
+            span,
+            context,
+          )
+        _ =>
+          match invoke_method(receiver, name, arguments, span, context) {
+            EvaluationSucceeded(value) =>
+              FiberExpressionReady(Literal(value, span))
+            EvaluationFailed(issue) => FiberExpressionFailed(issue)
+          }
+      }
+  }
+}
+
+///|
+fn prepare_evaluated_property_get(
+  receiver : Value,
+  name : String,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  let resolved = match receiver {
+    InstanceValue(identifier) =>
+      if identifier >= 0 && identifier < context.instances.length() {
+        find_method_in_class(
+          context,
+          context.instances[identifier].class_identifier,
+          name,
+          0,
+          false,
+          true,
+          false,
+        )
+      } else {
+        None
+      }
+    ClassValue(identifier) =>
+      find_method_in_class(context, identifier, name, 0, false, true, true)
+    SuperValue(superclass, _, _) =>
+      find_method_in_class(context, superclass, name, 0, false, true, false)
+    SuperClassValue(superclass, _) =>
+      find_method_in_class(context, superclass, name, 0, false, true, true)
+    _ => None
+  }
+  match resolved {
+    Some(resolved) => {
+      let method_receiver = match receiver {
+        SuperValue(_, instance_identifier, _) =>
+          Value::instance(instance_identifier)
+        SuperClassValue(_, receiver_class) => Value::class_value(receiver_class)
+        value => value
+      }
+      match method_call_closure(method_receiver, resolved, context) {
+        Some(function_identifier) =>
+          start_fiber_expression_call(
+            function_identifier,
+            [],
+            None,
+            span,
+            context,
+          )
+        None =>
+          match read_property(receiver, name, span, context) {
+            EvaluationSucceeded(value) =>
+              FiberExpressionReady(Literal(value, span))
+            EvaluationFailed(issue) => FiberExpressionFailed(issue)
+          }
+      }
+    }
+    None =>
+      match read_property(receiver, name, span, context) {
+        EvaluationSucceeded(value) => FiberExpressionReady(Literal(value, span))
+        EvaluationFailed(issue) => FiberExpressionFailed(issue)
+      }
+  }
 }
 
 ///|
@@ -2492,21 +3390,36 @@ fn prepare_fiber_expression(
   context : RuntimeContext,
 ) -> FiberExpressionStep {
   match expression {
-    MethodCall(Variable("Fiber", _), name, arguments, span) => {
-      if name == "yield" || name == "suspend" {
-        return fiber_yield_value(name, arguments, span, environment, context)
-      }
-      FiberExpressionReady
-    }
+    FiberCallResume(identifier, input, result_override, span) =>
+      resume_fiber_expression_call(
+        identifier, input, result_override, span, context,
+      )
+    FiberSequenceResume(
+      call_identifier,
+      input,
+      iterable,
+      iterator,
+      function_identifier,
+      name,
+      aggregate,
+      count,
+      span
+    ) =>
+      resume_fiber_sequence_callback(
+        call_identifier, input, iterable, iterator, function_identifier, name, aggregate,
+        count, span, context,
+      )
     MethodCall(receiver, name, arguments, span) => {
-      match prepare_fiber_expression(receiver, environment, context) {
+      let prepared_receiver = match
+        prepare_fiber_expression(receiver, environment, context) {
         FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           return FiberExpressionYielded(yielded, fn(resumed) {
             MethodCall(continuation(resumed), name, arguments, span)
           })
-        FiberExpressionReady => ()
+        FiberExpressionReady(prepared) => prepared
       }
+      let prepared_arguments : Array[Expr] = []
       for index = 0; index < arguments.length(); index = index + 1 {
         match prepare_fiber_expression(arguments[index], environment, context) {
           FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
@@ -2517,60 +3430,148 @@ fn prepare_fiber_expression(
               for position = 0
                   position < arguments.length()
                   position = position + 1 {
-                rebuilt.push(
-                  if position == argument_index {
-                    continuation(resumed)
-                  } else {
-                    arguments[position]
-                  },
-                )
+                if position < argument_index {
+                  rebuilt.push(prepared_arguments[position])
+                } else if position == argument_index {
+                  rebuilt.push(continuation(resumed))
+                } else {
+                  rebuilt.push(arguments[position])
+                }
               }
-              MethodCall(receiver, name, rebuilt, span)
+              MethodCall(prepared_receiver, name, rebuilt, span)
             })
           }
-          FiberExpressionReady => ()
+          FiberExpressionReady(prepared) => prepared_arguments.push(prepared)
         }
       }
-      if name == "transfer" && context.current_fiber != 0 {
-        match receiver {
-          Variable(_, _) =>
-            match evaluate_expression_in(receiver, environment, context) {
-              EvaluationFailed(issue) => return FiberExpressionFailed(issue)
-              EvaluationSucceeded(FiberValue(target)) => {
-                if target == context.current_fiber {
-                  return FiberExpressionFailed(
-                    Diagnostic::new(
-                      Runtime,
-                      InvalidFiberState,
-                      "a fiber cannot transfer to itself",
-                      span,
-                    ),
-                  )
-                }
-                context.transfer_target = target
-                return fiber_yield_value(
-                  "transfer", arguments, span, environment, context,
-                )
-              }
-              EvaluationSucceeded(_) => ()
-            }
-          _ => ()
+      let receiver_value = match
+        evaluate_expression_in(prepared_receiver, environment, context) {
+        EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+        EvaluationSucceeded(value) => value
+      }
+      let argument_values : Array[Value] = []
+      for argument in prepared_arguments {
+        match evaluate_expression_in(argument, environment, context) {
+          EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+          EvaluationSucceeded(value) => argument_values.push(value)
         }
       }
-      FiberExpressionReady
+      match receiver_value {
+        CoreClassValue(FiberClass) if name == "yield" || name == "suspend" => {
+          let valid_arity = if name == "suspend" {
+            argument_values.length() == 0
+          } else {
+            argument_values.length() <= 1
+          }
+          if !valid_arity {
+            return FiberExpressionFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidArity,
+                "Fiber.\{name} expects \{if name == "suspend" { "zero" } else { "zero or one" }} argument",
+                span,
+              ),
+            )
+          }
+          let yielded = if argument_values.length() == 0 {
+            Value::null()
+          } else {
+            argument_values[0]
+          }
+          FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
+        }
+        FiberValue(target) if name == "transfer" && context.current_fiber != 0 => {
+          if target == context.current_fiber {
+            return FiberExpressionFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidFiberState,
+                "a fiber cannot transfer to itself",
+                span,
+              ),
+            )
+          }
+          if argument_values.length() > 1 {
+            return FiberExpressionFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidArity,
+                "Fiber.transfer expects zero or one argument",
+                span,
+              ),
+            )
+          }
+          context.transfer_target = target
+          let yielded = if argument_values.length() == 0 {
+            Value::null()
+          } else {
+            argument_values[0]
+          }
+          FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
+        }
+        _ =>
+          prepare_evaluated_method_call(
+            receiver_value, name, argument_values, span, context,
+          )
+      }
     }
-    PropertyGet(receiver, name, span) =>
-      match prepare_fiber_expression(receiver, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+    PropertyGet(receiver, name, span) => {
+      let prepared_receiver = match
+        prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          return FiberExpressionYielded(yielded, fn(resumed) {
+            PropertyGet(continuation(resumed), name, span)
+          })
+        FiberExpressionReady(prepared) => prepared
+      }
+      match evaluate_expression_in(prepared_receiver, environment, context) {
+        EvaluationFailed(issue) => FiberExpressionFailed(issue)
+        EvaluationSucceeded(receiver_value) =>
+          prepare_evaluated_property_get(receiver_value, name, span, context)
+      }
+    }
+    PropertySet(receiver, name, value, span) => {
+      let prepared_receiver = match
+        prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          return FiberExpressionYielded(yielded, fn(resumed) {
+            PropertySet(continuation(resumed), name, value, span)
+          })
+        FiberExpressionReady(prepared) => prepared
+      }
+      match prepare_fiber_expression(value, environment, context) {
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
-            PropertyGet(continuation(resumed), name, span)
+            PropertySet(prepared_receiver, name, continuation(resumed), span)
           })
+        FiberExpressionReady(prepared_value) => {
+          let receiver_value = match
+            evaluate_expression_in(prepared_receiver, environment, context) {
+            EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+            EvaluationSucceeded(result) => result
+          }
+          let assigned = match
+            evaluate_expression_in(prepared_value, environment, context) {
+            EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+            EvaluationSucceeded(result) => result
+          }
+          prepare_evaluated_method_call(
+            receiver_value,
+            name + "=",
+            [assigned],
+            span,
+            context,
+          )
+        }
       }
+    }
     Grouping(inner, span) =>
       match prepare_fiber_expression(inner, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionReady(prepared) =>
+          FiberExpressionReady(Grouping(prepared, span))
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
@@ -2579,7 +3580,23 @@ fn prepare_fiber_expression(
       }
     Unary(operator, right, span) =>
       match prepare_fiber_expression(right, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionReady(prepared) => {
+          let value = match
+            evaluate_expression_in(prepared, environment, context) {
+            EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+            EvaluationSucceeded(value) => value
+          }
+          let name = unary_method_name(operator)
+          if instance_has_method(value, name, 0, context) {
+            prepare_evaluated_method_call(value, name, [], span, context)
+          } else {
+            match evaluate_unary(operator, value, span, context) {
+              EvaluationFailed(issue) => FiberExpressionFailed(issue)
+              EvaluationSucceeded(result) =>
+                FiberExpressionReady(Literal(result, span))
+            }
+          }
+        }
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
@@ -2593,19 +3610,63 @@ fn prepare_fiber_expression(
           FiberExpressionYielded(yielded, fn(resumed) {
             Binary(continuation(resumed), operator, right, span)
           })
-        FiberExpressionReady =>
+        FiberExpressionReady(prepared_left) => {
+          if operator == LogicalAnd || operator == LogicalOr {
+            let left_value = match
+              evaluate_expression_in(prepared_left, environment, context) {
+              EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+              EvaluationSucceeded(value) => value
+            }
+            if (operator == LogicalAnd && !left_value.is_truthy()) ||
+              (operator == LogicalOr && left_value.is_truthy()) {
+              return FiberExpressionReady(Literal(left_value, span))
+            }
+            return prepare_fiber_expression(right, environment, context)
+          }
           match prepare_fiber_expression(right, environment, context) {
-            FiberExpressionReady => FiberExpressionReady
+            FiberExpressionReady(prepared_right) => {
+              let left_value = match
+                evaluate_expression_in(prepared_left, environment, context) {
+                EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+                EvaluationSucceeded(value) => value
+              }
+              let right_value = match
+                evaluate_expression_in(prepared_right, environment, context) {
+                EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+                EvaluationSucceeded(value) => value
+              }
+              let name = binary_method_name(operator)
+              if name != "" && instance_has_method(left_value, name, 1, context) {
+                prepare_evaluated_method_call(
+                  left_value,
+                  name,
+                  [right_value],
+                  span,
+                  context,
+                )
+              } else {
+                match
+                  evaluate_binary_values(
+                    operator, left_value, right_value, span, context,
+                  ) {
+                  EvaluationFailed(issue) => FiberExpressionFailed(issue)
+                  EvaluationSucceeded(result) =>
+                    FiberExpressionReady(Literal(result, span))
+                }
+              }
+            }
             FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
             FiberExpressionYielded(yielded, continuation) =>
               FiberExpressionYielded(yielded, fn(resumed) {
-                Binary(left, operator, continuation(resumed), span)
+                Binary(prepared_left, operator, continuation(resumed), span)
               })
           }
+        }
       }
     Assign(name, value, span) =>
       match prepare_fiber_expression(value, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionReady(prepared) =>
+          FiberExpressionReady(Assign(name, prepared, span))
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
@@ -2614,7 +3675,8 @@ fn prepare_fiber_expression(
       }
     FieldAssign(name, value, span) =>
       match prepare_fiber_expression(value, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionReady(prepared) =>
+          FiberExpressionReady(FieldAssign(name, prepared, span))
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
@@ -2623,7 +3685,8 @@ fn prepare_fiber_expression(
       }
     StaticFieldAssign(name, value, span) =>
       match prepare_fiber_expression(value, environment, context) {
-        FiberExpressionReady => FiberExpressionReady
+        FiberExpressionReady(prepared) =>
+          FiberExpressionReady(StaticFieldAssign(name, prepared, span))
         FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberExpressionYielded(yielded, fn(resumed) {
@@ -2637,42 +3700,258 @@ fn prepare_fiber_expression(
           FiberExpressionYielded(yielded, fn(resumed) {
             SubscriptGet(continuation(resumed), index, span)
           })
-        FiberExpressionReady =>
+        FiberExpressionReady(prepared_receiver) =>
           match prepare_fiber_expression(index, environment, context) {
-            FiberExpressionReady => FiberExpressionReady
+            FiberExpressionReady(prepared_index) => {
+              let receiver_value = match
+                evaluate_expression_in(prepared_receiver, environment, context) {
+                EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+                EvaluationSucceeded(value) => value
+              }
+              let index_value = match
+                evaluate_expression_in(prepared_index, environment, context) {
+                EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+                EvaluationSucceeded(value) => value
+              }
+              if instance_has_method(receiver_value, "[]", 1, context) {
+                prepare_evaluated_method_call(
+                  receiver_value,
+                  "[]",
+                  [index_value],
+                  span,
+                  context,
+                )
+              } else {
+                match
+                  read_subscript(receiver_value, index_value, span, context) {
+                  EvaluationFailed(issue) => FiberExpressionFailed(issue)
+                  EvaluationSucceeded(result) =>
+                    FiberExpressionReady(Literal(result, span))
+                }
+              }
+            }
             FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
             FiberExpressionYielded(yielded, continuation) =>
               FiberExpressionYielded(yielded, fn(resumed) {
-                SubscriptGet(receiver, continuation(resumed), span)
+                SubscriptGet(prepared_receiver, continuation(resumed), span)
               })
           }
       }
-    _ => FiberExpressionReady
-  }
-}
-
-///|
-fn resume_fiber_function_call(
-  identifier : Int,
-  input : Value,
-  span : SourceSpan,
-  context : RuntimeContext,
-  complete : (Value) -> StatementResult,
-) -> FiberStatementStep {
-  match resume_runtime_fiber(identifier, input, span, context) {
-    EvaluationFailed(issue) => FiberStatementFailed(issue)
-    EvaluationSucceeded(value) => {
-      let fiber = context.fibers[identifier]
-      if fiber.state == 2 {
-        FiberStatementYielded(value, fn(resumed) {
-          resume_fiber_function_call(
-            identifier, resumed, span, context, complete,
+    SubscriptSet(receiver, index, value, span) =>
+      match prepare_fiber_expression(receiver, environment, context) {
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            SubscriptSet(continuation(resumed), index, value, span)
+          })
+        FiberExpressionReady(prepared_receiver) =>
+          match prepare_fiber_expression(index, environment, context) {
+            FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+            FiberExpressionYielded(yielded, continuation) =>
+              FiberExpressionYielded(yielded, fn(resumed) {
+                SubscriptSet(
+                  prepared_receiver,
+                  continuation(resumed),
+                  value,
+                  span,
+                )
+              })
+            FiberExpressionReady(prepared_index) =>
+              match prepare_fiber_expression(value, environment, context) {
+                FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+                FiberExpressionYielded(yielded, continuation) =>
+                  FiberExpressionYielded(yielded, fn(resumed) {
+                    SubscriptSet(
+                      prepared_receiver,
+                      prepared_index,
+                      continuation(resumed),
+                      span,
+                    )
+                  })
+                FiberExpressionReady(prepared_value) => {
+                  let receiver_value = match
+                    evaluate_expression_in(
+                      prepared_receiver, environment, context,
+                    ) {
+                    EvaluationFailed(issue) =>
+                      return FiberExpressionFailed(issue)
+                    EvaluationSucceeded(result) => result
+                  }
+                  let index_value = match
+                    evaluate_expression_in(prepared_index, environment, context) {
+                    EvaluationFailed(issue) =>
+                      return FiberExpressionFailed(issue)
+                    EvaluationSucceeded(result) => result
+                  }
+                  let assigned = match
+                    evaluate_expression_in(prepared_value, environment, context) {
+                    EvaluationFailed(issue) =>
+                      return FiberExpressionFailed(issue)
+                    EvaluationSucceeded(result) => result
+                  }
+                  if instance_has_method(receiver_value, "[]=", 2, context) {
+                    prepare_evaluated_method_call(
+                      receiver_value,
+                      "[]=",
+                      [index_value, assigned],
+                      span,
+                      context,
+                    )
+                  } else {
+                    match
+                      write_subscript(
+                        receiver_value, index_value, assigned, span, context,
+                      ) {
+                      EvaluationFailed(issue) => FiberExpressionFailed(issue)
+                      EvaluationSucceeded(result) =>
+                        FiberExpressionReady(Literal(result, span))
+                    }
+                  }
+                }
+              }
+          }
+      }
+    SuperConstructorCall(arguments, span) => {
+      let prepared : Array[Expr] = []
+      for index = 0; index < arguments.length(); index = index + 1 {
+        match prepare_fiber_expression(arguments[index], environment, context) {
+          FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+          FiberExpressionYielded(yielded, continuation) => {
+            let argument_index = index
+            return FiberExpressionYielded(yielded, fn(resumed) {
+              let rebuilt : Array[Expr] = []
+              for position = 0
+                  position < arguments.length()
+                  position = position + 1 {
+                if position < argument_index {
+                  rebuilt.push(prepared[position])
+                } else if position == argument_index {
+                  rebuilt.push(continuation(resumed))
+                } else {
+                  rebuilt.push(arguments[position])
+                }
+              }
+              SuperConstructorCall(rebuilt, span)
+            })
+          }
+          FiberExpressionReady(argument) => prepared.push(argument)
+        }
+      }
+      let values : Array[Value] = []
+      for argument in prepared {
+        match evaluate_expression_in(argument, environment, context) {
+          EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+          EvaluationSucceeded(value) => values.push(value)
+        }
+      }
+      match environment.get("$super") {
+        Some(SuperValue(superclass, instance_identifier, constructor_name)) =>
+          match
+            find_method_in_class(
+              context,
+              superclass,
+              constructor_name,
+              values.length(),
+              true,
+              false,
+              false,
+            ) {
+            Some(resolved) => {
+              let instance = Value::instance(instance_identifier)
+              match method_call_closure(instance, resolved, context) {
+                Some(function_identifier) =>
+                  start_fiber_expression_call(
+                    function_identifier,
+                    values,
+                    Some(instance),
+                    span,
+                    context,
+                  )
+                None =>
+                  match
+                    invoke_super_constructor(
+                      superclass, instance_identifier, constructor_name, values,
+                      span, context,
+                    ) {
+                    EvaluationFailed(issue) => FiberExpressionFailed(issue)
+                    EvaluationSucceeded(result) =>
+                      FiberExpressionReady(Literal(result, span))
+                  }
+              }
+            }
+            None =>
+              FiberExpressionFailed(
+                Diagnostic::new(
+                  Runtime,
+                  UndefinedMethod,
+                  "superclass constructor is not available",
+                  span,
+                ),
+              )
+          }
+        _ =>
+          FiberExpressionFailed(
+            Diagnostic::new(
+              Runtime,
+              UndefinedMethod,
+              "super can only be used in a subclass constructor",
+              span,
+            ),
           )
-        })
-      } else {
-        FiberStatementCompleted(complete(value))
       }
     }
+    Conditional(condition, then_branch, else_branch, span) =>
+      match prepare_fiber_expression(condition, environment, context) {
+        FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+        FiberExpressionYielded(yielded, continuation) =>
+          FiberExpressionYielded(yielded, fn(resumed) {
+            Conditional(continuation(resumed), then_branch, else_branch, span)
+          })
+        FiberExpressionReady(prepared_condition) =>
+          match
+            evaluate_expression_in(prepared_condition, environment, context) {
+            EvaluationFailed(issue) => FiberExpressionFailed(issue)
+            EvaluationSucceeded(value) =>
+              prepare_fiber_expression(
+                if value.is_truthy() {
+                  then_branch
+                } else {
+                  else_branch
+                },
+                environment,
+                context,
+              )
+          }
+      }
+    ListLiteral(items, span) => {
+      let prepared : Array[Expr] = []
+      for index = 0; index < items.length(); index = index + 1 {
+        match prepare_fiber_expression(items[index], environment, context) {
+          FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+          FiberExpressionYielded(yielded, continuation) => {
+            let item_index = index
+            return FiberExpressionYielded(yielded, fn(resumed) {
+              let rebuilt : Array[Expr] = []
+              for position = 0
+                  position < items.length()
+                  position = position + 1 {
+                if position < item_index {
+                  rebuilt.push(prepared[position])
+                } else if position == item_index {
+                  rebuilt.push(continuation(resumed))
+                } else {
+                  rebuilt.push(items[position])
+                }
+              }
+              ListLiteral(rebuilt, span)
+            })
+          }
+          FiberExpressionReady(item) => prepared.push(item)
+        }
+      }
+      FiberExpressionReady(ListLiteral(prepared, span))
+    }
+    _ => FiberExpressionReady(expression)
   }
 }
 
@@ -2767,72 +4046,6 @@ fn prepare_fiber_each_call(
 }
 
 ///|
-fn prepare_direct_fiber_function_call(
-  receiver : Expr,
-  arguments : Array[Expr],
-  span : SourceSpan,
-  environment : Environment,
-  context : RuntimeContext,
-  complete : (Value) -> StatementResult,
-) -> FiberStatementStep? {
-  let function_identifier = match receiver {
-    Variable(name, _) =>
-      match environment.get(name) {
-        Some(FunctionValue(identifier)) => identifier
-        _ => return None
-      }
-    Literal(FunctionValue(identifier), _) => identifier
-    _ => return None
-  }
-  if function_identifier < 0 || function_identifier >= context.closures.length() {
-    return Some(
-      FiberStatementFailed(
-        Diagnostic::new(
-          Runtime,
-          UndefinedMethod,
-          "function is not available in this runtime",
-          span,
-        ),
-      ),
-    )
-  }
-  let closure = context.closures[function_identifier]
-  if arguments.length() < closure.parameters.length() {
-    return Some(
-      FiberStatementFailed(
-        Diagnostic::new(
-          Runtime,
-          InvalidArity,
-          "function expects at least {closure.parameters.length()} arguments, received {arguments.length()}",
-          span,
-        ),
-      ),
-    )
-  }
-  let values : Array[Value] = []
-  for argument in arguments {
-    match evaluate_expression_in(argument, environment, context) {
-      EvaluationFailed(issue) => return Some(FiberStatementFailed(issue))
-      EvaluationSucceeded(value) => values.push(value)
-    }
-  }
-  let identifier = context.new_function_fiber(
-    function_identifier,
-    values,
-    context.current_fiber,
-  )
-  Some(
-    resume_fiber_function_call(
-      identifier,
-      Value::null(),
-      span,
-      context,
-      complete,
-    ),
-  )
-}
-
-///|
 fn prepare_fiber_statement(
   statement : Stmt,
   environment : Environment,
@@ -2855,126 +4068,16 @@ fn prepare_fiber_statement(
       }
       FiberStatementReady
     }
-    ExpressionStatement(MethodCall(receiver, "call", arguments, call_span), _) => {
-      match
-        prepare_fiber_expression(
-          MethodCall(receiver, "call", arguments, call_span),
-          environment,
-          context,
-        ) {
-        FiberExpressionFailed(issue) => return FiberStatementFailed(issue)
-        FiberExpressionYielded(yielded, continuation) =>
-          return FiberStatementYielded(yielded, fn(resumed) {
-            execute_fiber_statement(
-              ExpressionStatement(continuation(resumed), statement.span()),
-              environment,
-              context,
-            )
-          })
-        FiberExpressionReady => ()
-      }
-      match
-        prepare_direct_fiber_function_call(
-          receiver,
-          arguments,
-          call_span,
-          environment,
-          context,
-          fn(value) { StatementCompleted(value) },
-        ) {
-        Some(step) => step
-        None => FiberStatementReady
-      }
-    }
-    VariableStatement(
-      name,
-      Some(MethodCall(receiver, "call", arguments, call_span)),
-      declaration_span
-    ) => {
-      match
-        prepare_fiber_expression(
-          MethodCall(receiver, "call", arguments, call_span),
-          environment,
-          context,
-        ) {
-        FiberExpressionFailed(issue) => return FiberStatementFailed(issue)
-        FiberExpressionYielded(yielded, continuation) =>
-          return FiberStatementYielded(yielded, fn(resumed) {
-            execute_fiber_statement(
-              VariableStatement(
-                name,
-                Some(continuation(resumed)),
-                declaration_span,
-              ),
-              environment,
-              context,
-            )
-          })
-        FiberExpressionReady => ()
-      }
-      match
-        prepare_direct_fiber_function_call(
-          receiver,
-          arguments,
-          call_span,
-          environment,
-          context,
-          fn(value) {
-            if environment.bind(name, value) {
-              StatementCompleted(value)
-            } else {
-              StatementFailed(
-                Diagnostic::new(
-                  Runtime,
-                  DuplicateVariable,
-                  "variable '{name}' is already declared in this scope",
-                  declaration_span,
-                ),
-              )
-            }
-          },
-        ) {
-        Some(step) => step
-        None => FiberStatementReady
-      }
-    }
-    ReturnStatement(
-      Some(MethodCall(receiver, "call", arguments, call_span)),
-      return_span
-    ) => {
-      match
-        prepare_fiber_expression(
-          MethodCall(receiver, "call", arguments, call_span),
-          environment,
-          context,
-        ) {
-        FiberExpressionFailed(issue) => return FiberStatementFailed(issue)
-        FiberExpressionYielded(yielded, continuation) =>
-          return FiberStatementYielded(yielded, fn(resumed) {
-            execute_fiber_statement(
-              ReturnStatement(Some(continuation(resumed)), return_span),
-              environment,
-              context,
-            )
-          })
-        FiberExpressionReady => ()
-      }
-      match
-        prepare_direct_fiber_function_call(
-          receiver,
-          arguments,
-          call_span,
-          environment,
-          context,
-          fn(value) { StatementReturned(value, return_span) },
-        ) {
-        Some(step) => step
-        None => FiberStatementReady
-      }
-    }
     ExpressionStatement(expression, span) =>
       match prepare_fiber_expression(expression, environment, context) {
-        FiberExpressionReady => FiberStatementReady
+        FiberExpressionReady(prepared) =>
+          FiberStatementCompleted(
+            execute_statement_in(
+              ExpressionStatement(prepared, span),
+              environment,
+              context,
+            ),
+          )
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
@@ -2987,7 +4090,14 @@ fn prepare_fiber_statement(
       }
     VariableStatement(name, Some(initializer), span) =>
       match prepare_fiber_expression(initializer, environment, context) {
-        FiberExpressionReady => FiberStatementReady
+        FiberExpressionReady(prepared) =>
+          FiberStatementCompleted(
+            execute_statement_in(
+              VariableStatement(name, Some(prepared), span),
+              environment,
+              context,
+            ),
+          )
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
@@ -3000,7 +4110,14 @@ fn prepare_fiber_statement(
       }
     ReturnStatement(Some(value), span) =>
       match prepare_fiber_expression(value, environment, context) {
-        FiberExpressionReady => FiberStatementReady
+        FiberExpressionReady(prepared) =>
+          FiberStatementCompleted(
+            execute_statement_in(
+              ReturnStatement(Some(prepared), span),
+              environment,
+              context,
+            ),
+          )
         FiberExpressionFailed(issue) => FiberStatementFailed(issue)
         FiberExpressionYielded(yielded, continuation) =>
           FiberStatementYielded(yielded, fn(resumed) {
@@ -3149,8 +4266,8 @@ fn execute_fiber_while(
           context,
         )
       })
-    FiberExpressionReady =>
-      match evaluate_expression_in(condition, environment, context) {
+    FiberExpressionReady(prepared_condition) =>
+      match evaluate_expression_in(prepared_condition, environment, context) {
         EvaluationFailed(issue) => FiberStatementFailed(issue)
         EvaluationSucceeded(value) =>
           if !value.is_truthy() {
@@ -3291,8 +4408,9 @@ fn execute_fiber_statement(
               context,
             )
           })
-        FiberExpressionReady =>
-          match evaluate_expression_in(condition, environment, context) {
+        FiberExpressionReady(prepared_condition) =>
+          match
+            evaluate_expression_in(prepared_condition, environment, context) {
             EvaluationFailed(issue) => FiberStatementFailed(issue)
             EvaluationSucceeded(value) =>
               if value.is_truthy() {
@@ -3330,8 +4448,9 @@ fn execute_fiber_statement(
               context,
             )
           })
-        FiberExpressionReady =>
-          match evaluate_expression_in(sequence, environment, context) {
+        FiberExpressionReady(prepared_sequence) =>
+          match
+            evaluate_expression_in(prepared_sequence, environment, context) {
             EvaluationFailed(issue) => FiberStatementFailed(issue)
             EvaluationSucceeded(iterable) => {
               environment.push_scope()
@@ -3700,6 +4819,7 @@ fn invoke_sequence_operation(
       }
       let mut iterator = Value::null()
       let mut count = 0
+      let mut aggregate = Value::bool(name == "all")
       while true {
         let value = match advance_iterable(receiver, iterator, span, context) {
           IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
@@ -3713,10 +4833,13 @@ fn invoke_sequence_operation(
           EvaluationFailed(issue) => return EvaluationFailed(issue)
           EvaluationSucceeded(result) => {
             if name == "all" && !result.is_truthy() {
-              return EvaluationSucceeded(Value::bool(false))
+              return EvaluationSucceeded(result)
             }
             if name == "any" && result.is_truthy() {
-              return EvaluationSucceeded(Value::bool(true))
+              return EvaluationSucceeded(result)
+            }
+            if name == "all" {
+              aggregate = result
             }
             if name == "count" && result.is_truthy() {
               count = count + 1
@@ -3724,10 +4847,8 @@ fn invoke_sequence_operation(
           }
         }
       }
-      if name == "all" {
-        EvaluationSucceeded(Value::bool(true))
-      } else if name == "any" {
-        EvaluationSucceeded(Value::bool(false))
+      if name == "all" || name == "any" {
+        EvaluationSucceeded(aggregate)
       } else if name == "count" {
         EvaluationSucceeded(Value::number(Double::from_int(count)))
       } else {
@@ -4390,7 +5511,9 @@ fn invoke_core_class_method(
       if arguments.length() != 2 {
         invalid_collection_arity("Object", name, 2, arguments.length(), span)
       } else {
-        EvaluationSucceeded(Value::bool(arguments[0] == arguments[1]))
+        EvaluationSucceeded(
+          Value::bool(runtime_values_equal(arguments[0], arguments[1])),
+        )
       }
     (FiberClass, "new") =>
       if arguments.length() != 1 {
@@ -4897,7 +6020,9 @@ fn read_core_class_property(
     } else if class_value == ListClass ||
       class_value == MapClass ||
       class_value == RangeClass ||
-      class_value == StringClass {
+      class_value == StringClass ||
+      class_value == StringByteSequenceClass ||
+      class_value == StringCodePointSequenceClass {
       EvaluationSucceeded(Value::core_class(SequenceClass))
     } else {
       EvaluationSucceeded(Value::core_class(ObjectClass))
@@ -5097,7 +6222,9 @@ fn read_property(
       match name {
         "count" =>
           EvaluationSucceeded(
-            Value::number(Double::from_int(text.char_length())),
+            Value::number(
+              Double::from_int(string_count_from_bytes(utf8_bytes(text))),
+            ),
           )
         "toString" => EvaluationSucceeded(receiver)
         "bytes" => {
@@ -5105,10 +6232,14 @@ fn read_property(
           for byte in utf8_bytes(text) {
             values.push(Value::number(Double::from_int(byte)))
           }
-          EvaluationSucceeded(context.new_sequence(values))
+          EvaluationSucceeded(
+            context.new_sequence_kind(SequenceStringBytes(values)),
+          )
         }
         "codePoints" => {
-          let (indexed, iterated) = string_code_point_views(text)
+          let (indexed, iterated) = string_code_point_views_from_bytes(
+            utf8_bytes(text),
+          )
           EvaluationSucceeded(
             context.new_sequence_kind(
               SequenceStringCodePoints(indexed, iterated),
@@ -5121,22 +6252,21 @@ fn read_property(
     RawStringValue(bytes) =>
       match name {
         "count" =>
-          EvaluationSucceeded(Value::number(Double::from_int(bytes.length())))
+          EvaluationSucceeded(
+            Value::number(Double::from_int(string_count_from_bytes(bytes))),
+          )
         "toString" => EvaluationSucceeded(receiver)
         "bytes" => {
           let values : Array[Value] = []
           for byte in bytes {
             values.push(Value::number(Double::from_int(byte)))
           }
-          EvaluationSucceeded(context.new_sequence(values))
+          EvaluationSucceeded(
+            context.new_sequence_kind(SequenceStringBytes(values)),
+          )
         }
         "codePoints" => {
-          let indexed : Array[Value] = []
-          let iterated : Array[Value] = []
-          for _ in bytes {
-            indexed.push(Value::number(-1.0))
-            iterated.push(Value::number(-1.0))
-          }
+          let (indexed, iterated) = string_code_point_views_from_bytes(bytes)
           EvaluationSucceeded(
             context.new_sequence_kind(
               SequenceStringCodePoints(indexed, iterated),
@@ -5215,7 +6345,7 @@ fn read_property(
       if identifier < 0 || identifier >= context.sequences.length() {
         evaluation_error(InvalidOperand, "sequence is not available", span)
       } else if name == "type" {
-        EvaluationSucceeded(Value::core_class(SequenceClass))
+        EvaluationSucceeded(core_class_for_value(receiver, context))
       } else {
         read_sequence_property(receiver, name, span, context)
       }
@@ -5252,7 +6382,7 @@ fn read_property(
             EvaluationSucceeded(
               Value::string(runtime_value_to_text(receiver, context, 0)),
             )
-          "type" => EvaluationSucceeded(Value::core_class(ObjectClass))
+          "type" => EvaluationSucceeded(Value::core_class(MapEntryClass))
           _ =>
             evaluation_error(
               UndefinedMethod,
@@ -5262,7 +6392,13 @@ fn read_property(
         }
       }
     SystemValue =>
-      if name == "name" || name == "toString" {
+      if name == "clock" {
+        EvaluationSucceeded(
+          Value::number(
+            @bench.monotonic_clock_end(context.start_clock) / 1000000.0,
+          ),
+        )
+      } else if name == "name" || name == "toString" {
         EvaluationSucceeded(Value::string("System"))
       } else if name == "type" {
         EvaluationSucceeded(Value::core_class(ClassClass))
@@ -5297,6 +6433,13 @@ fn evaluate_expression_in(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match expression {
+    FiberCallResume(_, _, _, span)
+    | FiberSequenceResume(_, _, _, _, _, _, _, _, span) =>
+      evaluation_error(
+        InvalidFiberState,
+        "suspended call continuation escaped Fiber execution",
+        span,
+      )
     Literal(value, _) => EvaluationSucceeded(value)
     ListLiteral(expressions, _) => {
       let items : Array[Value] = []
@@ -5470,6 +6613,16 @@ fn evaluate_expression_in(
         EvaluationSucceeded(receiver) =>
           read_property(receiver, name, span, context)
       }
+    PropertySet(receiver, name, expression, span) =>
+      match evaluate_expression_in(receiver, environment, context) {
+        EvaluationFailed(issue) => EvaluationFailed(issue)
+        EvaluationSucceeded(receiver) =>
+          match evaluate_expression_in(expression, environment, context) {
+            EvaluationFailed(issue) => EvaluationFailed(issue)
+            EvaluationSucceeded(value) =>
+              invoke_method(receiver, name + "=", [value], span, context)
+          }
+      }
     MethodCall(receiver, name, arguments, span) =>
       match evaluate_expression_in(receiver, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
@@ -5518,7 +6671,8 @@ fn evaluate_expression_in(
     Grouping(inner, _) => evaluate_expression_in(inner, environment, context)
     Unary(operator, right, span) =>
       match evaluate_expression_in(right, environment, context) {
-        EvaluationSucceeded(value) => evaluate_unary(operator, value, span)
+        EvaluationSucceeded(value) =>
+          evaluate_unary(operator, value, span, context)
         EvaluationFailed(issue) => EvaluationFailed(issue)
       }
     Binary(left, LogicalAnd, right, _) =>
@@ -5634,7 +6788,10 @@ fn execute_iterable_for_in(
       }
       context.new_sequence(items)
     }
-    StringValue(text) => context.new_sequence(string_items(text))
+    StringValue(text) =>
+      context.new_sequence(string_items_from_bytes(utf8_bytes(text)))
+    RawStringValue(bytes) =>
+      context.new_sequence(string_items_from_bytes(bytes))
     value => value
   }
   match iterable {
@@ -5642,6 +6799,7 @@ fn execute_iterable_for_in(
     | ListValue(_)
     | MapValue(_)
     | StringValue(_)
+    | RawStringValue(_)
     | SequenceValue(_)
     | InstanceValue(_) => ()
     value =>

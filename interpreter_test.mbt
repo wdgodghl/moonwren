@@ -18,6 +18,42 @@ test "program execution supports variables and assignment" {
 }
 
 ///|
+test "classes support operator subscript and setter signatures" {
+  expect_program_value(
+    "class Box {\n" +
+    "  construct new(value) { _value = value }\n" +
+    "  value { return _value }\n" +
+    "  value=(next) { _value = next }\n" +
+    "  +(other) { return _value + other.value }\n" +
+    "  - { return -_value }\n" +
+    "  [index] { return _value + index }\n" +
+    "  [index]=(next) { _value = next + index }\n" +
+    "}\n" +
+    "var box = Box.new(10)\n" +
+    "box.value = 12\n" +
+    "box[3] = 20\n" +
+    "(box + Box.new(7)) + box[2] + -box\n",
+    @moonwren.Value::number(32.0),
+  )
+}
+
+///|
+test "method calls accept trailing block arguments" {
+  expect_program_value(
+    "[1, 2, 3].map {|value| value * 4}.toList[2]\n",
+    @moonwren.Value::number(12.0),
+  )
+}
+
+///|
+test "string interpolation parses nested expressions and escaped percent" {
+  expect_program_value(
+    "var name = \"Moon\"\n\"Hello %(name), %(1 + (2 * 3)) and \\%(literal)\"\n",
+    @moonwren.Value::string("Hello Moon, 7 and %(literal)"),
+  )
+}
+
+///|
 test "block variables shadow outer bindings" {
   expect_program_value(
     "var value = 1\n{\n  var value = 2\n  value = value + 1\n}\nvalue\n",
@@ -917,10 +953,7 @@ test "string subscripts use Wren UTF-8 byte offsets" {
 test "string range subscripts preserve Unicode boundaries" {
   let source = "var text = \"A🤣中文\"\n" +
     "text[1..2] + \"|\" + text[0...2] + \"|\" + text[3..1]\n"
-  expect_program_value(
-    source,
-    @moonwren.Value::string("🤣中|A🤣|文中🤣"),
-  )
+  expect_program_value(source, @moonwren.Value::string("🤣|A🤣|🤣"))
 }
 
 ///|
@@ -1021,7 +1054,7 @@ test "list slices normalize negative range endpoints" {
 test "string slices normalize negative range endpoints" {
   expect_program_value(
     "\"甲乙丙丁\"[-3..-1]\n",
-    @moonwren.Value::string("乙丙丁"),
+    @moonwren.Value::string("丁"),
   )
 }
 
