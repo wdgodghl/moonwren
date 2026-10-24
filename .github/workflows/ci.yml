@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout Wren 0.4.0 reference suite
+        uses: actions/checkout@v4
+        with:
+          repository: wren-lang/wren
+          ref: 0.4.0
+          path: .official-wren
       - uses: hustcer/setup-moonbit@v1
         with:
           version: 0.10.14+7d59c7ec9
@@ -22,8 +28,13 @@ jobs:
         run: moon check
       - name: Build packages
         run: moon build
+      - name: Build native CLI
+        run: moon build --target native
       - name: Run tests
         run: moon test
       - name: Compare Wren 0.4.0 fixtures
         shell: pwsh
         run: ./tools/check-conformance.ps1
+      - name: Run official Wren 0.4.0 language and core suite
+        shell: pwsh
+        run: ./tools/check-official-suite.ps1 -WrenRoot .official-wren
