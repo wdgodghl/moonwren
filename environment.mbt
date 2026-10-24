@@ -180,3 +180,17 @@ pub fn Environment::capture(self : Environment) -> Environment {
   }
   { scopes, }
 }
+
+///|
+/// Return the values currently retained by this environment. The runtime uses
+/// this only while tracing reachability between VM operations; callers cannot
+/// mutate the environment through the returned array.
+fn Environment::retained_values(self : Environment) -> Array[Value] {
+  let values : Array[Value] = []
+  for scope in self.scopes {
+    for binding in scope.bindings {
+      values.push(binding.value.val)
+    }
+  }
+  values
+}

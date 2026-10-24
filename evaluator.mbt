@@ -5,6 +5,15 @@ pub(all) enum EvaluationResult {
 }
 
 ///|
+/// Summary returned by a persistent VM garbage-collection pass.
+pub(all) struct VmGcStats {
+  before_instances : Int
+  reachable_instances : Int
+  reclaimed_instances : Int
+  finalized_foreign_instances : Int
+}
+
+///|
 priv struct Closure {
   parameters : Array[String]
   body : Array[Stmt]
@@ -45,6 +54,7 @@ priv struct Instance {
   fields : Array[InstanceField]
   foreign_handle : Int?
   mut finalized : Bool
+  mut alive : Bool
 }
 
 ///|
@@ -132,6 +142,8 @@ priv struct RuntimeModule {
 }
 
 ///|
+/// Runtime state owned by `Vm`. Its fields and constructors remain internal;
+/// embedders interact with it through the persistent VM API.
 priv struct RuntimeContext {
   start_clock : @bench.Timestamp
   output : Array[String]
@@ -154,6 +166,12 @@ priv struct RuntimeContext {
   max_steps : Int
   mut call_depth : Int
   max_call_depth : Int
+  mut output_characters : Int
+  max_output_characters : Int
+  max_modules : Int
+  max_objects : Int
+  max_source_characters : Int
+  should_cancel : () -> Bool
   mut current_fiber : Int
   mut transfer_target : Int
   mut transferred_to_main : Bool
@@ -167,6 +185,35 @@ fn RuntimeContext::new_with_loader(
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
   foreign_classes : Array[ForeignClassBinding],
+) -> RuntimeContext {
+  RuntimeContext::new_with_limits(
+    max_steps,
+    64,
+    2147483647,
+    2147483647,
+    2147483647,
+    2147483647,
+    source_name,
+    loader,
+    foreign_methods,
+    foreign_classes,
+    fn() { false },
+  )
+}
+
+///|
+fn RuntimeContext::new_with_limits(
+  max_steps : Int,
+  max_call_depth : Int,
+  max_output_characters : Int,
+  max_modules : Int,
+  max_objects : Int,
+  max_source_characters : Int,
+  source_name : String,
+  loader : (String, String) -> ModuleLoadResult,
+  foreign_methods : Array[ForeignMethodBinding],
+  foreign_classes : Array[ForeignClassBinding],
+  should_cancel : () -> Bool,
 ) -> RuntimeContext {
   {
     start_clock: @bench.monotonic_clock_start(),
@@ -203,7 +250,13 @@ fn RuntimeContext::new_with_loader(
     steps: 0,
     max_steps,
     call_depth: 0,
-    max_call_depth: 64,
+    max_call_depth,
+    output_characters: 0,
+    max_output_characters,
+    max_modules,
+    max_objects,
+    max_source_characters,
+    should_cancel,
     current_fiber: 0,
     transfer_target: -1,
     transferred_to_main: false,
@@ -220,6 +273,67 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
     [],
     [],
   )
+}
+
+///|
+fn RuntimeContext::begin_operation(self : RuntimeContext) -> Unit {
+  self.steps = 0
+  self.call_depth = 0
+  self.output.clear()
+  self.output_line_open = false
+  self.output_characters = 0
+  self.transferred_to_main = false
+  self.terminate_main = false
+}
+
+///|
+fn RuntimeContext::allocated_objects(self : RuntimeContext) -> Int {
+  let mut live_instances = 0
+  for instance in self.instances {
+    if instance.alive {
+      live_instances = live_instances + 1
+    }
+  }
+  self.closures.length() +
+  self.classes.length() +
+  live_instances +
+  self.lists.length() +
+  self.maps.length() +
+  self.map_entries.length() +
+  self.sequences.length() +
+  self.iterators.length() +
+  self.fibers.length()
+}
+
+///|
+fn RuntimeContext::new_instance(
+  self : RuntimeContext,
+  class_identifier : Int,
+  foreign_handle : Int?,
+) -> Int {
+  for identifier = 0
+      identifier < self.instances.length()
+      identifier = identifier + 1 {
+    if !self.instances[identifier].alive {
+      self.instances[identifier] = {
+        class_identifier,
+        fields: [],
+        foreign_handle,
+        finalized: false,
+        alive: true,
+      }
+      return identifier
+    }
+  }
+  let identifier = self.instances.length()
+  self.instances.push({
+    class_identifier,
+    fields: [],
+    foreign_handle,
+    finalized: false,
+    alive: true,
+  })
+  identifier
 }
 
 ///|
@@ -659,6 +773,16 @@ fn RuntimeContext::step(
   self : RuntimeContext,
   span : SourceSpan,
 ) -> Diagnostic? {
+  if (self.should_cancel)() {
+    return Some(
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "execution cancelled by host",
+        span,
+      ),
+    )
+  }
   self.steps = self.steps + 1
   if self.steps > self.max_steps {
     Some(
@@ -666,6 +790,15 @@ fn RuntimeContext::step(
         Runtime,
         ExecutionLimit,
         "execution step limit exceeded",
+        span,
+      ),
+    )
+  } else if self.allocated_objects() > self.max_objects {
+    Some(
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "runtime object limit exceeded",
         span,
       ),
     )
@@ -1508,6 +1641,13 @@ fn invoke_user_method(
       span,
     )
   }
+  if !context.instances[instance_identifier].alive {
+    return evaluation_error(
+      UndefinedMethod,
+      "instance was released by the runtime garbage collector",
+      span,
+    )
+  }
   if context.call_depth >= context.max_call_depth {
     return evaluation_error(
       CallStackLimit,
@@ -1720,7 +1860,6 @@ fn construct_instance(
         span,
       )
     Some(resolved) => {
-      let instance_identifier = context.instances.length()
       let foreign_handle = if class_definition.is_foreign {
         match class_definition.foreign_binding {
           None =>
@@ -1744,12 +1883,9 @@ fn construct_instance(
       } else {
         None
       }
-      context.instances.push({
-        class_identifier,
-        fields: [],
-        foreign_handle,
-        finalized: false,
-      })
+      let instance_identifier = context.new_instance(
+        class_identifier, foreign_handle,
+      )
       match
         invoke_user_method(
           instance_identifier, resolved, arguments, span, context,
@@ -3812,14 +3948,8 @@ fn prepare_evaluated_method_call(
               false,
             ) {
             Some(constructor_method) if !class_definition.is_foreign => {
-              let instance_identifier = context.instances.length()
+              let instance_identifier = context.new_instance(identifier, None)
               let instance = Value::instance(instance_identifier)
-              context.instances.push({
-                class_identifier: identifier,
-                fields: [],
-                foreign_handle: None,
-                finalized: false,
-              })
               match method_call_closure(instance, constructor_method, context) {
                 Some(function_identifier) =>
                   start_fiber_expression_call(
@@ -4729,6 +4859,16 @@ fn prepare_fiber_import(
       )
     ModuleLoaded(name, source) => (name, source)
   }
+  if source.length() > context.max_source_characters {
+    return FiberStatementFailed(
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "module '\{module_name}' exceeds the source size limit",
+        span,
+      ).with_source(importer),
+    )
+  }
   match find_runtime_module(context, module_name) {
     Some(index) =>
       if context.modules[index].state == 2 {
@@ -4751,6 +4891,16 @@ fn prepare_fiber_import(
         )
       }
     None => ()
+  }
+  if context.modules.length() >= context.max_modules {
+    return FiberStatementFailed(
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "module count limit exceeded",
+        span,
+      ).with_source(importer),
+    )
   }
   let module_environment = Environment::new()
   bind_core_globals(module_environment)
@@ -6673,7 +6823,7 @@ fn RuntimeContext::write_output(
   self : RuntimeContext,
   text : String,
   newline : Bool,
-) -> Unit {
+) -> Bool {
   let characters : Array[Char] = []
   for character in text.to_array() {
     if character.to_int() == 0 {
@@ -6682,6 +6832,10 @@ fn RuntimeContext::write_output(
     characters.push(character)
   }
   let visible = String::from_array(characters)
+  if self.output_characters + visible.length() > self.max_output_characters {
+    return false
+  }
+  self.output_characters = self.output_characters + visible.length()
   if self.output_line_open {
     let index = self.output.length() - 1
     self.output[index] = self.output[index] + visible
@@ -6689,6 +6843,7 @@ fn RuntimeContext::write_output(
     self.output.push(visible)
   }
   self.output_line_open = !newline
+  true
 }
 
 ///|
@@ -6709,17 +6864,29 @@ fn invoke_method(
               "System.write expects one argument, received zero",
               span,
             )
-          } else {
-            context.write_output("", true)
+          } else if context.write_output("", true) {
             EvaluationSucceeded(Value::null())
+          } else {
+            evaluation_error(
+              ExecutionLimit,
+              "captured output limit exceeded",
+              span,
+            )
           }
         } else if arguments.length() == 1 {
           let value = arguments[0]
-          context.write_output(
-            runtime_value_to_text(value, context, 0),
-            name == "print",
-          )
-          EvaluationSucceeded(value)
+          if context.write_output(
+              runtime_value_to_text(value, context, 0),
+              name == "print",
+            ) {
+            EvaluationSucceeded(value)
+          } else {
+            evaluation_error(
+              ExecutionLimit,
+              "captured output limit exceeded",
+              span,
+            )
+          }
         } else {
           evaluation_error(
             InvalidArity,
@@ -6744,8 +6911,15 @@ fn invoke_method(
             for value in values {
               text = text + runtime_value_to_text(value, context, 0)
             }
-            context.write_output(text, name == "printAll")
-            EvaluationSucceeded(Value::null())
+            if context.write_output(text, name == "printAll") {
+              EvaluationSucceeded(Value::null())
+            } else {
+              evaluation_error(
+                ExecutionLimit,
+                "captured output limit exceeded",
+                span,
+              )
+            }
           }
         }
       } else if name == "gc" {
@@ -7924,6 +8098,16 @@ fn execute_module_source(
   source : String,
   context : RuntimeContext,
 ) -> ModuleExecutionResult {
+  if source.length() > context.max_source_characters {
+    return ModuleExecutionFailed([
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "module '\{name}' exceeds the source size limit",
+        SourceSpan::empty(),
+      ).with_source(name),
+    ])
+  }
   match find_runtime_module(context, name) {
     Some(index) =>
       if context.modules[index].state == 0 {
@@ -7941,6 +8125,16 @@ fn execute_module_source(
         ])
       }
     None => ()
+  }
+  if context.modules.length() >= context.max_modules {
+    return ModuleExecutionFailed([
+      Diagnostic::new(
+        Runtime,
+        ExecutionLimit,
+        "module count limit exceeded",
+        SourceSpan::empty(),
+      ).with_source(name),
+    ])
   }
   let environment = Environment::new()
   bind_core_globals(environment)
@@ -8329,24 +8523,369 @@ fn execute_statement_in(
 }
 
 ///|
+priv struct ReachabilityMarks {
+  closures : Array[Bool]
+  classes : Array[Bool]
+  instances : Array[Bool]
+  lists : Array[Bool]
+  maps : Array[Bool]
+  map_entries : Array[Bool]
+  sequences : Array[Bool]
+  iterators : Array[Bool]
+  fibers : Array[Bool]
+  mut has_opaque_continuation : Bool
+}
+
+///|
+fn bool_marks(length : Int) -> Array[Bool] {
+  let marks : Array[Bool] = []
+  for index = 0; index < length; index = index + 1 {
+    marks.push(false)
+  }
+  marks
+}
+
+///|
+fn ReachabilityMarks::new(context : RuntimeContext) -> ReachabilityMarks {
+  {
+    closures: bool_marks(context.closures.length()),
+    classes: bool_marks(context.classes.length()),
+    instances: bool_marks(context.instances.length()),
+    lists: bool_marks(context.lists.length()),
+    maps: bool_marks(context.maps.length()),
+    map_entries: bool_marks(context.map_entries.length()),
+    sequences: bool_marks(context.sequences.length()),
+    iterators: bool_marks(context.iterators.length()),
+    fibers: bool_marks(context.fibers.length()),
+    has_opaque_continuation: false,
+  }
+}
+
+///|
+fn mark_environment(
+  environment : Environment,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  for value in environment.retained_values() {
+    mark_runtime_value(value, context, marks)
+  }
+}
+
+///|
+fn mark_closure(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.closures.length() ||
+    marks.closures[identifier] {
+    return
+  }
+  marks.closures[identifier] = true
+  mark_environment(context.closures[identifier].environment, context, marks)
+}
+
+///|
+fn mark_class(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.classes.length() ||
+    marks.classes[identifier] {
+    return
+  }
+  marks.classes[identifier] = true
+  let definition = context.classes[identifier]
+  mark_environment(definition.environment, context, marks)
+  match definition.superclass {
+    Some(superclass) => mark_class(superclass, context, marks)
+    None => ()
+  }
+  for field in definition.static_fields {
+    mark_runtime_value(field.value, context, marks)
+  }
+  mark_runtime_value(definition.attributes, context, marks)
+}
+
+///|
+fn mark_instance(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.instances.length() ||
+    marks.instances[identifier] ||
+    !context.instances[identifier].alive {
+    return
+  }
+  marks.instances[identifier] = true
+  let instance = context.instances[identifier]
+  mark_class(instance.class_identifier, context, marks)
+  for field in instance.fields {
+    mark_runtime_value(field.value, context, marks)
+  }
+}
+
+///|
+fn mark_list(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.lists.length() ||
+    marks.lists[identifier] {
+    return
+  }
+  marks.lists[identifier] = true
+  for value in context.lists[identifier].items {
+    mark_runtime_value(value, context, marks)
+  }
+}
+
+///|
+fn mark_map(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.maps.length() ||
+    marks.maps[identifier] {
+    return
+  }
+  marks.maps[identifier] = true
+  for entry in context.maps[identifier].entries {
+    mark_runtime_value(entry.key, context, marks)
+    mark_runtime_value(entry.value, context, marks)
+  }
+}
+
+///|
+fn mark_map_entry(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.map_entries.length() ||
+    marks.map_entries[identifier] {
+    return
+  }
+  marks.map_entries[identifier] = true
+  let entry = context.map_entries[identifier]
+  mark_runtime_value(entry.key, context, marks)
+  mark_runtime_value(entry.value, context, marks)
+}
+
+///|
+fn mark_sequence(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.sequences.length() ||
+    marks.sequences[identifier] {
+    return
+  }
+  marks.sequences[identifier] = true
+  match context.sequences[identifier].kind {
+    SequenceSnapshot(values)
+    | SequenceMapView(values, _)
+    | SequenceStringBytes(values) =>
+      for value in values {
+        mark_runtime_value(value, context, marks)
+      }
+    SequenceStringCodePoints(values, offsets) => {
+      for value in values {
+        mark_runtime_value(value, context, marks)
+      }
+      for offset in offsets {
+        mark_runtime_value(offset, context, marks)
+      }
+    }
+    SequenceMap(source, function_identifier)
+    | SequenceWhere(source, function_identifier) => {
+      mark_runtime_value(source, context, marks)
+      mark_closure(function_identifier, context, marks)
+    }
+    SequenceSkip(source, _) | SequenceTake(source, _) =>
+      mark_runtime_value(source, context, marks)
+  }
+}
+
+///|
+fn mark_iterator(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.iterators.length() ||
+    marks.iterators[identifier] {
+    return
+  }
+  marks.iterators[identifier] = true
+  let iterator = context.iterators[identifier]
+  mark_sequence(iterator.sequence_identifier, context, marks)
+  mark_runtime_value(iterator.source_iterator, context, marks)
+  mark_runtime_value(iterator.current, context, marks)
+}
+
+///|
+fn mark_fiber(
+  identifier : Int,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  if identifier < 0 ||
+    identifier >= marks.fibers.length() ||
+    marks.fibers[identifier] {
+    return
+  }
+  marks.fibers[identifier] = true
+  let fiber = context.fibers[identifier]
+  mark_closure(fiber.function_identifier, context, marks)
+  mark_environment(fiber.environment, context, marks)
+  for value in fiber.arguments {
+    mark_runtime_value(value, context, marks)
+  }
+  mark_runtime_value(fiber.last, context, marks)
+  mark_runtime_value(fiber.error, context, marks)
+  if fiber.pending is Some(_) {
+    // MoonBit closures are opaque. Conservatively retain instances while a
+    // suspended continuation may still capture local Wren values.
+    marks.has_opaque_continuation = true
+  }
+}
+
+///|
+fn mark_runtime_value(
+  value : Value,
+  context : RuntimeContext,
+  marks : ReachabilityMarks,
+) -> Unit {
+  match value {
+    ListValue(identifier) => mark_list(identifier, context, marks)
+    MapValue(identifier) => mark_map(identifier, context, marks)
+    SequenceValue(identifier) => mark_sequence(identifier, context, marks)
+    FunctionValue(identifier) => mark_closure(identifier, context, marks)
+    FiberValue(identifier) => mark_fiber(identifier, context, marks)
+    ClassValue(identifier) => mark_class(identifier, context, marks)
+    ClassAttributesValue(self_identifier, methods_identifier) => {
+      mark_map(self_identifier, context, marks)
+      mark_map(methods_identifier, context, marks)
+    }
+    InstanceValue(identifier) => mark_instance(identifier, context, marks)
+    SuperValue(class_identifier, instance_identifier, _, _) => {
+      mark_class(class_identifier, context, marks)
+      mark_instance(instance_identifier, context, marks)
+    }
+    SuperClassValue(class_identifier, receiver_identifier) => {
+      mark_class(class_identifier, context, marks)
+      mark_class(receiver_identifier, context, marks)
+    }
+    IteratorValue(identifier) => mark_iterator(identifier, context, marks)
+    MapEntryValue(identifier) => mark_map_entry(identifier, context, marks)
+    _ => ()
+  }
+}
+
+///|
+fn finalize_instance(context : RuntimeContext, identifier : Int) -> Bool {
+  let instance = context.instances[identifier]
+  if instance.finalized {
+    return false
+  }
+  match instance.foreign_handle {
+    None => false
+    Some(handle) => {
+      let class_definition = context.classes[instance.class_identifier]
+      match class_definition.foreign_binding {
+        Some(binding_identifier) => {
+          context.foreign_classes[binding_identifier].finalize(handle)
+          instance.finalized = true
+          true
+        }
+        None => false
+      }
+    }
+  }
+}
+
+///|
+fn collect_runtime_garbage(
+  context : RuntimeContext,
+  host_roots : Array[Value],
+) -> VmGcStats {
+  let marks = ReachabilityMarks::new(context)
+  for module_value in context.modules {
+    if module_value.state != 2 {
+      mark_environment(module_value.environment, context, marks)
+    }
+  }
+  if !context.fibers.is_empty() {
+    mark_fiber(0, context, marks)
+  }
+  for root in host_roots {
+    mark_runtime_value(root, context, marks)
+  }
+  if marks.has_opaque_continuation {
+    for identifier = 0
+        identifier < context.instances.length()
+        identifier = identifier + 1 {
+      if context.instances[identifier].alive {
+        mark_instance(identifier, context, marks)
+      }
+    }
+  }
+  let mut before = 0
+  let mut reachable = 0
+  let mut reclaimed = 0
+  let mut finalized = 0
+  for identifier = 0
+      identifier < context.instances.length()
+      identifier = identifier + 1 {
+    let instance = context.instances[identifier]
+    if !instance.alive {
+      continue
+    }
+    before = before + 1
+    if marks.instances[identifier] {
+      reachable = reachable + 1
+    } else {
+      if finalize_instance(context, identifier) {
+        finalized = finalized + 1
+      }
+      instance.fields.clear()
+      instance.alive = false
+      reclaimed = reclaimed + 1
+    }
+  }
+  {
+    before_instances: before,
+    reachable_instances: reachable,
+    reclaimed_instances: reclaimed,
+    finalized_foreign_instances: finalized,
+  }
+}
+
+///|
 fn finalize_foreign_instances(context : RuntimeContext) -> Unit {
-  for instance in context.instances {
+  for identifier = 0
+      identifier < context.instances.length()
+      identifier = identifier + 1 {
+    let instance = context.instances[identifier]
     if instance.finalized {
       continue
     }
-    match instance.foreign_handle {
-      None => ()
-      Some(handle) => {
-        let class_definition = context.classes[instance.class_identifier]
-        match class_definition.foreign_binding {
-          Some(binding_identifier) => {
-            context.foreign_classes[binding_identifier].finalize(handle)
-            instance.finalized = true
-          }
-          None => ()
-        }
-      }
-    }
+    ignore(finalize_instance(context, identifier))
   }
 }
 
