@@ -9,6 +9,8 @@ pub(all) enum CoreClass {
   ListClass
   MapClass
   MapEntryClass
+  MapKeySequenceClass
+  MapValueSequenceClass
   NullClass
   NumClass
   RangeClass
@@ -35,6 +37,8 @@ pub fn CoreClass::name(self : CoreClass) -> String {
     ListClass => "List"
     MapClass => "Map"
     MapEntryClass => "MapEntry"
+    MapKeySequenceClass => "MapKeySequence"
+    MapValueSequenceClass => "MapValueSequence"
     NullClass => "Null"
     NumClass => "Num"
     RangeClass => "Range"
@@ -59,8 +63,10 @@ pub(all) enum Value {
   FunctionValue(Int)
   FiberValue(Int)
   ClassValue(Int)
+  MetaClassValue(String)
+  ClassAttributesValue(Int, Int)
   InstanceValue(Int)
-  SuperValue(Int, Int, String)
+  SuperValue(Int, Int, String, Bool)
   SuperClassValue(Int, Int)
   CoreClassValue(CoreClass)
   IteratorValue(Int)
@@ -137,6 +143,11 @@ fn Value::class_value(identifier : Int) -> Value {
 }
 
 ///|
+fn Value::meta_class(name : String) -> Value {
+  MetaClassValue(name)
+}
+
+///|
 fn Value::instance(identifier : Int) -> Value {
   InstanceValue(identifier)
 }
@@ -171,6 +182,158 @@ pub fn Value::is_truthy(self : Value) -> Bool {
 }
 
 ///|
+/// Wren 0.4 formats numbers with 14 significant decimal digits. MoonBit's
+/// default formatter intentionally preserves more precision, so normalize its
+/// shortest round-trippable spelling to Wren's public representation.
+fn wren_number_to_text(number : Double) -> String {
+  if number.is_nan() {
+    return "nan"
+  }
+  if number.is_pos_inf() {
+    return "infinity"
+  }
+  if number.is_neg_inf() {
+    return "-infinity"
+  }
+  let raw = number.to_string().to_array()
+  let mut index = 0
+  let mut negative = false
+  if raw.length() > 0 && raw[0].to_int() == 45 {
+    negative = true
+    index = 1
+  }
+  let digits : Array[Int] = []
+  let mut decimal_position = -1
+  let mut exponent_sign = 1
+  let mut exponent_value = 0
+  let mut reading_exponent = false
+  while index < raw.length() {
+    let code = raw[index].to_int()
+    if code == 46 {
+      decimal_position = digits.length()
+    } else if code == 69 || code == 101 {
+      reading_exponent = true
+      if decimal_position < 0 {
+        decimal_position = digits.length()
+      }
+    } else if reading_exponent && code == 45 {
+      exponent_sign = -1
+    } else if reading_exponent && code == 43 {
+      exponent_sign = 1
+    } else if code >= 48 && code <= 57 {
+      if reading_exponent {
+        exponent_value = exponent_value * 10 + code - 48
+      } else {
+        digits.push(code - 48)
+      }
+    }
+    index = index + 1
+  }
+  if decimal_position < 0 {
+    decimal_position = digits.length()
+  }
+  decimal_position = decimal_position + exponent_sign * exponent_value
+  let mut leading = 0
+  while leading < digits.length() && digits[leading] == 0 {
+    leading = leading + 1
+  }
+  if leading == digits.length() {
+    return if negative ||
+      number.reinterpret_as_uint64() == 0x8000_0000_0000_0000UL {
+      "-0"
+    } else {
+      "0"
+    }
+  }
+  decimal_position = decimal_position - leading
+  let significant : Array[Int] = []
+  for digit_index = leading
+      digit_index < digits.length() && significant.length() < 14
+      digit_index = digit_index + 1 {
+    significant.push(digits[digit_index])
+  }
+  let mut scientific_exponent = decimal_position - 1
+  if leading + significant.length() < digits.length() &&
+    digits[leading + significant.length()] >= 5 {
+    let mut carry_index = significant.length() - 1
+    let mut carry = true
+    while carry && carry_index >= 0 {
+      if significant[carry_index] == 9 {
+        significant[carry_index] = 0
+        carry_index = carry_index - 1
+      } else {
+        significant[carry_index] = significant[carry_index] + 1
+        carry = false
+      }
+    }
+    if carry {
+      significant[0] = 1
+      for reset_index = 1
+          reset_index < significant.length()
+          reset_index = reset_index + 1 {
+        significant[reset_index] = 0
+      }
+      scientific_exponent = scientific_exponent + 1
+    }
+  }
+  while significant.length() > 1 && significant[significant.length() - 1] == 0 {
+    ignore(significant.pop())
+  }
+  let mut text = if negative { "-" } else { "" }
+  let digit_text = fn(digit : Int) -> String {
+    (digit + 48).unsafe_to_char().to_string()
+  }
+  if scientific_exponent < -4 || scientific_exponent >= 14 {
+    text = text + digit_text(significant[0])
+    if significant.length() > 1 {
+      text = text + "."
+      for digit_index = 1
+          digit_index < significant.length()
+          digit_index = digit_index + 1 {
+        text = text + digit_text(significant[digit_index])
+      }
+    }
+    let exponent_sign_text = if scientific_exponent >= 0 { "+" } else { "-" }
+    text = text + "e" + exponent_sign_text
+    let magnitude = if scientific_exponent >= 0 {
+      scientific_exponent
+    } else {
+      -scientific_exponent
+    }
+    return text + magnitude.to_string()
+  }
+  let fixed_position = scientific_exponent + 1
+  if fixed_position <= 0 {
+    text = text + "0."
+    for zero_index = fixed_position; zero_index < 0; zero_index = zero_index + 1 {
+      text = text + "0"
+    }
+    for digit in significant {
+      text = text + digit_text(digit)
+    }
+    return text
+  }
+  for digit_index = 0
+      digit_index < fixed_position
+      digit_index = digit_index + 1 {
+    if digit_index < significant.length() {
+      text = text + digit_text(significant[digit_index])
+    } else {
+      text = text + "0"
+    }
+  }
+  if fixed_position < significant.length() {
+    text = text + "."
+    for digit_index = fixed_position
+        digit_index < significant.length()
+        digit_index = digit_index + 1 {
+      text = text + digit_text(significant[digit_index])
+    }
+  }
+  text
+}
+
+///|
 pub fn Value::type_name(self : Value) -> String {
   match self {
     NullValue => "Null"
@@ -184,8 +347,10 @@ pub fn Value::type_name(self : Value) -> String {
     FunctionValue(_) => "Fn"
     FiberValue(_) => "Fiber"
     ClassValue(_) => "Class"
+    MetaClassValue(_) => "Class"
+    ClassAttributesValue(_, _) => "ClassAttributes"
     InstanceValue(_) => "Instance"
-    SuperValue(_, _, _) => "Super"
+    SuperValue(_, _, _, _) => "Super"
     SuperClassValue(_, _) => "SuperClass"
     CoreClassValue(_) => "Class"
     IteratorValue(_) => "Iterator"
@@ -201,19 +366,23 @@ pub fn Value::to_text(self : Value) -> String {
     NullValue => "null"
     BoolValue(true) => "true"
     BoolValue(false) => "false"
-    NumberValue(number) => "\{number}"
+    NumberValue(number) => wren_number_to_text(number)
     StringValue(text) => text
     RawStringValue(_) => "�"
-    RangeValue(from, to, true) => "\{from}..\{to}"
-    RangeValue(from, to, false) => "\{from}...\{to}"
+    RangeValue(from, to, true) =>
+      wren_number_to_text(from) + ".." + wren_number_to_text(to)
+    RangeValue(from, to, false) =>
+      wren_number_to_text(from) + "..." + wren_number_to_text(to)
     ListValue(_) => "<list>"
     MapValue(_) => "<map>"
     SequenceValue(_) => "<sequence>"
     FunctionValue(_) => "<fn>"
     FiberValue(_) => "<fiber>"
     ClassValue(_) => "<class>"
+    MetaClassValue(name) => name
+    ClassAttributesValue(_, _) => "<class attributes>"
     InstanceValue(_) => "<instance>"
-    SuperValue(_, _, _) => "<super>"
+    SuperValue(_, _, _, _) => "<super>"
     SuperClassValue(_, _) => "<superclass>"
     CoreClassValue(class_value) => class_value.name()
     IteratorValue(_) => "<iterator>"

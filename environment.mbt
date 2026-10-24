@@ -58,6 +58,82 @@ pub fn Environment::bind(
 }
 
 ///|
+fn Environment::has_current(self : Environment, name : String) -> Bool {
+  let scope = self.scopes[self.scopes.length() - 1]
+  for binding in scope.bindings {
+    if binding.name == name {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn Environment::has_method_scope(self : Environment) -> Bool {
+  let mut scope_index = self.scopes.length() - 1
+  while scope_index >= 0 {
+    for binding in self.scopes[scope_index].bindings {
+      if binding.name == "$method" {
+        return true
+      }
+    }
+    scope_index = scope_index - 1
+  }
+  false
+}
+
+///|
+fn Environment::get_method_local(self : Environment, name : String) -> Value? {
+  let mut scope_index = self.scopes.length() - 1
+  while scope_index >= 0 {
+    let scope = self.scopes[scope_index]
+    for binding in scope.bindings {
+      if binding.name == name {
+        return Some(binding.value.val)
+      }
+    }
+    if string_scope_has_marker(scope.bindings) {
+      return None
+    }
+    scope_index = scope_index - 1
+  }
+  None
+}
+
+///|
+fn string_scope_has_marker(bindings : Array[Binding]) -> Bool {
+  for binding in bindings {
+    if binding.name == "$method" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn Environment::assign_method_local(
+  self : Environment,
+  name : String,
+  value : Value,
+) -> Bool {
+  let mut scope_index = self.scopes.length() - 1
+  while scope_index >= 0 {
+    let scope = self.scopes[scope_index]
+    for binding in scope.bindings {
+      if binding.name == name {
+        binding.value.val = value
+        return true
+      }
+    }
+    if string_scope_has_marker(scope.bindings) {
+      return false
+    }
+    scope_index = scope_index - 1
+  }
+  false
+}
+
+///|
 pub fn Environment::get(self : Environment, name : String) -> Value? {
   let mut scope_index = self.scopes.length() - 1
   while scope_index >= 0 {

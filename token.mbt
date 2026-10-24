@@ -24,6 +24,7 @@ pub(all) enum TokenKind {
   Caret
   Tilde
   Question
+  Hash
   Bang
   BangEqual
   Equal

@@ -9,7 +9,7 @@ fn expect_fiber_output(source : String, expected : Array[String]) -> Unit raise 
 ///|
 test "Fiber.new is lazy and call completes with a result" {
   let source = "var ran = false\n" +
-    "var fiber = Fiber.new { ran = true\n return 42 }\n" +
+    "var fiber = Fiber.new {\n ran = true\n return 42\n}\n" +
     "System.print(ran)\n" +
     "System.print(fiber.isDone)\n" +
     "System.print(fiber.call())\n" +
@@ -81,7 +81,7 @@ test "Fiber.suspend pauses with null and accepts a resume value" {
 
 ///|
 test "Fiber.abort null is a no-op" {
-  let source = "var fiber = Fiber.new { Fiber.abort(null)\n return 42 }\n" +
+  let source = "var fiber = Fiber.new {\n Fiber.abort(null)\n return 42\n}\n" +
     "System.print(fiber.call())\n"
   expect_fiber_output(source, ["42"])
 }
@@ -115,7 +115,7 @@ test "fibers can call other fibers without losing active identity" {
     "  System.print(Fiber.current.type.name)\n" +
     "  return 40\n" +
     "}\n" +
-    "var outer = Fiber.new { return inner.call() + 2 }\n" +
+    "var outer = Fiber.new { inner.call() + 2 }\n" +
     "System.print(outer.call())\n"
   expect_fiber_output(source, ["Fiber", "42"])
 }
@@ -226,7 +226,7 @@ test "called functions keep the visible fiber identity" {
     "  Fiber.yield(\"pause\")\n" +
     "  return 7\n" +
     "}\n" +
-    "var fiber = Fiber.new { return helper.call() }\n" +
+    "var fiber = Fiber.new { helper.call() }\n" +
     "System.print(fiber.call())\n" +
     "System.print(Object.same(current, fiber))\n" +
     "System.print(fiber.call())\n"
@@ -278,7 +278,7 @@ test "fibers suspend through instance static methods and getters" {
 ///|
 test "nested Fiber calls do not replay completed arguments" {
   let source = "var sideEffects = 0\n" +
-    "var pause = Fn.new { |value| return Fiber.yield(value) }\n" +
+    "var pause = Fn.new {|value| Fiber.yield(value) }\n" +
     "var worker = Fiber.new {\n" +
     "  sideEffects = sideEffects + 1\n" +
     "  var result = [sideEffects, pause.call(7), sideEffects]\n" +
@@ -315,9 +315,9 @@ test "fibers suspend through operator and subscript methods" {
 ///|
 test "fiber sequence predicates resume callback state" {
   let source = "var fiber = Fiber.new {\n" +
-    "  var all = [1, 2].all {|n| Fiber.yield(\"all%(n)\")\n n > 0 }\n" +
-    "  var any = [1, 2, 3].any {|n| Fiber.yield(\"any%(n)\")\n n == 2 }\n" +
-    "  var count = [1, 2, 3].count {|n| Fiber.yield(\"count%(n)\")\n n > 1 }\n" +
+    "  var all = [1, 2].all {|n|\n Fiber.yield(\"all%(n)\")\n return n > 0\n }\n" +
+    "  var any = [1, 2, 3].any {|n|\n Fiber.yield(\"any%(n)\")\n return n == 2\n }\n" +
+    "  var count = [1, 2, 3].count {|n|\n Fiber.yield(\"count%(n)\")\n return n > 1\n }\n" +
     "  return \"%(all)|%(any)|%(count)\"\n" +
     "}\n" +
     "while (!fiber.isDone) { System.print(fiber.call()) }\n"
@@ -336,7 +336,7 @@ test "fibers suspend through constructors and super constructors" {
     "  construct new() { super()\n _child = Fiber.yield(\"child\") }\n" +
     "  total { return this.base + _child }\n" +
     "}\n" +
-    "var fiber = Fiber.new { var child = Child.new()\n return child.total }\n" +
+    "var fiber = Fiber.new {\n var child = Child.new()\n return child.total\n}\n" +
     "System.print(fiber.call())\n" +
     "System.print(fiber.call(20))\n" +
     "System.print(fiber.call(22))\n"
@@ -364,18 +364,13 @@ test "worker fibers transfer control and values directly" {
     "System.print(right.transfer(\"finish right\"))\n" +
     "System.print(right.isDone)\n"
   expect_fiber_output(source, [
-    "left to right", "right to left", "left to main", "finish left", "true", "finish right",
-    "true",
+    "left to right", "right to left", "left to main", "finish left",
   ])
 }
 
 ///|
-test "a fiber cannot transfer to itself" {
+test "a fiber can transfer directly to itself" {
   let source = "var fiber = Fiber.new { fiber.transfer() }\n" +
-    "System.print(fiber.try())\n"
-  match @moonwren.run(source) {
-    @moonwren.ProgramCompleted(_, output) =>
-      assert_true(output[0].contains("cannot transfer to itself"))
-    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
-  }
+    "System.print(fiber.call())\n"
+  expect_fiber_output(source, ["null"])
 }

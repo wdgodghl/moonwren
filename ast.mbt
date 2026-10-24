@@ -141,7 +141,14 @@ pub(all) enum Stmt {
   BreakStatement(SourceSpan)
   ContinueStatement(SourceSpan)
   ImportStatement(String, Array[ImportBinding], SourceSpan)
-  ClassStatement(String, String?, Array[MethodDecl], Bool, SourceSpan)
+  ClassStatement(
+    String,
+    Expr?,
+    Array[MethodDecl],
+    Array[AttributeDecl],
+    Bool,
+    SourceSpan
+  )
 } derive(Eq, Debug)
 
 ///|
@@ -163,7 +170,7 @@ pub fn Stmt::span(self : Stmt) -> SourceSpan {
     | BreakStatement(span)
     | ContinueStatement(span)
     | ImportStatement(_, _, span)
-    | ClassStatement(_, _, _, _, span) => span
+    | ClassStatement(_, _, _, _, _, span) => span
   }
 }
 
@@ -190,6 +197,7 @@ pub(all) struct MethodDecl {
   is_getter : Bool
   is_static : Bool
   is_foreign : Bool
+  attributes : Array[AttributeDecl]
   span : SourceSpan
 } derive(Eq, Debug)
 
@@ -198,3 +206,17 @@ pub extend MethodDecl with Eq::{equal, not_equal}
 
 ///|
 pub extend MethodDecl with Debug::{to_repr}
+
+///|
+/// One runtime attribute attached to a class or method declaration.
+pub(all) struct AttributeDecl {
+  group : String?
+  key : String
+  value : Value
+} derive(Eq, Debug)
+
+///|
+pub extend AttributeDecl with Eq::{equal, not_equal}
+
+///|
+pub extend AttributeDecl with Debug::{to_repr}

@@ -16,11 +16,13 @@ priv struct Closure {
 priv struct ClassDefinition {
   name : String
   superclass : Int?
+  inherits_sequence : Bool
   methods : Array[MethodDecl]
   is_foreign : Bool
   foreign_binding : Int?
   environment : Environment
   static_fields : Array[InstanceField]
+  attributes : Value
   source_name : String
 }
 
@@ -32,6 +34,7 @@ priv struct ResolvedMethod {
 
 ///|
 priv struct InstanceField {
+  owner_identifier : Int
   name : String
   mut value : Value
 }
@@ -69,6 +72,7 @@ priv struct RuntimeMapEntryValue {
 ///|
 priv enum RuntimeSequenceKind {
   SequenceSnapshot(Array[Value])
+  SequenceMapView(Array[Value], String)
   SequenceStringBytes(Array[Value])
   SequenceStringCodePoints(Array[Value], Array[Value])
   SequenceMap(Value, Int)
@@ -152,6 +156,8 @@ priv struct RuntimeContext {
   max_call_depth : Int
   mut current_fiber : Int
   mut transfer_target : Int
+  mut transferred_to_main : Bool
+  mut terminate_main : Bool
 }
 
 ///|
@@ -200,6 +206,8 @@ fn RuntimeContext::new_with_loader(
     max_call_depth: 64,
     current_fiber: 0,
     transfer_target: -1,
+    transferred_to_main: false,
+    terminate_main: false,
   }
 }
 
@@ -317,6 +325,15 @@ fn bind_core_globals(environment : Environment) -> Unit {
   ignore(environment.bind("List", Value::core_class(ListClass)))
   ignore(environment.bind("Map", Value::core_class(MapClass)))
   ignore(environment.bind("MapEntry", Value::core_class(MapEntryClass)))
+  ignore(
+    environment.bind("MapKeySequence", Value::core_class(MapKeySequenceClass)),
+  )
+  ignore(
+    environment.bind(
+      "MapValueSequence",
+      Value::core_class(MapValueSequenceClass),
+    ),
+  )
   ignore(environment.bind("Null", Value::core_class(NullClass)))
   ignore(environment.bind("Num", Value::core_class(NumClass)))
   ignore(environment.bind("Range", Value::core_class(RangeClass)))
@@ -473,9 +490,13 @@ fn runtime_value_to_text(
             }
             text + ")"
           }
+          SequenceMapView(_, class_name) => "instance of " + class_name
           SequenceStringBytes(_) => "<sequence>"
           SequenceStringCodePoints(_, _) => "<sequence>"
-          _ => "<sequence>"
+          SequenceMap(_, _) => "instance of MapSequence"
+          SequenceWhere(_, _) => "instance of WhereSequence"
+          SequenceSkip(_, _) => "instance of SkipSequence"
+          SequenceTake(_, _) => "instance of TakeSequence"
         }
       }
     MapEntryValue(identifier) =>
@@ -487,6 +508,61 @@ fn runtime_value_to_text(
         ":" +
         runtime_value_to_text(entry.value, context, depth + 1)
       }
+    InstanceValue(identifier) =>
+      if identifier < 0 || identifier >= context.instances.length() {
+        "<instance>"
+      } else {
+        let class_identifier = context.instances[identifier].class_identifier
+        match
+          find_method_in_class(
+            context, class_identifier, "toString", 0, false, true, false,
+          ) {
+          Some(resolved) =>
+            match
+              invoke_user_method(
+                identifier,
+                resolved,
+                [],
+                SourceSpan::empty(),
+                context,
+              ) {
+              EvaluationSucceeded(StringValue(text)) => text
+              EvaluationSucceeded(RawStringValue(bytes)) =>
+                string_display_from_bytes(bytes)
+              EvaluationSucceeded(_) | EvaluationFailed(_) =>
+                "[invalid toString]"
+            }
+          None => "instance of " + context.classes[class_identifier].name
+        }
+      }
+    ClassValue(identifier) =>
+      if identifier < 0 || identifier >= context.classes.length() {
+        "<class>"
+      } else {
+        match
+          find_method_in_class(
+            context, identifier, "toString", 0, false, true, true,
+          ) {
+          Some(resolved) =>
+            match
+              invoke_static_method(
+                identifier,
+                resolved,
+                [],
+                SourceSpan::empty(),
+                context,
+              ) {
+              EvaluationSucceeded(StringValue(text)) => text
+              EvaluationSucceeded(RawStringValue(bytes)) =>
+                string_display_from_bytes(bytes)
+              EvaluationSucceeded(_) | EvaluationFailed(_) =>
+                "[invalid toString]"
+            }
+          None => context.classes[identifier].name
+        }
+      }
+    MetaClassValue(name) => name
+    ClassAttributesValue(_, _) => "<class attributes>"
     _ => value.to_text()
   }
 }
@@ -495,13 +571,14 @@ fn runtime_value_to_text(
 fn RuntimeContext::get_instance_field(
   self : RuntimeContext,
   identifier : Int,
+  owner_identifier : Int,
   name : String,
 ) -> Value? {
   if identifier < 0 || identifier >= self.instances.length() {
     return None
   }
   for field in self.instances[identifier].fields {
-    if field.name == name {
+    if field.owner_identifier == owner_identifier && field.name == name {
       return Some(field.value)
     }
   }
@@ -512,6 +589,7 @@ fn RuntimeContext::get_instance_field(
 fn RuntimeContext::set_instance_field(
   self : RuntimeContext,
   identifier : Int,
+  owner_identifier : Int,
   name : String,
   value : Value,
 ) -> Bool {
@@ -520,12 +598,12 @@ fn RuntimeContext::set_instance_field(
   }
   let fields = self.instances[identifier].fields
   for field in fields {
-    if field.name == name {
+    if field.owner_identifier == owner_identifier && field.name == name {
       field.value = value
       return true
     }
   }
-  fields.push({ name, value, })
+  fields.push({ owner_identifier, name, value, })
   true
 }
 
@@ -563,7 +641,7 @@ fn RuntimeContext::set_static_field(
       return true
     }
   }
-  fields.push({ name, value, })
+  fields.push({ owner_identifier: class_identifier, name, value, })
   true
 }
 
@@ -658,17 +736,46 @@ fn evaluate_unary(
         }
       }
     }
+    ClassValue(identifier) => {
+      let name = match operator {
+        LogicalNot => "!"
+        Negate => "-"
+        BitwiseNot => "~"
+      }
+      match
+        find_method_in_class(context, identifier, name, 0, false, false, true) {
+        Some(resolved) =>
+          return invoke_static_method(identifier, resolved, [], span, context)
+        None => ()
+      }
+    }
     _ => ()
   }
   match (operator, value) {
     (LogicalNot, value) => EvaluationSucceeded(Value::bool(!value.is_truthy()))
-    (Negate, NumberValue(number)) => EvaluationSucceeded(Value::number(-number))
-    (BitwiseNot, NumberValue(number)) =>
+    (Negate, NumberValue(number)) =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(number.to_int().lnot())),
+        Value::number(
+          (number.reinterpret_as_uint64() ^ 0x8000_0000_0000_0000UL).reinterpret_as_double(),
+        ),
       )
+    (BitwiseNot, NumberValue(number)) =>
+      EvaluationSucceeded(Value::number(wren_u32(number).lnot().to_double()))
     (Negate, value) => invalid_unary("-", value, span)
     (BitwiseNot, value) => invalid_unary("~", value, span)
+  }
+}
+
+///|
+fn wren_u32(number : Double) -> UInt {
+  let mut normalized = number % 4294967296.0
+  if normalized < 0.0 {
+    normalized = normalized + 4294967296.0
+  }
+  if normalized >= 2147483648.0 {
+    (normalized - 2147483648.0).to_int().reinterpret_as_uint() + 0x80000000U
+  } else {
+    normalized.to_int().reinterpret_as_uint()
   }
 }
 
@@ -683,41 +790,31 @@ fn number_binary(
     Add => EvaluationSucceeded(Value::number(left + right))
     Subtract => EvaluationSucceeded(Value::number(left - right))
     Multiply => EvaluationSucceeded(Value::number(left * right))
-    Divide =>
-      if right == 0.0 {
-        evaluation_error(DivisionByZero, "division by zero", span)
-      } else {
-        EvaluationSucceeded(Value::number(left / right))
-      }
-    Remainder =>
-      if right == 0.0 {
-        evaluation_error(DivisionByZero, "remainder by zero", span)
-      } else {
-        EvaluationSucceeded(Value::number(left % right))
-      }
+    Divide => EvaluationSucceeded(Value::number(left / right))
+    Remainder => EvaluationSucceeded(Value::number(left % right))
     LessThan => EvaluationSucceeded(Value::bool(left < right))
     LessThanOrEqual => EvaluationSucceeded(Value::bool(left <= right))
     GreaterThan => EvaluationSucceeded(Value::bool(left > right))
     GreaterThanOrEqual => EvaluationSucceeded(Value::bool(left >= right))
     BitwiseAnd =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(left.to_int().land(right.to_int()))),
+        Value::number(wren_u32(left).land(wren_u32(right)).to_double()),
       )
     BitwiseOr =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(left.to_int().lor(right.to_int()))),
+        Value::number(wren_u32(left).lor(wren_u32(right)).to_double()),
       )
     BitwiseXor =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(left.to_int().lxor(right.to_int()))),
+        Value::number(wren_u32(left).lxor(wren_u32(right)).to_double()),
       )
     ShiftLeft =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(left.to_int() << right.to_int())),
+        Value::number((wren_u32(left) << (right.to_int() & 31)).to_double()),
       )
     ShiftRight =>
       EvaluationSucceeded(
-        Value::number(Double::from_int(left.to_int() >> right.to_int())),
+        Value::number((wren_u32(left) >> (right.to_int() & 31)).to_double()),
       )
     _ => invalid_binary("binary", NumberValue(left), NumberValue(right), span)
   }
@@ -732,7 +829,7 @@ fn evaluate_binary_values(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match left {
-    InstanceValue(identifier) if operator != IsType => {
+    InstanceValue(identifier) => {
       let name = match operator {
         Add => "+"
         Subtract => "-"
@@ -752,7 +849,8 @@ fn evaluate_binary_values(
         ShiftRight => ">>"
         InclusiveRange => ".."
         ExclusiveRange => "..."
-        LogicalAnd | LogicalOr | IsType => ""
+        IsType => "is"
+        LogicalAnd | LogicalOr => ""
       }
       if name != "" &&
         identifier >= 0 &&
@@ -764,6 +862,44 @@ fn evaluate_binary_values(
           ) {
           Some(resolved) =>
             return invoke_user_method(
+              identifier,
+              resolved,
+              [right],
+              span,
+              context,
+            )
+          None => ()
+        }
+      }
+    }
+    ClassValue(identifier) => {
+      let name = match operator {
+        Add => "+"
+        Subtract => "-"
+        Multiply => "*"
+        Divide => "/"
+        Remainder => "%"
+        EqualTo => "=="
+        NotEqualTo => "!="
+        LessThan => "<"
+        LessThanOrEqual => "<="
+        GreaterThan => ">"
+        GreaterThanOrEqual => ">="
+        BitwiseAnd => "&"
+        BitwiseOr => "|"
+        BitwiseXor => "^"
+        ShiftLeft => "<<"
+        ShiftRight => ">>"
+        InclusiveRange => ".."
+        ExclusiveRange => "..."
+        IsType => "is"
+        LogicalAnd | LogicalOr => ""
+      }
+      if name != "" {
+        match
+          find_method_in_class(context, identifier, name, 1, false, false, true) {
+          Some(resolved) =>
+            return invoke_static_method(
               identifier,
               resolved,
               [right],
@@ -883,12 +1019,7 @@ fn evaluate_binary_values(
           )
         _ => invalid_binary("range", left, right, span)
       }
-    IsType =>
-      evaluation_error(
-        UnsupportedFeature,
-        "runtime type expressions are not implemented yet",
-        span,
-      )
+    IsType => evaluate_is_type(left, right, span, context)
     _ =>
       match (left, right) {
         (NumberValue(left), NumberValue(right)) =>
@@ -951,11 +1082,12 @@ fn core_class_for_value(value : Value, context : RuntimeContext) -> Value {
       } else {
         Value::core_class(ObjectClass)
       }
-    ClassValue(_) | CoreClassValue(_) | SystemValue =>
+    ClassValue(_) | MetaClassValue(_) | CoreClassValue(_) | SystemValue =>
       Value::core_class(ClassClass)
+    ClassAttributesValue(_, _) => Value::core_class(ObjectClass)
     MapEntryValue(_) => Value::core_class(MapEntryClass)
     IteratorValue(_) => Value::core_class(ObjectClass)
-    SuperValue(_, instance_identifier, _) =>
+    SuperValue(_, instance_identifier, _, _) =>
       if instance_identifier >= 0 &&
         instance_identifier < context.instances.length() {
         Value::class_value(
@@ -1001,10 +1133,12 @@ fn value_is_core_class(
       }
     FunctionValue(_) => target == FnClass
     FiberValue(_) => target == FiberClass
-    ClassValue(_) | CoreClassValue(_) | SystemValue => target == ClassClass
+    ClassValue(_) | MetaClassValue(_) | CoreClassValue(_) | SystemValue =>
+      target == ClassClass
+    ClassAttributesValue(_, _) => false
     MapEntryValue(_) => target == MapEntryClass
     InstanceValue(_) | IteratorValue(_) => false
-    SuperValue(_, _, _) => false
+    SuperValue(_, _, _, _) => false
     SuperClassValue(_, _) => target == ClassClass
   }
 }
@@ -1161,7 +1295,7 @@ fn find_method_in_class(
       return Some({ declaration, owner_identifier: class_identifier, })
     }
   }
-  if !is_constructor {
+  if !is_constructor && !is_static {
     match class_definition.superclass {
       Some(superclass) =>
         return find_method_in_class(
@@ -1186,6 +1320,112 @@ fn method_signature(declaration : MethodDecl) -> String {
     signature = signature + "_"
   }
   signature + ")"
+}
+
+///|
+fn attribute_method_signature(declaration : MethodDecl) -> String {
+  let mut signature = if declaration.is_static { "static " } else { "" }
+  signature = signature + declaration.name
+  if declaration.is_getter {
+    return signature
+  }
+  signature = signature + "("
+  for index = 0; index < declaration.parameters.length(); index = index + 1 {
+    if index > 0 {
+      signature = signature + ","
+    }
+    signature = signature + "_"
+  }
+  signature + ")"
+}
+
+///|
+fn build_attribute_map(
+  attributes : Array[AttributeDecl],
+  context : RuntimeContext,
+) -> Int {
+  if attributes.is_empty() {
+    return -1
+  }
+  let outer = context.new_map()
+  let outer_identifier = match outer {
+    MapValue(identifier) => identifier
+    _ => -1
+  }
+  for attribute in attributes {
+    let group_key = match attribute.group {
+      Some(group) => Value::string(group)
+      None => Value::null()
+    }
+    let group_identifier = match
+      find_map_key(context.maps[outer_identifier].entries, group_key) {
+      Some(index) =>
+        match context.maps[outer_identifier].entries[index].value {
+          MapValue(identifier) => identifier
+          _ => -1
+        }
+      None => {
+        let group = context.new_map()
+        let identifier = match group {
+          MapValue(identifier) => identifier
+          _ => -1
+        }
+        ignore(context.set_map_entry(outer_identifier, group_key, group))
+        identifier
+      }
+    }
+    let key = Value::string(attribute.key)
+    match find_map_key(context.maps[group_identifier].entries, key) {
+      Some(index) =>
+        match context.maps[group_identifier].entries[index].value {
+          ListValue(identifier) =>
+            context.lists[identifier].items.push(attribute.value)
+          _ => ()
+        }
+      None => {
+        let values = context.new_list([attribute.value])
+        ignore(context.set_map_entry(group_identifier, key, values))
+      }
+    }
+  }
+  outer_identifier
+}
+
+///|
+fn build_class_attributes(
+  class_attributes : Array[AttributeDecl],
+  methods : Array[MethodDecl],
+  context : RuntimeContext,
+) -> Value {
+  let self_identifier = build_attribute_map(class_attributes, context)
+  let mut methods_identifier = -1
+  for declaration in methods {
+    let attributes_identifier = build_attribute_map(
+      declaration.attributes,
+      context,
+    )
+    if attributes_identifier >= 0 {
+      if methods_identifier < 0 {
+        let map = context.new_map()
+        methods_identifier = match map {
+          MapValue(identifier) => identifier
+          _ => -1
+        }
+      }
+      ignore(
+        context.set_map_entry(
+          methods_identifier,
+          Value::string(attribute_method_signature(declaration)),
+          Value::map(attributes_identifier),
+        ),
+      )
+    }
+  }
+  if self_identifier < 0 && methods_identifier < 0 {
+    Value::null()
+  } else {
+    ClassAttributesValue(self_identifier, methods_identifier)
+  }
 }
 
 ///|
@@ -1303,25 +1543,22 @@ fn invoke_user_method(
   }
   let environment = owner.environment.capture()
   environment.push_scope()
+  ignore(environment.bind("$method", Value::null()))
   ignore(environment.bind("this", Value::instance(instance_identifier)))
-  match owner.superclass {
-    Some(superclass) =>
-      ignore(
-        environment.bind(
-          "$super",
-          SuperValue(
-            superclass,
-            instance_identifier,
-            if declaration.is_constructor {
-              declaration.name
-            } else {
-              ""
-            },
-          ),
-        ),
-      )
-    None => ()
-  }
+  ignore(
+    environment.bind("$class", Value::class_value(resolved.owner_identifier)),
+  )
+  ignore(
+    environment.bind(
+      "$super",
+      SuperValue(
+        owner.superclass.unwrap_or(-1),
+        instance_identifier,
+        declaration.name,
+        declaration.is_constructor,
+      ),
+    ),
+  )
   for index = 0; index < declaration.parameters.length(); index = index + 1 {
     ignore(environment.bind(declaration.parameters[index], arguments[index]))
   }
@@ -1403,17 +1640,17 @@ fn invoke_static_method(
   }
   let environment = owner.environment.capture()
   environment.push_scope()
+  ignore(environment.bind("$method", Value::null()))
   ignore(environment.bind("this", Value::class_value(receiver_class)))
   ignore(
     environment.bind("$class", Value::class_value(resolved.owner_identifier)),
   )
-  match owner.superclass {
-    Some(superclass) =>
-      ignore(
-        environment.bind("$super", SuperClassValue(superclass, receiver_class)),
-      )
-    None => ()
-  }
+  ignore(
+    environment.bind(
+      "$super",
+      SuperClassValue(owner.superclass.unwrap_or(-1), receiver_class),
+    ),
+  )
   for index = 0; index < declaration.parameters.length(); index = index + 1 {
     ignore(environment.bind(declaration.parameters[index], arguments[index]))
   }
@@ -1529,25 +1766,19 @@ fn construct_instance(
 fn invoke_super_constructor(
   superclass : Int,
   instance_identifier : Int,
-  constructor_name : String,
+  method_name : String,
+  is_constructor : Bool,
   arguments : Array[Value],
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
-  if constructor_name == "" {
-    return evaluation_error(
-      UndefinedMethod,
-      "superclass constructors can only be called from a constructor",
-      span,
-    )
-  }
   match
     find_method_in_class(
       context,
       superclass,
-      constructor_name,
+      method_name,
       arguments.length(),
-      true,
+      is_constructor,
       false,
       false,
     ) {
@@ -1563,7 +1794,7 @@ fn invoke_super_constructor(
     None =>
       evaluation_error(
         UndefinedMethod,
-        "superclass does not implement constructor '\{constructor_name}' with \{arguments.length()} arguments",
+        "superclass does not implement method '\{method_name}' with \{arguments.length()} arguments",
         span,
       )
   }
@@ -1602,11 +1833,21 @@ fn invoke_instance_method(
         instance_identifier, resolved, arguments, span, context,
       )
     None =>
-      evaluation_error(
-        UndefinedMethod,
-        "\{class_definition.name} does not implement method '\{name}' with \{arguments.length()} arguments",
-        span,
-      )
+      if class_definition.inherits_sequence {
+        invoke_sequence_operation(
+          Value::instance(instance_identifier),
+          name,
+          arguments,
+          span,
+          context,
+        )
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "\{class_definition.name} does not implement method '\{name}' with \{arguments.length()} arguments",
+          span,
+        )
+      }
   }
 }
 
@@ -1614,6 +1855,12 @@ fn invoke_instance_method(
 priv enum CollectionIndexResult {
   CollectionIndexSucceeded(Int)
   CollectionIndexFailed(Diagnostic)
+}
+
+///|
+priv enum CollectionRangeResult {
+  CollectionRangeSucceeded(Int, Int, Int)
+  CollectionRangeFailed(Diagnostic)
 }
 
 ///|
@@ -1663,6 +1910,55 @@ fn collection_index(
 }
 
 ///|
+fn collection_range(
+  length : Int,
+  from : Double,
+  to : Double,
+  inclusive : Bool,
+  span : SourceSpan,
+) -> CollectionRangeResult {
+  if from == Double::from_int(length) &&
+    to == (if inclusive { -1.0 } else { Double::from_int(length) }) {
+    return CollectionRangeSucceeded(0, 0, 0)
+  }
+  let start = match collection_index(Value::number(from), length, false, span) {
+    CollectionIndexSucceeded(index) => index
+    CollectionIndexFailed(issue) => return CollectionRangeFailed(issue)
+  }
+  let raw_end = to.to_int()
+  if Double::from_int(raw_end) != to {
+    return CollectionRangeFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidIndex,
+        "range end must be an integer",
+        span,
+      ),
+    )
+  }
+  let mut end = if raw_end < 0 { length + raw_end } else { raw_end }
+  if !inclusive {
+    if end == start {
+      return CollectionRangeSucceeded(start, 0, 0)
+    }
+    end = end + (if end >= start { -1 } else { 1 })
+  }
+  if end < 0 || end >= length {
+    return CollectionRangeFailed(
+      Diagnostic::new(
+        Runtime,
+        IndexOutOfBounds,
+        "range end is outside the valid range",
+        span,
+      ),
+    )
+  }
+  let count = (start - end).abs() + 1
+  let step = if start < end { 1 } else { -1 }
+  CollectionRangeSucceeded(start, count, step)
+}
+
+///|
 fn read_list_range(
   items : Array[Value],
   from : Double,
@@ -1671,57 +1967,18 @@ fn read_list_range(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
-  let endpoint_allows_end = !inclusive
-  let start = match
-    collection_index(
-      Value::number(from),
-      items.length(),
-      endpoint_allows_end,
-      span,
-    ) {
-    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
-    CollectionIndexSucceeded(index) => index
-  }
-  let end = match
-    collection_index(
-      Value::number(to),
-      items.length(),
-      endpoint_allows_end,
-      span,
-    ) {
-    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
-    CollectionIndexSucceeded(index) => index
-  }
-  if start == items.length() && start != end {
-    return evaluation_error(
-      IndexOutOfBounds,
-      "list slice starts outside the valid range",
-      span,
-    )
+  let (start, count, step) = match
+    collection_range(items.length(), from, to, inclusive, span) {
+    CollectionRangeSucceeded(start, count, step) => (start, count, step)
+    CollectionRangeFailed(issue) => return EvaluationFailed(issue)
   }
   let result : Array[Value] = []
-  let step = if start <= end { 1 } else { -1 }
   let mut index = start
-  while (if step > 0 {
-          if inclusive {
-            index <= end
-          } else {
-            index < end
-          }
-        } else if inclusive {
-          index >= end
-        } else {
-          index > end
-        }) {
-    if index < 0 || index >= items.length() {
-      return evaluation_error(
-        IndexOutOfBounds,
-        "list slice crosses outside the valid range",
-        span,
-      )
-    }
+  let mut remaining = count
+  while remaining > 0 {
     result.push(items[index])
     index = index + step
+    remaining = remaining - 1
   }
   EvaluationSucceeded(context.new_list(result))
 }
@@ -1734,55 +1991,15 @@ fn read_string_range(
   inclusive : Bool,
   span : SourceSpan,
 ) -> EvaluationResult {
-  let endpoint_allows_end = !inclusive
-  let start = match
-    collection_index(
-      Value::number(from),
-      bytes.length(),
-      endpoint_allows_end,
-      span,
-    ) {
-    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
-    CollectionIndexSucceeded(index) => index
+  let (start, count, step) = match
+    collection_range(bytes.length(), from, to, inclusive, span) {
+    CollectionRangeSucceeded(start, count, step) => (start, count, step)
+    CollectionRangeFailed(issue) => return EvaluationFailed(issue)
   }
-  let end = match
-    collection_index(
-      Value::number(to),
-      bytes.length(),
-      endpoint_allows_end,
-      span,
-    ) {
-    CollectionIndexFailed(issue) => return EvaluationFailed(issue)
-    CollectionIndexSucceeded(index) => index
-  }
-  if start == bytes.length() && start != end {
-    return evaluation_error(
-      IndexOutOfBounds,
-      "string slice starts outside the valid range",
-      span,
-    )
-  }
-  let step = if start <= end { 1 } else { -1 }
   let mut index = start
   let result : Array[Int] = []
-  while (if step > 0 {
-          if inclusive {
-            index <= end
-          } else {
-            index < end
-          }
-        } else if inclusive {
-          index >= end
-        } else {
-          index > end
-        }) {
-    if index < 0 || index >= bytes.length() {
-      return evaluation_error(
-        IndexOutOfBounds,
-        "string slice crosses outside the valid range",
-        span,
-      )
-    }
+  let mut remaining = count
+  while remaining > 0 {
     match decode_utf8_at(bytes, index) {
       Some((_, width)) =>
         for offset = 0; offset < width; offset = offset + 1 {
@@ -1794,6 +2011,7 @@ fn read_string_range(
         }
     }
     index = index + step
+    remaining = remaining - 1
   }
   EvaluationSucceeded(string_value_from_bytes(result))
 }
@@ -1808,6 +2026,18 @@ fn read_subscript(
   match receiver {
     InstanceValue(identifier) =>
       invoke_instance_method(identifier, "[]", [index], span, context)
+    ClassValue(identifier) =>
+      match
+        find_method_in_class(context, identifier, "[]", 1, false, false, true) {
+        Some(resolved) =>
+          invoke_static_method(identifier, resolved, [index], span, context)
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "\{context.classes[identifier].name} does not implement static subscript with one argument",
+            span,
+          )
+      }
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
         evaluation_error(InvalidOperand, "list is not available", span)
@@ -1902,6 +2132,24 @@ fn write_subscript(
   match receiver {
     InstanceValue(identifier) =>
       invoke_instance_method(identifier, "[]=", [index, value], span, context)
+    ClassValue(identifier) =>
+      match
+        find_method_in_class(context, identifier, "[]=", 2, false, false, true) {
+        Some(resolved) =>
+          invoke_static_method(
+            identifier,
+            resolved,
+            [index, value],
+            span,
+            context,
+          )
+        None =>
+          evaluation_error(
+            UndefinedMethod,
+            "\{context.classes[identifier].name} does not implement static subscript setter with two arguments",
+            span,
+          )
+      }
     ListValue(identifier) =>
       if identifier < 0 || identifier >= context.lists.length() {
         evaluation_error(InvalidOperand, "list is not available", span)
@@ -1974,12 +2222,14 @@ fn indexed_iterator(
         }
       NumberValue(number) => {
         let index = number.to_int()
-        if Double::from_int(index) != number || index < 0 {
+        if Double::from_int(index) != number {
           evaluation_error(
             InvalidOperand,
-            "\{owner} iterator must be a non-negative integer",
+            "\{owner} iterator must be an integer",
             span,
           )
+        } else if index < 0 || index >= items.length() {
+          EvaluationSucceeded(Value::bool(false))
         } else if index + 1 < items.length() {
           EvaluationSucceeded(Value::number(Double::from_int(index + 1)))
         } else {
@@ -2022,6 +2272,276 @@ fn indexed_iterator(
       "\{owner} does not implement method '\{name}'",
       span,
     )
+  }
+}
+
+///|
+fn sparse_indexed_iterator(
+  owner : String,
+  items : Array[Value],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if arguments.length() != 1 {
+    return invalid_collection_arity(owner, name, 1, arguments.length(), span)
+  }
+  if name == "iteratorValue" {
+    let raw = match arguments[0] {
+      NumberValue(number) => {
+        let index = number.to_int()
+        if Double::from_int(index) != number {
+          return evaluation_error(
+            InvalidOperand,
+            "\{owner} iterator must be an integer",
+            span,
+          )
+        }
+        index
+      }
+      value =>
+        return evaluation_error(
+          InvalidOperand,
+          "\{owner} iterator must be a Num, received \{value.type_name()}",
+          span,
+        )
+    }
+    if raw < 0 || raw % 2 != 0 || raw / 2 >= items.length() {
+      return evaluation_error(
+        IndexOutOfBounds,
+        "\{owner} iterator is outside the valid range",
+        span,
+      )
+    }
+    return EvaluationSucceeded(items[raw / 2])
+  }
+  let next = match arguments[0] {
+    NullValue => 0
+    NumberValue(number) => {
+      let current = number.to_int()
+      if Double::from_int(current) != number {
+        return evaluation_error(
+          InvalidOperand,
+          "\{owner} iterator must be an integer",
+          span,
+        )
+      }
+      if current < 0 {
+        return EvaluationSucceeded(Value::bool(false))
+      }
+      (current / 2 + 1) * 2
+    }
+    value =>
+      return evaluation_error(
+        InvalidOperand,
+        "\{owner} iterator must be null or Num, received \{value.type_name()}",
+        span,
+      )
+  }
+  if next / 2 >= items.length() {
+    EvaluationSucceeded(Value::bool(false))
+  } else {
+    EvaluationSucceeded(Value::number(Double::from_int(next)))
+  }
+}
+
+///|
+fn indexed_string_view_iterator(
+  owner : String,
+  items : Array[Value],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name == "iteratorValue" && arguments.length() == 1 {
+    match arguments[0] {
+      NumberValue(number) => {
+        let raw = number.to_int()
+        if Double::from_int(raw) == number && raw < 0 {
+          return indexed_iterator(
+            owner,
+            items,
+            name,
+            [Value::number(Double::from_int(items.length() + raw))],
+            span,
+          )
+        }
+      }
+      _ => ()
+    }
+  }
+  indexed_iterator(owner, items, name, arguments, span)
+}
+
+///|
+fn code_point_width(code_point : Int) -> Int {
+  if code_point <= 0x7f {
+    1
+  } else if code_point <= 0x7ff {
+    2
+  } else if code_point <= 0xffff {
+    3
+  } else {
+    4
+  }
+}
+
+///|
+fn code_point_index_is_continuation(items : Array[Value], index : Int) -> Bool {
+  for distance = 1; distance <= 3; distance = distance + 1 {
+    let start = index - distance
+    if start < 0 {
+      break
+    }
+    match items[start] {
+      NumberValue(code_point) => {
+        let value = code_point.to_int()
+        if value >= 0 && code_point_width(value) > distance {
+          return true
+        }
+      }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
+fn code_point_view_iterator(
+  items : Array[Value],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if name == "iteratorValue" {
+    return indexed_string_view_iterator(
+      "StringCodePointSequence", items, name, arguments, span,
+    )
+  }
+  if arguments.length() != 1 {
+    return invalid_collection_arity(
+      "StringCodePointSequence",
+      name,
+      1,
+      arguments.length(),
+      span,
+    )
+  }
+  match arguments[0] {
+    NullValue =>
+      if items.length() == 0 {
+        EvaluationSucceeded(Value::bool(false))
+      } else {
+        EvaluationSucceeded(Value::number(0.0))
+      }
+    NumberValue(number) => {
+      let current = number.to_int()
+      if Double::from_int(current) != number {
+        return evaluation_error(
+          InvalidOperand,
+          "StringCodePointSequence iterator must be an integer",
+          span,
+        )
+      }
+      if current < 0 || current >= items.length() {
+        return EvaluationSucceeded(Value::bool(false))
+      }
+      let mut next = current + 1
+      while next < items.length() &&
+            code_point_index_is_continuation(items, next) {
+        next = next + 1
+      }
+      if next < items.length() {
+        EvaluationSucceeded(Value::number(Double::from_int(next)))
+      } else {
+        EvaluationSucceeded(Value::bool(false))
+      }
+    }
+    value =>
+      evaluation_error(
+        InvalidOperand,
+        "StringCodePointSequence iterator must be null or Num, received \{value.type_name()}",
+        span,
+      )
+  }
+}
+
+///|
+fn string_iterator(
+  bytes : Array[Int],
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+) -> EvaluationResult {
+  if arguments.length() != 1 {
+    return invalid_collection_arity("String", name, 1, arguments.length(), span)
+  }
+  if name == "iteratorValue" {
+    return match arguments[0] {
+      NumberValue(number) => {
+        let raw = number.to_int()
+        let index = if raw < 0 { bytes.length() + raw } else { raw }
+        if Double::from_int(raw) != number {
+          evaluation_error(
+            InvalidOperand,
+            "String iterator must be an integer",
+            span,
+          )
+        } else {
+          match string_value_at_byte_from_bytes(bytes, index) {
+            Some(value) => EvaluationSucceeded(value)
+            None =>
+              evaluation_error(
+                InvalidOperand,
+                "String iterator is outside the valid range",
+                span,
+              )
+          }
+        }
+      }
+      value =>
+        evaluation_error(
+          InvalidOperand,
+          "String iterator must be a Num, received \{value.type_name()}",
+          span,
+        )
+    }
+  }
+  match arguments[0] {
+    NullValue =>
+      if bytes.length() == 0 {
+        EvaluationSucceeded(Value::bool(false))
+      } else {
+        EvaluationSucceeded(Value::number(0.0))
+      }
+    NumberValue(number) => {
+      let current = number.to_int()
+      if Double::from_int(current) != number {
+        return evaluation_error(
+          InvalidOperand,
+          "String iterator must be an integer",
+          span,
+        )
+      }
+      if current < 0 || current >= bytes.length() {
+        return EvaluationSucceeded(Value::bool(false))
+      }
+      let mut next = current + 1
+      while next < bytes.length() && byte_is_valid_continuation_at(bytes, next) {
+        next = next + 1
+      }
+      if next < bytes.length() {
+        EvaluationSucceeded(Value::number(Double::from_int(next)))
+      } else {
+        EvaluationSucceeded(Value::bool(false))
+      }
+    }
+    value =>
+      evaluation_error(
+        InvalidOperand,
+        "String iterator must be null or Num, received \{value.type_name()}",
+        span,
+      )
   }
 }
 
@@ -2341,13 +2861,7 @@ fn invoke_string_bytes_method(
   context : RuntimeContext,
 ) -> EvaluationResult {
   if name == "iterate" || name == "iteratorValue" {
-    return indexed_iterator(
-      "String",
-      string_items_from_bytes(bytes),
-      name,
-      arguments,
-      span,
-    )
+    return string_iterator(bytes, name, arguments, span)
   }
   match name {
     "contains" | "startsWith" | "endsWith" | "split" =>
@@ -2425,7 +2939,7 @@ fn invoke_string_bytes_method(
               )
             }
             let normalized = if raw < 0 { length + raw } else { raw }
-            if normalized < 0 || normalized > length {
+            if normalized < 0 || normalized >= length {
               return evaluation_error(
                 IndexOutOfBounds,
                 "String.indexOf start is outside the valid range",
@@ -2581,15 +3095,7 @@ fn invoke_range_method(
     return invalid_collection_arity("Range", name, 1, arguments.length(), span)
   }
   if name == "iteratorValue" {
-    return match arguments[0] {
-      NumberValue(_) => EvaluationSucceeded(arguments[0])
-      value =>
-        evaluation_error(
-          InvalidOperand,
-          "Range iterator must be a Num, received \{value.type_name()}",
-          span,
-        )
-    }
+    return EvaluationSucceeded(arguments[0])
   }
   let step = if from <= to { 1.0 } else { -1.0 }
   let next = match arguments[0] {
@@ -2629,7 +3135,7 @@ fn advance_iterable(
 ) -> IteratorAdvanceResult {
   match invoke_method(iterable, "iterate", [iterator], span, context) {
     EvaluationFailed(issue) => IteratorAdvanceFailed(issue)
-    EvaluationSucceeded(BoolValue(false)) => IteratorComplete
+    EvaluationSucceeded(value) if !value.is_truthy() => IteratorComplete
     EvaluationSucceeded(next) =>
       match invoke_method(iterable, "iteratorValue", [next], span, context) {
         EvaluationFailed(issue) => IteratorAdvanceFailed(issue)
@@ -2666,7 +3172,7 @@ fn advance_sequence_iterator(
     EvaluationSucceeded(Value::bool(false))
   }
   match context.sequences[sequence_identifier].kind {
-    SequenceSnapshot(items) =>
+    SequenceSnapshot(items) | SequenceMapView(items, _) =>
       if iterator.yielded >= items.length() {
         complete()
       } else {
@@ -2783,7 +3289,7 @@ fn collect_iterable_values(
   while true {
     match invoke_method(iterable, "iterate", [iterator], span, context) {
       EvaluationFailed(issue) => return ValueCollectionFailed(issue)
-      EvaluationSucceeded(BoolValue(false)) => break
+      EvaluationSucceeded(value) if !value.is_truthy() => break
       EvaluationSucceeded(next) => iterator = next
     }
     match invoke_method(iterable, "iteratorValue", [iterator], span, context) {
@@ -2862,24 +3368,23 @@ fn method_call_closure(
   match receiver {
     InstanceValue(instance_identifier) => {
       ignore(environment.bind("this", receiver))
-      match owner.superclass {
-        Some(superclass) =>
-          ignore(
-            environment.bind(
-              "$super",
-              SuperValue(
-                superclass,
-                instance_identifier,
-                if resolved.declaration.is_constructor {
-                  resolved.declaration.name
-                } else {
-                  ""
-                },
-              ),
-            ),
-          )
-        None => ()
-      }
+      ignore(
+        environment.bind(
+          "$class",
+          Value::class_value(resolved.owner_identifier),
+        ),
+      )
+      ignore(
+        environment.bind(
+          "$super",
+          SuperValue(
+            owner.superclass.unwrap_or(-1),
+            instance_identifier,
+            resolved.declaration.name,
+            resolved.declaration.is_constructor,
+          ),
+        ),
+      )
     }
     ClassValue(receiver_class) => {
       ignore(environment.bind("this", receiver))
@@ -2889,16 +3394,12 @@ fn method_call_closure(
           Value::class_value(resolved.owner_identifier),
         ),
       )
-      match owner.superclass {
-        Some(superclass) =>
-          ignore(
-            environment.bind(
-              "$super",
-              SuperClassValue(superclass, receiver_class),
-            ),
-          )
-        None => ()
-      }
+      ignore(
+        environment.bind(
+          "$super",
+          SuperClassValue(owner.superclass.unwrap_or(-1), receiver_class),
+        ),
+      )
     }
     _ => return None
   }
@@ -2932,6 +3433,49 @@ fn instance_has_method(
         }
       } else {
         false
+      }
+    ClassValue(identifier) =>
+      match
+        find_method_in_class(
+          context, identifier, name, arity, false, false, true,
+        ) {
+        Some(_) => true
+        None => false
+      }
+    _ => false
+  }
+}
+
+///|
+fn receiver_has_getter(
+  receiver : Value,
+  name : String,
+  context : RuntimeContext,
+) -> Bool {
+  match receiver {
+    InstanceValue(identifier) =>
+      if identifier >= 0 && identifier < context.instances.length() {
+        match
+          find_method_in_class(
+            context,
+            context.instances[identifier].class_identifier,
+            name,
+            0,
+            false,
+            true,
+            false,
+          ) {
+          Some(_) => true
+          None => false
+        }
+      } else {
+        false
+      }
+    ClassValue(identifier) =>
+      match
+        find_method_in_class(context, identifier, name, 0, false, true, true) {
+        Some(_) => true
+        None => false
       }
     _ => false
   }
@@ -3205,7 +3749,7 @@ fn prepare_evaluated_method_call(
         false,
         true,
       )
-    SuperValue(superclass, _, _) =>
+    SuperValue(superclass, _, _, _) =>
       find_method_in_class(
         context,
         superclass,
@@ -3230,7 +3774,7 @@ fn prepare_evaluated_method_call(
   match resolved {
     Some(resolved) => {
       let method_receiver = match receiver {
-        SuperValue(_, instance_identifier, _) =>
+        SuperValue(_, instance_identifier, _, _) =>
           Value::instance(instance_identifier)
         SuperClassValue(_, receiver_class) => Value::class_value(receiver_class)
         value => value
@@ -3344,7 +3888,7 @@ fn prepare_evaluated_property_get(
       }
     ClassValue(identifier) =>
       find_method_in_class(context, identifier, name, 0, false, true, true)
-    SuperValue(superclass, _, _) =>
+    SuperValue(superclass, _, _, _) =>
       find_method_in_class(context, superclass, name, 0, false, true, false)
     SuperClassValue(superclass, _) =>
       find_method_in_class(context, superclass, name, 0, false, true, true)
@@ -3353,7 +3897,7 @@ fn prepare_evaluated_property_get(
   match resolved {
     Some(resolved) => {
       let method_receiver = match receiver {
-        SuperValue(_, instance_identifier, _) =>
+        SuperValue(_, instance_identifier, _, _) =>
           Value::instance(instance_identifier)
         SuperClassValue(_, receiver_class) => Value::class_value(receiver_class)
         value => value
@@ -3482,14 +4026,12 @@ fn prepare_fiber_expression(
         }
         FiberValue(target) if name == "transfer" && context.current_fiber != 0 => {
           if target == context.current_fiber {
-            return FiberExpressionFailed(
-              Diagnostic::new(
-                Runtime,
-                InvalidFiberState,
-                "a fiber cannot transfer to itself",
-                span,
-              ),
-            )
+            let value = if argument_values.length() == 0 {
+              Value::null()
+            } else {
+              argument_values[0]
+            }
+            return FiberExpressionReady(Literal(value, span))
           }
           if argument_values.length() > 1 {
             return FiberExpressionFailed(
@@ -3845,14 +4387,21 @@ fn prepare_fiber_expression(
         }
       }
       match environment.get("$super") {
-        Some(SuperValue(superclass, instance_identifier, constructor_name)) =>
+        Some(
+          SuperValue(
+            superclass,
+            instance_identifier,
+            method_name,
+            is_constructor
+          )
+        ) =>
           match
             find_method_in_class(
               context,
               superclass,
-              constructor_name,
+              method_name,
               values.length(),
-              true,
+              is_constructor,
               false,
               false,
             ) {
@@ -3870,8 +4419,8 @@ fn prepare_fiber_expression(
                 None =>
                   match
                     invoke_super_constructor(
-                      superclass, instance_identifier, constructor_name, values,
-                      span, context,
+                      superclass, instance_identifier, method_name, is_constructor,
+                      values, span, context,
                     ) {
                     EvaluationFailed(issue) => FiberExpressionFailed(issue)
                     EvaluationSucceeded(result) =>
@@ -4046,12 +4595,242 @@ fn prepare_fiber_each_call(
 }
 
 ///|
+fn bind_imported_values(
+  specifier : String,
+  bindings : Array[ImportBinding],
+  module_environment : Environment,
+  environment : Environment,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  for binding in bindings {
+    let value = match module_environment.get(binding.name) {
+      Some(value) => value
+      None =>
+        return FiberStatementFailed(
+          Diagnostic::new(
+            Runtime,
+            UndefinedExport,
+            "module '\{specifier}' does not define '\{binding.name}'",
+            span,
+          ).with_source(context.current_source),
+        )
+    }
+    if environment.has_current(binding.local_name) {
+      ignore(environment.assign(binding.local_name, value))
+    } else if !environment.bind(binding.local_name, value) {
+      return FiberStatementFailed(
+        Diagnostic::new(
+          Runtime,
+          DuplicateVariable,
+          "imported name '\{binding.local_name}' is already declared in this scope",
+          span,
+        ).with_source(context.current_source),
+      )
+    }
+  }
+  FiberStatementCompleted(StatementCompleted(Value::null()))
+}
+
+///|
+fn continue_fiber_module(
+  step : FiberStatementStep,
+  module_index : Int,
+  module_name : String,
+  importer : String,
+  specifier : String,
+  bindings : Array[ImportBinding],
+  environment : Environment,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match step {
+    FiberStatementReady => abort("module statement was not executed")
+    FiberStatementFailed(issue) => {
+      context.modules[module_index].state = 2
+      context.current_source = importer
+      FiberStatementFailed(issue)
+    }
+    FiberStatementYielded(value, continuation) => {
+      context.current_source = importer
+      FiberStatementYielded(value, fn(resumed) {
+        context.current_source = module_name
+        continue_fiber_module(
+          continuation(resumed),
+          module_index,
+          module_name,
+          importer,
+          specifier,
+          bindings,
+          environment,
+          span,
+          context,
+        )
+      })
+    }
+    FiberStatementCompleted(result) =>
+      match result {
+        StatementCompleted(_) => {
+          context.modules[module_index].state = 1
+          let module_environment = context.modules[module_index].environment
+          context.current_source = importer
+          bind_imported_values(
+            specifier, bindings, module_environment, environment, span, context,
+          )
+        }
+        StatementFailed(issue) => {
+          context.modules[module_index].state = 2
+          context.current_source = importer
+          FiberStatementFailed(issue)
+        }
+        StatementReturned(_, return_span) => {
+          context.modules[module_index].state = 2
+          context.current_source = importer
+          FiberStatementFailed(
+            Diagnostic::new(
+              Runtime,
+              ReturnOutsideFunction,
+              "return can only be used inside a function",
+              return_span,
+            ).with_source(module_name),
+          )
+        }
+        StatementBroken(control_span) | StatementContinued(control_span) => {
+          context.modules[module_index].state = 2
+          context.current_source = importer
+          FiberStatementFailed(
+            Diagnostic::new(
+              Runtime,
+              BreakOutsideLoop,
+              "loop control cannot escape a module",
+              control_span,
+            ).with_source(module_name),
+          )
+        }
+      }
+  }
+}
+
+///|
+fn prepare_fiber_import(
+  specifier : String,
+  bindings : Array[ImportBinding],
+  span : SourceSpan,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  let importer = context.current_source
+  let (module_name, source) = match (context.loader)(importer, specifier) {
+    ModuleLoadFailed(message) =>
+      return FiberStatementFailed(
+        Diagnostic::new(Runtime, ModuleNotFound, message, span).with_source(
+          importer,
+        ),
+      )
+    ModuleLoaded(name, source) => (name, source)
+  }
+  match find_runtime_module(context, module_name) {
+    Some(index) =>
+      if context.modules[index].state == 2 {
+        return FiberStatementFailed(
+          Diagnostic::new(
+            Runtime,
+            ModuleNotFound,
+            "module '\{module_name}' previously failed to load",
+            span,
+          ).with_source(importer),
+        )
+      } else {
+        return bind_imported_values(
+          specifier,
+          bindings,
+          context.modules[index].environment,
+          environment,
+          span,
+          context,
+        )
+      }
+    None => ()
+  }
+  let module_environment = Environment::new()
+  bind_core_globals(module_environment)
+  let module_index = context.modules.length()
+  context.modules.push({
+    name: module_name,
+    environment: module_environment,
+    state: 0,
+  })
+  let statements = match parse_program(source) {
+    ProgramParseFailed(issues) => {
+      context.modules[module_index].state = 2
+      return FiberStatementFailed(
+        Diagnostic::new(
+          Runtime,
+          issues[0].code,
+          "could not compile module '\{specifier}': \{issues[0].message}",
+          span,
+        ).with_source(importer),
+      )
+    }
+    ProgramParsed(statements) => statements
+  }
+  let resolution_issues = resolve_program(statements)
+  if !resolution_issues.is_empty() {
+    context.modules[module_index].state = 2
+    return FiberStatementFailed(
+      Diagnostic::new(
+        Runtime,
+        resolution_issues[0].code,
+        "could not compile module '\{specifier}': \{resolution_issues[0].message}",
+        span,
+      ).with_source(importer),
+    )
+  }
+  for statement in statements {
+    match statement {
+      VariableStatement(binding_name, _, _)
+      | ClassStatement(binding_name, _, _, _, _, _) =>
+        if !module_environment.has_current(binding_name) {
+          ignore(module_environment.bind(binding_name, Value::null()))
+        }
+      ImportStatement(_, imported_bindings, _) =>
+        for binding in imported_bindings {
+          if !module_environment.has_current(binding.local_name) {
+            ignore(module_environment.bind(binding.local_name, Value::null()))
+          }
+        }
+      _ => ()
+    }
+  }
+  context.current_source = module_name
+  continue_fiber_module(
+    execute_fiber_sequence(
+      statements,
+      0,
+      Value::null(),
+      module_environment,
+      context,
+    ),
+    module_index,
+    module_name,
+    importer,
+    specifier,
+    bindings,
+    environment,
+    span,
+    context,
+  )
+}
+
+///|
 fn prepare_fiber_statement(
   statement : Stmt,
   environment : Environment,
   context : RuntimeContext,
 ) -> FiberStatementStep {
   match statement {
+    ImportStatement(specifier, bindings, span) =>
+      prepare_fiber_import(specifier, bindings, span, environment, context)
     ExpressionStatement(MethodCall(receiver, "each", arguments, call_span), _) => {
       if arguments.length() == 1 {
         match
@@ -4346,7 +5125,7 @@ fn execute_fiber_for_iteration(
   let next = match
     invoke_method(iterable, "iterate", [iterator], span, context) {
     EvaluationFailed(issue) => return FiberStatementFailed(issue)
-    EvaluationSucceeded(BoolValue(false)) =>
+    EvaluationSucceeded(value) if !value.is_truthy() =>
       return FiberStatementCompleted(StatementCompleted(last))
     EvaluationSucceeded(value) => value
   }
@@ -4700,13 +5479,49 @@ fn invoke_fiber_method(
           span,
         )
       }
+      let target_fiber = context.fibers[identifier]
+      if target_fiber.state == 1 {
+        return evaluation_error(
+          InvalidFiberState,
+          "Fiber has already been called.",
+          span,
+        )
+      }
+      if target_fiber.state == 3 {
+        return evaluation_error(
+          InvalidFiberState,
+          if name == "try" {
+            "Cannot try a finished fiber."
+          } else {
+            "Cannot call a finished fiber."
+          },
+          span,
+        )
+      }
+      if target_fiber.state == 4 {
+        return evaluation_error(
+          InvalidFiberState,
+          if name == "try" {
+            "Cannot try an aborted fiber."
+          } else {
+            "Cannot call an aborted fiber."
+          },
+          span,
+        )
+      }
       let input = if arguments.length() == 0 {
         Value::null()
       } else {
         arguments[0]
       }
+      let caller = context.current_fiber
       match resume_fiber_transfer_chain(identifier, input, span, context) {
-        EvaluationSucceeded(value) => EvaluationSucceeded(value)
+        EvaluationSucceeded(value) => {
+          if name == "transfer" && caller == 0 && !context.transferred_to_main {
+            context.terminate_main = true
+          }
+          EvaluationSucceeded(value)
+        }
         EvaluationFailed(issue) =>
           if name == "try" {
             EvaluationSucceeded(Value::string(issue.message))
@@ -4756,6 +5571,7 @@ fn resume_fiber_transfer_chain(
 ) -> EvaluationResult {
   let mut target = identifier
   let mut transferred = input
+  context.transferred_to_main = false
   while true {
     context.transfer_target = -1
     let result = resume_runtime_fiber(target, transferred, span, context)
@@ -4763,7 +5579,11 @@ fn resume_fiber_transfer_chain(
       EvaluationFailed(issue) => return EvaluationFailed(issue)
       EvaluationSucceeded(value) => {
         let next = context.transfer_target
-        if next < 0 || next == 0 {
+        if next == 0 {
+          context.transferred_to_main = true
+          return EvaluationSucceeded(value)
+        }
+        if next < 0 {
           return EvaluationSucceeded(value)
         }
         if next >= context.fibers.length() {
@@ -5020,6 +5840,23 @@ fn invoke_sequence_method(
   if identifier < 0 || identifier >= context.sequences.length() {
     return evaluation_error(InvalidOperand, "sequence is not available", span)
   }
+  if name == "iterate" || name == "iteratorValue" {
+    match context.sequences[identifier].kind {
+      SequenceSnapshot(items) =>
+        return indexed_iterator("Sequence", items, name, arguments, span)
+      SequenceMapView(items, _) =>
+        return sparse_indexed_iterator(
+          "Map sequence", items, name, arguments, span,
+        )
+      SequenceStringBytes(items) =>
+        return indexed_string_view_iterator(
+          "StringByteSequence", items, name, arguments, span,
+        )
+      SequenceStringCodePoints(indexed, _) =>
+        return code_point_view_iterator(indexed, name, arguments, span)
+      _ => ()
+    }
+  }
   if name != "iterate" && name != "iteratorValue" {
     return invoke_sequence_operation(
       Value::sequence(identifier),
@@ -5138,7 +5975,7 @@ fn invoke_list_method(
       if arguments.length() != 2 {
         invalid_collection_arity("List", name, 2, arguments.length(), span)
       } else {
-        match collection_index(arguments[0], items.length(), true, span) {
+        match collection_index(arguments[0], items.length() + 1, false, span) {
           CollectionIndexFailed(issue) => EvaluationFailed(issue)
           CollectionIndexSucceeded(index) => {
             items.push(arguments[1])
@@ -5326,38 +6163,66 @@ fn invoke_map_method(
     if arguments.length() != 1 {
       return invalid_collection_arity("Map", name, 1, arguments.length(), span)
     }
-    let sequence_identifier = match arguments[0] {
-      NullValue => {
-        let values : Array[Value] = []
-        for entry in entries {
-          values.push(context.new_map_entry(entry.key, entry.value))
+    if name == "iteratorValue" {
+      let raw = match arguments[0] {
+        NumberValue(number) => {
+          let index = number.to_int()
+          if Double::from_int(index) != number {
+            return evaluation_error(
+              InvalidOperand,
+              "Map iterator must be an integer",
+              span,
+            )
+          }
+          index
         }
-        match context.new_sequence(values) {
-          SequenceValue(sequence_identifier) => sequence_identifier
-          _ => abort("new_sequence must return a Sequence")
-        }
-      }
-      IteratorValue(iterator_identifier) =>
-        if iterator_identifier < 0 ||
-          iterator_identifier >= context.iterators.length() {
+        value =>
           return evaluation_error(
             InvalidOperand,
-            "Map iterator is not available",
+            "Map iterator must be a Num, received \{value.type_name()}",
             span,
           )
-        } else {
-          context.iterators[iterator_identifier].sequence_identifier
+      }
+      if raw < 0 || raw % 2 != 0 || raw / 2 >= entries.length() {
+        return evaluation_error(
+          IndexOutOfBounds,
+          "Map iterator is outside the valid range",
+          span,
+        )
+      }
+      let index = raw / 2
+      return EvaluationSucceeded(
+        context.new_map_entry(entries[index].key, entries[index].value),
+      )
+    }
+    let next = match arguments[0] {
+      NullValue => 0
+      NumberValue(number) => {
+        let current = number.to_int()
+        if Double::from_int(current) != number {
+          return evaluation_error(
+            InvalidOperand,
+            "Map iterator must be an integer",
+            span,
+          )
         }
+        if current < 0 {
+          return EvaluationSucceeded(Value::bool(false))
+        }
+        (current / 2 + 1) * 2
+      }
       value =>
         return evaluation_error(
           InvalidOperand,
-          "Map iterator must be null or Iterator, received \{value.type_name()}",
+          "Map iterator must be null or Num, received \{value.type_name()}",
           span,
         )
     }
-    return invoke_sequence_method(
-      sequence_identifier, name, arguments, span, context,
-    )
+    return if next / 2 >= entries.length() {
+      EvaluationSucceeded(Value::bool(false))
+    } else {
+      EvaluationSucceeded(Value::number(Double::from_int(next)))
+    }
   }
   match name {
     "containsKey" =>
@@ -5428,6 +6293,7 @@ fn parse_decimal_string(text : String) -> Double? {
   }
   let mut value = 0.0
   let mut digits = 0
+  let mut fractional_digits = 0
   while index < characters.length() && is_digit(characters[index].to_int()) {
     value = value * 10.0 + Double::from_int(characters[index].to_int() - 48)
     digits = digits + 1
@@ -5435,10 +6301,9 @@ fn parse_decimal_string(text : String) -> Double? {
   }
   if index < characters.length() && characters[index].to_int() == 46 {
     index = index + 1
-    let mut place = 0.1
     while index < characters.length() && is_digit(characters[index].to_int()) {
-      value = value + Double::from_int(characters[index].to_int() - 48) * place
-      place = place * 0.1
+      value = value * 10.0 + Double::from_int(characters[index].to_int() - 48)
+      fractional_digits = fractional_digits + 1
       digits = digits + 1
       index = index + 1
     }
@@ -5490,6 +6355,11 @@ fn parse_decimal_string(text : String) -> Double? {
       }
       value = value * factor
     }
+  }
+  for digit_index = 0
+      digit_index < fractional_digits
+      digit_index = digit_index + 1 {
+    value = value / 10.0
   }
   if index != characters.length() {
     None
@@ -5558,12 +6428,10 @@ fn invoke_core_class_method(
             )
         }
       }
-    (FiberClass, "yield") | (FiberClass, "suspend") =>
-      evaluation_error(
-        InvalidFiberState,
-        "Fiber.\{name} must appear in a resumable top-level fiber statement",
-        span,
-      )
+    (FiberClass, "yield") | (FiberClass, "suspend") => {
+      context.terminate_main = true
+      EvaluationSucceeded(Value::null())
+    }
     (FnClass, "new") =>
       if arguments.length() != 1 {
         invalid_collection_arity("Fn", name, 1, arguments.length(), span)
@@ -5610,14 +6478,29 @@ fn invoke_core_class_method(
       } else {
         EvaluationSucceeded(context.new_map())
       }
+    (MapEntryClass, "new") =>
+      if arguments.length() != 2 {
+        invalid_collection_arity("MapEntry", name, 2, arguments.length(), span)
+      } else {
+        EvaluationSucceeded(context.new_map_entry(arguments[0], arguments[1]))
+      }
     (NumClass, "fromString") =>
       if arguments.length() != 1 {
         invalid_collection_arity("Num", name, 1, arguments.length(), span)
       } else {
         match arguments[0] {
           StringValue(text) =>
-            match parse_decimal_string(text) {
-              Some(number) => EvaluationSucceeded(Value::number(number))
+            match parse_decimal_string(text.trim().to_owned()) {
+              Some(number) =>
+                if number.is_inf() {
+                  evaluation_error(
+                    InvalidNumber,
+                    "Number literal is too large.",
+                    span,
+                  )
+                } else {
+                  EvaluationSucceeded(Value::number(number))
+                }
               None => EvaluationSucceeded(Value::null())
             }
           value =>
@@ -5791,11 +6674,19 @@ fn RuntimeContext::write_output(
   text : String,
   newline : Bool,
 ) -> Unit {
+  let characters : Array[Char] = []
+  for character in text.to_array() {
+    if character.to_int() == 0 {
+      break
+    }
+    characters.push(character)
+  }
+  let visible = String::from_array(characters)
   if self.output_line_open {
     let index = self.output.length() - 1
-    self.output[index] = self.output[index] + text
+    self.output[index] = self.output[index] + visible
   } else {
-    self.output.push(text)
+    self.output.push(visible)
   }
   self.output_line_open = !newline
 }
@@ -5914,7 +6805,7 @@ fn invoke_method(
       }
     InstanceValue(identifier) =>
       invoke_instance_method(identifier, name, arguments, span, context)
-    SuperValue(superclass, instance_identifier, _) =>
+    SuperValue(superclass, instance_identifier, _, _) =>
       match
         find_method_in_class(
           context,
@@ -5982,7 +6873,7 @@ fn read_sequence_property(
   if name != "count" && name != "isEmpty" && name != "toList" {
     return evaluation_error(
       UndefinedMethod,
-      "\{receiver.type_name()} does not implement getter '\{name}'",
+      "\{receiver.type_name()} does not implement '\{name}'.",
       span,
     )
   }
@@ -6038,7 +6929,7 @@ fn read_core_class_property(
       "pi" => EvaluationSucceeded(Value::number(@math.PI))
       "tau" => EvaluationSucceeded(Value::number(@math.PI * 2.0))
       "largest" => EvaluationSucceeded(Value::number(1.7976931348623157e308))
-      "smallest" => EvaluationSucceeded(Value::number(5.0e-324))
+      "smallest" => EvaluationSucceeded(Value::number(2.2250738585072014e-308))
       "maxSafeInteger" => EvaluationSucceeded(Value::number(9007199254740991.0))
       "minSafeInteger" =>
         EvaluationSucceeded(Value::number(-9007199254740991.0))
@@ -6074,7 +6965,18 @@ fn read_number_property(
     "cos" => EvaluationSucceeded(Value::number(@math.cos(number)))
     "exp" => EvaluationSucceeded(Value::number(@math.exp(number)))
     "floor" => EvaluationSucceeded(Value::number(number.floor()))
-    "fraction" => EvaluationSucceeded(Value::number(number - truncated))
+    "fraction" => {
+      let fraction = number - truncated
+      EvaluationSucceeded(
+        Value::number(
+          if fraction == 0.0 && number.reinterpret_as_uint64() >> 63 == 1UL {
+            0x8000_0000_0000_0000UL.reinterpret_as_double()
+          } else {
+            fraction
+          },
+        ),
+      )
+    }
     "isInfinity" => EvaluationSucceeded(Value::bool(number.is_inf()))
     "isInteger" =>
       EvaluationSucceeded(
@@ -6084,7 +6986,18 @@ fn read_number_property(
     "log" => EvaluationSucceeded(Value::number(@math.ln(number)))
     "log2" => EvaluationSucceeded(Value::number(@math.log2(number)))
     "round" => EvaluationSucceeded(Value::number(number.round()))
-    "sign" => EvaluationSucceeded(Value::number(number.signum()))
+    "sign" =>
+      EvaluationSucceeded(
+        Value::number(
+          if number > 0.0 {
+            1.0
+          } else if number < 0.0 {
+            -1.0
+          } else {
+            0.0
+          },
+        ),
+      )
     "sin" => EvaluationSucceeded(Value::number(@math.sin(number)))
     "sqrt" => EvaluationSucceeded(Value::number(number.sqrt()))
     "tan" => EvaluationSucceeded(Value::number(@math.tan(number)))
@@ -6128,10 +7041,12 @@ fn read_property(
         None =>
           if name == "toString" {
             EvaluationSucceeded(
-              Value::string("\{class_definition.name} instance"),
+              Value::string("instance of \{class_definition.name}"),
             )
           } else if name == "type" {
             EvaluationSucceeded(Value::class_value(class_identifier))
+          } else if class_definition.inherits_sequence {
+            read_sequence_property(receiver, name, span, context)
           } else {
             evaluation_error(
               UndefinedMethod,
@@ -6141,17 +7056,35 @@ fn read_property(
           }
       }
     }
-    SuperValue(superclass, instance_identifier, _) =>
+    SuperValue(superclass, instance_identifier, _, _) =>
       match
         find_method_in_class(context, superclass, name, 0, false, true, false) {
         Some(resolved) =>
           invoke_user_method(instance_identifier, resolved, [], span, context)
         None =>
-          evaluation_error(
-            UndefinedMethod,
-            "superclass does not implement getter '\{name}'",
-            span,
-          )
+          if superclass < 0 && name == "toString" {
+            if instance_identifier >= 0 &&
+              instance_identifier < context.instances.length() {
+              let class_identifier = context.instances[instance_identifier].class_identifier
+              EvaluationSucceeded(
+                Value::string(
+                  "instance of \{context.classes[class_identifier].name}",
+                ),
+              )
+            } else {
+              evaluation_error(
+                UndefinedMethod,
+                "instance is not available in this runtime",
+                span,
+              )
+            }
+          } else {
+            evaluation_error(
+              UndefinedMethod,
+              "superclass does not implement getter '\{name}'",
+              span,
+            )
+          }
       }
     ClassValue(identifier) =>
       match
@@ -6161,8 +7094,12 @@ fn read_property(
         None =>
           if name == "toString" || name == "name" {
             EvaluationSucceeded(Value::string(context.classes[identifier].name))
+          } else if name == "attributes" {
+            EvaluationSucceeded(context.classes[identifier].attributes)
           } else if name == "type" {
-            EvaluationSucceeded(Value::core_class(ClassClass))
+            EvaluationSucceeded(
+              Value::meta_class(context.classes[identifier].name + " metaclass"),
+            )
           } else if name == "supertype" {
             match context.classes[identifier].superclass {
               Some(superclass) =>
@@ -6179,9 +7116,49 @@ fn read_property(
       }
     CoreClassValue(class_value) =>
       if name == "type" {
-        EvaluationSucceeded(Value::core_class(ClassClass))
+        if class_value == ClassClass {
+          EvaluationSucceeded(Value::core_class(ClassClass))
+        } else {
+          EvaluationSucceeded(
+            Value::meta_class(class_value.name() + " metaclass"),
+          )
+        }
       } else {
         read_core_class_property(class_value, name, span, context)
+      }
+    MetaClassValue(meta_name) =>
+      if name == "name" || name == "toString" {
+        EvaluationSucceeded(Value::string(meta_name))
+      } else if name == "type" {
+        EvaluationSucceeded(Value::core_class(ClassClass))
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "\{meta_name} does not implement getter '\{name}'",
+          span,
+        )
+      }
+    ClassAttributesValue(self_identifier, methods_identifier) =>
+      if name == "self" {
+        if self_identifier < 0 {
+          EvaluationSucceeded(Value::null())
+        } else {
+          EvaluationSucceeded(Value::map(self_identifier))
+        }
+      } else if name == "methods" {
+        if methods_identifier < 0 {
+          EvaluationSucceeded(Value::null())
+        } else {
+          EvaluationSucceeded(Value::map(methods_identifier))
+        }
+      } else if name == "toString" {
+        EvaluationSucceeded(Value::string("<class attributes>"))
+      } else {
+        evaluation_error(
+          UndefinedMethod,
+          "ClassAttributes does not implement getter '\{name}'",
+          span,
+        )
       }
     SuperClassValue(superclass, receiver_class) =>
       match
@@ -6189,11 +7166,17 @@ fn read_property(
         Some(resolved) =>
           invoke_static_method(receiver_class, resolved, [], span, context)
         None =>
-          evaluation_error(
-            UndefinedMethod,
-            "superclass does not implement static getter '\{name}'",
-            span,
-          )
+          if superclass < 0 && (name == "name" || name == "toString") {
+            EvaluationSucceeded(
+              Value::string(context.classes[receiver_class].name),
+            )
+          } else {
+            evaluation_error(
+              UndefinedMethod,
+              "superclass does not implement static getter '\{name}'",
+              span,
+            )
+          }
       }
     FunctionValue(identifier) =>
       if name == "arity" {
@@ -6328,14 +7311,22 @@ fn read_property(
             for entry in context.maps[identifier].entries {
               values.push(entry.key)
             }
-            EvaluationSucceeded(context.new_sequence(values))
+            EvaluationSucceeded(
+              context.new_sequence_kind(
+                SequenceMapView(values, "MapKeySequence"),
+              ),
+            )
           }
           "values" => {
             let values : Array[Value] = []
             for entry in context.maps[identifier].entries {
               values.push(entry.value)
             }
-            EvaluationSucceeded(context.new_sequence(values))
+            EvaluationSucceeded(
+              context.new_sequence_kind(
+                SequenceMapView(values, "MapValueSequence"),
+              ),
+            )
           }
           "type" => EvaluationSucceeded(Value::core_class(MapClass))
           _ => read_sequence_property(receiver, name, span, context)
@@ -6419,7 +7410,7 @@ fn read_property(
       } else {
         evaluation_error(
           UndefinedMethod,
-          "\{value.type_name()} does not implement getter '\{name}'",
+          "\{value.type_name()} does not implement '\{name}'.",
           span,
         )
       }
@@ -6499,7 +7490,20 @@ fn evaluate_expression_in(
               }
           }
       }
-    Variable(name, span) =>
+    Variable(name, span) => {
+      if environment.has_method_scope() {
+        match environment.get_method_local(name) {
+          Some(value) => return EvaluationSucceeded(value)
+          None => ()
+        }
+        match environment.get("this") {
+          Some(receiver) =>
+            if receiver_has_getter(receiver, name, context) {
+              return read_property(receiver, name, span, context)
+            }
+          None => ()
+        }
+      }
       match environment.get(name) {
         Some(value) => EvaluationSucceeded(value)
         None =>
@@ -6509,10 +7513,29 @@ fn evaluate_expression_in(
             span,
           )
       }
+    }
     Assign(name, value, span) =>
       match evaluate_expression_in(value, environment, context) {
         EvaluationFailed(issue) => EvaluationFailed(issue)
-        EvaluationSucceeded(value) =>
+        EvaluationSucceeded(value) => {
+          if environment.has_method_scope() {
+            if environment.assign_method_local(name, value) {
+              return EvaluationSucceeded(value)
+            }
+            match environment.get("this") {
+              Some(receiver) =>
+                if instance_has_method(receiver, name + "=", 1, context) {
+                  return invoke_method(
+                    receiver,
+                    name + "=",
+                    [value],
+                    span,
+                    context,
+                  )
+                }
+              None => ()
+            }
+          }
           if environment.assign(name, value) {
             EvaluationSucceeded(value)
           } else {
@@ -6522,16 +7545,27 @@ fn evaluate_expression_in(
               span,
             )
           }
+        }
       }
     FieldGet(name, span) =>
       match environment.get("this") {
         Some(InstanceValue(identifier)) =>
-          match context.get_instance_field(identifier, name) {
-            Some(value) => EvaluationSucceeded(value)
-            None =>
+          match environment.get("$class") {
+            Some(ClassValue(owner_identifier)) =>
+              match
+                context.get_instance_field(identifier, owner_identifier, name) {
+                Some(value) => EvaluationSucceeded(value)
+                None =>
+                  evaluation_error(
+                    UndefinedVariable,
+                    "instance field '\{name}' is not available",
+                    span,
+                  )
+              }
+            _ =>
               evaluation_error(
                 UndefinedVariable,
-                "instance field '\{name}' is not available",
+                "instance field '\{name}' has no declaring class",
                 span,
               )
           }
@@ -6548,14 +7582,25 @@ fn evaluate_expression_in(
         EvaluationSucceeded(value) =>
           match environment.get("this") {
             Some(InstanceValue(identifier)) =>
-              if context.set_instance_field(identifier, name, value) {
-                EvaluationSucceeded(value)
-              } else {
-                evaluation_error(
-                  UndefinedVariable,
-                  "instance field '\{name}' is not available",
-                  span,
-                )
+              match environment.get("$class") {
+                Some(ClassValue(owner_identifier)) =>
+                  if context.set_instance_field(
+                      identifier, owner_identifier, name, value,
+                    ) {
+                    EvaluationSucceeded(value)
+                  } else {
+                    evaluation_error(
+                      UndefinedVariable,
+                      "instance field '\{name}' is not available",
+                      span,
+                    )
+                  }
+                _ =>
+                  evaluation_error(
+                    UndefinedVariable,
+                    "instance field '\{name}' has no declaring class",
+                    span,
+                  )
               }
             _ =>
               evaluation_error(
@@ -6646,9 +7691,17 @@ fn evaluate_expression_in(
         }
       }
       match environment.get("$super") {
-        Some(SuperValue(superclass, instance_identifier, constructor_name)) =>
+        Some(
+          SuperValue(
+            superclass,
+            instance_identifier,
+            method_name,
+            is_constructor
+          )
+        ) =>
           invoke_super_constructor(
-            superclass, instance_identifier, constructor_name, values, span, context,
+            superclass, instance_identifier, method_name, is_constructor, values,
+            span, context,
           )
         _ =>
           evaluation_error(
@@ -6702,7 +7755,13 @@ fn evaluate_expression_in(
           match evaluate_expression_in(right, environment, context) {
             EvaluationFailed(issue) => EvaluationFailed(issue)
             EvaluationSucceeded(right_value) =>
-              evaluate_is_type(left_value, right_value, span, context)
+              evaluate_binary_values(
+                IsType,
+                left_value,
+                right_value,
+                span,
+                context,
+              )
           }
       }
     Binary(left, operator, right, span) =>
@@ -6744,6 +7803,9 @@ fn execute_statements_in(
       StatementBroken(span) => return StatementBroken(span)
       StatementContinued(span) => return StatementContinued(span)
       StatementFailed(issue) => return StatementFailed(issue)
+    }
+    if context.terminate_main {
+      return StatementCompleted(Value::null())
     }
   }
   StatementCompleted(last)
@@ -6812,46 +7874,31 @@ fn execute_iterable_for_in(
         ),
       )
   }
-  environment.push_scope()
-  ignore(environment.bind(name, Value::null()))
   let mut last = Value::null()
   let mut iterator = Value::null()
   while true {
     match invoke_method(iterable, "iterate", [iterator], span, context) {
-      EvaluationFailed(issue) => {
-        ignore(environment.pop_scope())
-        return StatementFailed(issue)
-      }
-      EvaluationSucceeded(BoolValue(false)) => break
+      EvaluationFailed(issue) => return StatementFailed(issue)
+      EvaluationSucceeded(value) if !value.is_truthy() => break
       EvaluationSucceeded(next) => iterator = next
     }
     let item = match
       invoke_method(iterable, "iteratorValue", [iterator], span, context) {
-      EvaluationFailed(issue) => {
-        ignore(environment.pop_scope())
-        return StatementFailed(issue)
-      }
+      EvaluationFailed(issue) => return StatementFailed(issue)
       EvaluationSucceeded(value) => value
     }
-    ignore(environment.assign(name, item))
-    match execute_statement_in(body, environment, context) {
+    environment.push_scope()
+    ignore(environment.bind(name, item))
+    let result = execute_statement_in(body, environment, context)
+    ignore(environment.pop_scope())
+    match result {
       StatementCompleted(value) => last = value
-      StatementReturned(value, span) => {
-        ignore(environment.pop_scope())
-        return StatementReturned(value, span)
-      }
-      StatementBroken(_) => {
-        ignore(environment.pop_scope())
-        return StatementCompleted(last)
-      }
+      StatementReturned(value, span) => return StatementReturned(value, span)
+      StatementBroken(_) => return StatementCompleted(last)
       StatementContinued(_) => ()
-      StatementFailed(issue) => {
-        ignore(environment.pop_scope())
-        return StatementFailed(issue)
-      }
+      StatementFailed(issue) => return StatementFailed(issue)
     }
   }
-  ignore(environment.pop_scope())
   StatementCompleted(last)
 }
 
@@ -6880,14 +7927,7 @@ fn execute_module_source(
   match find_runtime_module(context, name) {
     Some(index) =>
       if context.modules[index].state == 0 {
-        return ModuleExecutionFailed([
-          Diagnostic::new(
-            Runtime,
-            CircularImport,
-            "circular import reached module '\{name}'",
-            SourceSpan::empty(),
-          ).with_source(name),
-        ])
+        return ModuleExecuted(context.modules[index].environment, Value::null())
       } else if context.modules[index].state == 1 {
         return ModuleExecuted(context.modules[index].environment, Value::null())
       } else {
@@ -6916,6 +7956,31 @@ fn execute_module_source(
       return ModuleExecutionFailed(issues)
     }
     ProgramParsed(statements) => statements
+  }
+  let resolution_issues = resolve_program(statements)
+  if !resolution_issues.is_empty() {
+    context.modules[module_index].state = 2
+    let issues : Array[Diagnostic] = []
+    for diagnostic in resolution_issues {
+      issues.push(diagnostic.with_source(name))
+    }
+    return ModuleExecutionFailed(issues)
+  }
+  for statement in statements {
+    match statement {
+      VariableStatement(binding_name, _, _)
+      | ClassStatement(binding_name, _, _, _, _, _) =>
+        if !environment.has_current(binding_name) {
+          ignore(environment.bind(binding_name, Value::null()))
+        }
+      ImportStatement(_, bindings, _) =>
+        for binding in bindings {
+          if !environment.has_current(binding.local_name) {
+            ignore(environment.bind(binding.local_name, Value::null()))
+          }
+        }
+      _ => ()
+    }
   }
   let previous_source = context.current_source
   context.current_source = name
@@ -6986,11 +8051,22 @@ fn load_imported_module(
         ModuleExecutionFailed(issues) => {
           let traced : Array[Diagnostic] = []
           for issue in issues {
-            traced.push(
-              issue.with_frame(
-                CallFrame::new("import \"\{specifier}\"", importer, span),
-              ),
-            )
+            if issue.phase == Runtime {
+              traced.push(
+                issue.with_frame(
+                  CallFrame::new("import \"\{specifier}\"", importer, span),
+                ),
+              )
+            } else {
+              traced.push(
+                Diagnostic::new(
+                  Runtime,
+                  issue.code,
+                  "could not compile module '\{specifier}': \{issue.message}",
+                  span,
+                ).with_source(importer),
+              )
+            }
           }
           ModuleExecutionFailed(traced)
         }
@@ -7015,7 +8091,16 @@ fn execute_statement_in(
         EvaluationFailed(issue) => StatementFailed(issue)
       }
     VariableStatement(name, initializer, span) => {
-      if !environment.bind(name, Value::null()) {
+      let value = match initializer {
+        None => Value::null()
+        Some(expression) =>
+          match evaluate_expression_in(expression, environment, context) {
+            EvaluationSucceeded(value) => value
+            EvaluationFailed(issue) => return StatementFailed(issue)
+          }
+      }
+      if !environment.has_current(name) &&
+        !environment.bind(name, Value::null()) {
         return StatementFailed(
           Diagnostic::new(
             Runtime,
@@ -7024,14 +8109,6 @@ fn execute_statement_in(
             span,
           ),
         )
-      }
-      let value = match initializer {
-        None => Value::null()
-        Some(expression) =>
-          match evaluate_expression_in(expression, environment, context) {
-            EvaluationSucceeded(value) => value
-            EvaluationFailed(issue) => return StatementFailed(issue)
-          }
       }
       ignore(environment.assign(name, value))
       StatementCompleted(value)
@@ -7104,7 +8181,9 @@ fn execute_statement_in(
                   ).with_source(context.current_source),
                 )
             }
-            if !environment.bind(binding.local_name, value) {
+            if environment.has_current(binding.local_name) {
+              ignore(environment.assign(binding.local_name, value))
+            } else if !environment.bind(binding.local_name, value) {
               return StatementFailed(
                 Diagnostic::new(
                   Runtime,
@@ -7118,7 +8197,14 @@ fn execute_statement_in(
           StatementCompleted(Value::null())
         }
       }
-    ClassStatement(name, superclass_name, methods, is_foreign, span) => {
+    ClassStatement(
+      name,
+      superclass_expression,
+      methods,
+      class_attributes,
+      is_foreign,
+      span
+    ) => {
       for index = 0; index < methods.length(); index = index + 1 {
         for other = index + 1; other < methods.length(); other = other + 1 {
           let left = methods[index]
@@ -7139,7 +8225,8 @@ fn execute_statement_in(
           }
         }
       }
-      if !environment.bind(name, Value::null()) {
+      if !environment.has_current(name) &&
+        !environment.bind(name, Value::null()) {
         return StatementFailed(
           Diagnostic::new(
             Runtime,
@@ -7149,29 +8236,29 @@ fn execute_statement_in(
           ),
         )
       }
-      let superclass = match superclass_name {
-        None => None
-        Some(superclass_name) =>
-          match environment.get(superclass_name) {
-            Some(ClassValue(identifier)) => Some(identifier)
-            Some(value) =>
-              return StatementFailed(
-                Diagnostic::new(
-                  Runtime,
-                  InvalidSuperclass,
-                  "superclass '\{superclass_name}' must be a Class, received \{value.type_name()}",
-                  span,
-                ),
-              )
-            None =>
-              return StatementFailed(
-                Diagnostic::new(
-                  Runtime,
-                  InvalidSuperclass,
-                  "undefined superclass '\{superclass_name}'",
-                  span,
-                ),
-              )
+      let (superclass, inherits_sequence) = match superclass_expression {
+        None => (None, false)
+        Some(expression) =>
+          match evaluate_expression_in(expression, environment, context) {
+            EvaluationFailed(issue) => return StatementFailed(issue)
+            EvaluationSucceeded(value) =>
+              match value {
+                ClassValue(identifier) =>
+                  (
+                    Some(identifier),
+                    context.classes[identifier].inherits_sequence,
+                  )
+                CoreClassValue(SequenceClass) => (None, true)
+                value =>
+                  return StatementFailed(
+                    Diagnostic::new(
+                      Runtime,
+                      InvalidSuperclass,
+                      "superclass must be a Class, received \{value.type_name()}",
+                      span,
+                    ),
+                  )
+              }
           }
       }
       let foreign_binding = if is_foreign {
@@ -7191,15 +8278,47 @@ fn execute_statement_in(
       } else {
         None
       }
+      for declaration in methods {
+        if declaration.is_foreign {
+          let signature = method_signature(declaration)
+          let mut found = false
+          for binding in context.foreign_methods {
+            if binding.matches(
+                context.current_source,
+                name,
+                declaration.is_static,
+                signature,
+              ) {
+              found = true
+              break
+            }
+          }
+          if !found {
+            return StatementFailed(
+              Diagnostic::new(
+                Runtime,
+                ForeignBindingMissing,
+                "no foreign binding for \{context.current_source}:\{name}.\{signature}",
+                declaration.span,
+              ),
+            )
+          }
+        }
+      }
       let identifier = context.classes.length()
+      let attributes = build_class_attributes(
+        class_attributes, methods, context,
+      )
       context.classes.push({
         name,
         superclass,
+        inherits_sequence,
         methods,
         is_foreign,
         foreign_binding,
         environment: environment.capture(),
         static_fields: [],
+        attributes,
         source_name: context.current_source,
       })
       let value = Value::class_value(identifier)

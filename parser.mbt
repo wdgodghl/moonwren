@@ -15,11 +15,19 @@ priv struct Parser {
   tokens : Array[Token]
   diagnostics : Array[Diagnostic]
   mut current : Int
+  mut current_method_name : String
+  mut current_method_is_constructor : Bool
 }
 
 ///|
 fn Parser::new(tokens : Array[Token]) -> Parser {
-  { tokens, diagnostics: [], current: 0, }
+  {
+    tokens,
+    diagnostics: [],
+    current: 0,
+    current_method_name: "",
+    current_method_is_constructor: false,
+  }
 }
 
 ///|
@@ -108,31 +116,33 @@ fn parse_number_value(text : String) -> Double {
       normalized.unsafe_get(1).to_int() == 120 ||
       normalized.unsafe_get(1).to_int() == 88
     ) {
-    let mut value = 0
+    let mut value = 0.0
     for index = 2; index < normalized.length(); index = index + 1 {
-      value = value * 16 + hex_value(normalized.unsafe_get(index).to_int())
+      value = value * 16.0 +
+        Double::from_int(hex_value(normalized.unsafe_get(index).to_int()))
     }
-    return Double::from_int(value)
+    return value
   }
   let mut index = 0
   let mut value = 0.0
-  while index < normalized.length() &&
-        is_digit(normalized.unsafe_get(index).to_int()) {
-    value = value * 10.0 +
-      Double::from_int(normalized.unsafe_get(index).to_int() - 48)
-    index = index + 1
-  }
-  if index < normalized.length() && normalized.unsafe_get(index).to_int() == 46 {
-    index = index + 1
-    let mut place = 0.1
-    while index < normalized.length() &&
-          is_digit(normalized.unsafe_get(index).to_int()) {
-      value = value +
-        Double::from_int(normalized.unsafe_get(index).to_int() - 48) * place
-      place = place * 0.1
+  let mut decimal_digits = 0
+  let mut after_decimal = false
+  while index < normalized.length() {
+    let code = normalized.unsafe_get(index).to_int()
+    if is_digit(code) {
+      value = value * 10.0 + Double::from_int(code - 48)
+      if after_decimal {
+        decimal_digits = decimal_digits + 1
+      }
       index = index + 1
+    } else if code == 46 {
+      after_decimal = true
+      index = index + 1
+    } else {
+      break
     }
   }
+  let mut explicit_exponent = 0
   if index < normalized.length() &&
     (
       normalized.unsafe_get(index).to_int() == 69 ||
@@ -148,36 +158,153 @@ fn parse_number_value(text : String) -> Double {
       normalized.unsafe_get(index).to_int() == 43 {
       index = index + 1
     }
-    let mut exponent = 0
     while index < normalized.length() {
-      exponent = exponent * 10 + normalized.unsafe_get(index).to_int() - 48
+      explicit_exponent = explicit_exponent * 10 +
+        normalized.unsafe_get(index).to_int() -
+        48
       index = index + 1
     }
-    let mut scale = 1.0
-    let mut power = 0
-    while power < exponent {
-      scale = scale * 10.0
+    if sign < 0 {
+      explicit_exponent = -explicit_exponent
+    }
+  }
+  let exponent = explicit_exponent - decimal_digits
+  let mut power = 0
+  if exponent < 0 {
+    while power < -exponent {
+      value = value / 10.0
       power = power + 1
     }
-    if sign < 0 {
-      value = value / scale
-    } else {
-      value = value * scale
+  } else {
+    while power < exponent {
+      value = value * 10.0
+      power = power + 1
     }
   }
   value
 }
 
 ///|
+fn append_utf8_bytes(bytes : Array[Int], code_point : Int) -> Unit {
+  if code_point <= 0x7f {
+    bytes.push(code_point)
+  } else if code_point <= 0x7ff {
+    bytes.push(0xc0 | (code_point >> 6))
+    bytes.push(0x80 | (code_point & 0x3f))
+  } else if code_point <= 0xffff {
+    bytes.push(0xe0 | (code_point >> 12))
+    bytes.push(0x80 | ((code_point >> 6) & 0x3f))
+    bytes.push(0x80 | (code_point & 0x3f))
+  } else {
+    bytes.push(0xf0 | (code_point >> 18))
+    bytes.push(0x80 | ((code_point >> 12) & 0x3f))
+    bytes.push(0x80 | ((code_point >> 6) & 0x3f))
+    bytes.push(0x80 | (code_point & 0x3f))
+  }
+}
+
+///|
+fn decode_string_value(text : String) -> Value {
+  let bytes : Array[Int] = []
+  let characters = text[1:text.length() - 1].to_owned().to_array()
+  let mut index = 0
+  while index < characters.length() {
+    let code = characters[index].to_int()
+    if code != 92 {
+      append_utf8_bytes(bytes, code)
+      index = index + 1
+      continue
+    }
+    index = index + 1
+    let escaped = characters[index].to_int()
+    index = index + 1
+    match escaped {
+      34 => bytes.push(34)
+      37 => bytes.push(37)
+      48 => bytes.push(0)
+      92 => bytes.push(92)
+      97 => bytes.push(7)
+      98 => bytes.push(8)
+      101 => bytes.push(27)
+      102 => bytes.push(12)
+      110 => bytes.push(10)
+      114 => bytes.push(13)
+      116 => bytes.push(9)
+      118 => bytes.push(11)
+      120 | 117 | 85 => {
+        let digit_count = if escaped == 120 {
+          2
+        } else if escaped == 117 {
+          4
+        } else {
+          8
+        }
+        let mut value = 0
+        for digit_index = 0
+            digit_index < digit_count
+            digit_index = digit_index + 1 {
+          value = value * 16 + hex_value(characters[index].to_int())
+          index = index + 1
+        }
+        if escaped == 120 {
+          bytes.push(value)
+        } else {
+          append_utf8_bytes(bytes, value)
+        }
+      }
+      _ => bytes.push(escaped)
+    }
+  }
+  string_value_from_bytes(bytes)
+}
+
+///|
+fn only_horizontal_whitespace(text : String) -> Bool {
+  for character in text {
+    let code = character.to_int()
+    if code != 32 && code != 9 && code != 13 {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn decode_raw_string_value(text : String) -> Value {
+  let mut content = text[3:text.length() - 3].to_owned()
+  let mut first_newline = -1
+  for index = 0; index < content.length(); index = index + 1 {
+    if content.unsafe_get(index).to_int() == 10 {
+      first_newline = index
+      break
+    }
+  }
+  if first_newline >= 0 &&
+    only_horizontal_whitespace(content[0:first_newline].to_owned()) {
+    content = content[first_newline + 1:content.length()].to_owned()
+  }
+  let mut last_newline = -1
+  for index = 0; index < content.length(); index = index + 1 {
+    if content.unsafe_get(index).to_int() == 10 {
+      last_newline = index
+    }
+  }
+  if last_newline >= 0 &&
+    only_horizontal_whitespace(
+      content[last_newline + 1:content.length()].to_owned(),
+    ) {
+    content = content[0:last_newline].to_owned()
+  }
+  Value::string(content)
+}
+
+///|
 fn decode_string(text : String) -> String {
-  text[1:text.length() - 1]
-  .to_owned()
-  .replace_all(old="\\n", new="\n")
-  .replace_all(old="\\r", new="\r")
-  .replace_all(old="\\t", new="\t")
-  .replace_all(old="\\\"", new="\"")
-  .replace_all(old="\\%", new="%")
-  .replace_all(old="\\\\", new="\\")
+  match decode_string_value(text) {
+    StringValue(decoded) => decoded
+    RawStringValue(bytes) => string_display_from_bytes(bytes)
+    _ => abort("decoded string literal must be a String")
+  }
 }
 
 ///|
@@ -197,9 +324,7 @@ fn Parser::interpolated_string(self : Parser, token : Token) -> Expr {
       continue
     }
     let prefix = content[segment_start:index].to_owned()
-    parts.push(
-      Literal(Value::string(decode_string("\"" + prefix + "\"")), token.span),
-    )
+    parts.push(Literal(decode_string_value("\"" + prefix + "\""), token.span))
     let expression_start = index + 2
     let mut cursor = expression_start
     let mut depth = 1
@@ -229,16 +354,29 @@ fn Parser::interpolated_string(self : Parser, token : Token) -> Expr {
         "unterminated interpolation expression",
         token.span,
       )
-      return Literal(Value::string(decode_string(token.lexeme)), token.span)
+      return Literal(decode_string_value(token.lexeme), token.span)
     }
     let source = content[expression_start:cursor - 1].to_owned()
-    let expression = match parse_expression(source) {
-      ExpressionParsed(expression) => expression
-      ExpressionParseFailed(issues) => {
-        for issue in issues {
-          self.diagnostics.push(issue)
+    let expression = if only_horizontal_whitespace(source) {
+      let position : SourcePosition = {
+        offset: token.span.end.offset,
+        line: token.span.end.line + 1,
+        column: 1,
+      }
+      self.report(ExpectedExpression, "expected interpolation expression", {
+        start: position,
+        end: position,
+      })
+      Literal(Value::null(), token.span)
+    } else {
+      match parse_expression(source) {
+        ExpressionParsed(expression) => expression
+        ExpressionParseFailed(issues) => {
+          for issue in issues {
+            self.diagnostics.push(issue)
+          }
+          Literal(Value::null(), token.span)
         }
-        Literal(Value::null(), token.span)
       }
     }
     parts.push(PropertyGet(expression, "toString", token.span))
@@ -246,9 +384,7 @@ fn Parser::interpolated_string(self : Parser, token : Token) -> Expr {
     index = cursor
   }
   let suffix = content[segment_start:content.length()].to_owned()
-  parts.push(
-    Literal(Value::string(decode_string("\"" + suffix + "\"")), token.span),
-  )
+  parts.push(Literal(decode_string_value("\"" + suffix + "\""), token.span))
   let mut result = parts[0]
   for part_index = 1; part_index < parts.length(); part_index = part_index + 1 {
     result = Binary(result, Add, parts[part_index], token.span)
@@ -268,10 +404,12 @@ fn Parser::primary(self : Parser) -> Expr {
   } else if self.take(Number) {
     Literal(Value::number(parse_number_value(token.lexeme)), token.span)
   } else if self.take(StringLiteral) {
-    if token.lexeme.contains("%(") {
+    if token.lexeme.has_prefix("\"\"\"") {
+      Literal(decode_raw_string_value(token.lexeme), token.span)
+    } else if token.lexeme.contains("%(") {
       self.interpolated_string(token)
     } else {
-      Literal(Value::string(decode_string(token.lexeme)), token.span)
+      Literal(decode_string_value(token.lexeme), token.span)
     }
   } else if self.take(Identifier) {
     Variable(token.lexeme, token.span)
@@ -289,8 +427,8 @@ fn Parser::primary(self : Parser) -> Expr {
     if !self.check(RightBracket) {
       while true {
         items.push(self.expression())
-        self.skip_newlines()
         if !self.take(Comma) {
+          self.skip_newlines()
           break
         }
         self.skip_newlines()
@@ -307,6 +445,15 @@ fn Parser::primary(self : Parser) -> Expr {
     if !self.check(RightBrace) {
       while true {
         let key = self.expression()
+        match key {
+          Binary(_, _, _, span) | Conditional(_, _, _, span) =>
+            self.report(
+              UnexpectedToken,
+              "map keys containing operators must be parenthesized",
+              span,
+            )
+          _ => ()
+        }
         self.skip_newlines()
         ignore(self.consume(Colon, "expected ':' after map key"))
         self.skip_newlines()
@@ -342,10 +489,20 @@ fn Parser::primary(self : Parser) -> Expr {
 ///|
 fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
   ignore(self.consume(LeftBrace, "expected '{' after function constructor"))
-  self.skip_newlines()
+  let mut multiline = false
+  if self.take(Newline) {
+    multiline = true
+    self.skip_newlines()
+  }
   let parameters : Array[String] = []
   if self.take(Pipe) {
-    if !self.check(Pipe) {
+    if self.check(Pipe) {
+      self.report(
+        UnexpectedToken,
+        "an empty parameter list must omit the pipes",
+        self.current_token().span,
+      )
+    } else {
       while true {
         let parameter = self.consume(Identifier, "expected parameter name")
         parameters.push(parameter.lexeme)
@@ -355,12 +512,40 @@ fn Parser::function_literal(self : Parser, start : SourceSpan) -> Expr {
       }
     }
     ignore(self.consume(Pipe, "expected '|' after parameters"))
-    self.skip_newlines()
+    if self.take(Newline) {
+      multiline = true
+      self.skip_newlines()
+    }
   }
   let body : Array[Stmt] = []
-  while !self.check(RightBrace) && !self.check(Eof) {
-    body.push(self.declaration())
-    self.skip_newlines()
+  if multiline {
+    while !self.check(RightBrace) && !self.check(Eof) {
+      let statement = self.declaration()
+      if self.check(RightBrace) &&
+        statement.span().end.line == self.current_token().span.start.line {
+        self.report(
+          ExpectedToken,
+          "expected newline before '}' in a statement block",
+          statement.span(),
+        )
+      }
+      body.push(statement)
+      self.skip_newlines()
+    }
+  } else if !self.check(RightBrace) {
+    let expression = self.expression()
+    body.push(ExpressionStatement(expression, expression.span()))
+    if self.check(Newline) {
+      self.report(
+        ExpectedToken,
+        "a single-expression function must close on the same line",
+        expression.span(),
+      )
+      self.skip_newlines()
+    }
+  }
+  if multiline {
+    body.push(ReturnStatement(None, self.current_token().span))
   }
   let closing = self.consume(RightBrace, "expected '}' after function body")
   FunctionLiteral(parameters, body, SourceSpan::merge(start, closing.span))
@@ -400,7 +585,45 @@ fn Parser::method_call(self : Parser) -> Expr {
     None => ()
   }
   while true {
+    if self.check(Newline) {
+      let checkpoint = self.current
+      self.skip_newlines()
+      if !self.check(Dot) {
+        self.current = checkpoint
+      }
+    }
+    let implicit_name = match receiver {
+      Variable(name, _) if name != "$super" => Some(name)
+      _ => None
+    }
+    match implicit_name {
+      Some(name) =>
+        if self.take(LeftParen) {
+          self.skip_newlines()
+          let arguments : Array[Expr] = []
+          if !self.check(RightParen) {
+            while true {
+              arguments.push(self.expression())
+              self.skip_newlines()
+              if !self.take(Comma) {
+                break
+              }
+              self.skip_newlines()
+            }
+          }
+          let closing = self.consume(RightParen, "expected ')' after arguments")
+          receiver = MethodCall(
+            Variable("this", receiver.span()),
+            name,
+            arguments,
+            SourceSpan::merge(receiver.span(), closing.span),
+          )
+          continue
+        }
+      None => ()
+    }
     if self.take(Dot) {
+      self.skip_newlines()
       let name = self.consume(Identifier, "expected method name after '.'")
       let is_function_literal = match receiver {
         Variable("Fn", _) | Variable("Fiber", _) =>
@@ -471,17 +694,36 @@ fn Parser::method_call(self : Parser) -> Expr {
       }
     } else if self.take(LeftBracket) {
       self.skip_newlines()
-      let index = self.expression()
+      let arguments : Array[Expr] = [self.expression()]
       self.skip_newlines()
+      while self.take(Comma) {
+        self.skip_newlines()
+        arguments.push(self.expression())
+        self.skip_newlines()
+      }
       let closing = self.consume(RightBracket, "expected ']' after subscript")
-      receiver = SubscriptGet(
-        receiver,
-        index,
-        SourceSpan::merge(receiver.span(), closing.span),
-      )
+      let call_span = SourceSpan::merge(receiver.span(), closing.span)
+      receiver = if arguments.length() == 1 {
+        SubscriptGet(receiver, arguments[0], call_span)
+      } else {
+        MethodCall(receiver, "[]", arguments, call_span)
+      }
     } else {
       break
     }
+  }
+  match receiver {
+    Variable("$super", span) if self.current_method_name != "" =>
+      if self.current_method_is_constructor {
+        self.report(
+          ExpectedToken,
+          "expected '(' after 'super' in a constructor",
+          span,
+        )
+      } else {
+        receiver = PropertyGet(receiver, self.current_method_name, span)
+      }
+    _ => ()
   }
   receiver
 }
@@ -500,6 +742,7 @@ fn Parser::unary(self : Parser) -> Expr {
   }
   match operator {
     Some(operator) => {
+      self.skip_newlines()
       let right = self.unary()
       Unary(operator, right, SourceSpan::merge(token.span, right.span()))
     }
@@ -522,6 +765,7 @@ fn Parser::factor(self : Parser) -> Expr {
     }
     match operator {
       Some(operator) => {
+        self.skip_newlines()
         let right = self.unary()
         let span = SourceSpan::merge(expression.span(), right.span())
         expression = Binary(expression, operator, right, span)
@@ -545,6 +789,7 @@ fn Parser::term(self : Parser) -> Expr {
     }
     match operator {
       Some(operator) => {
+        self.skip_newlines()
         let right = self.factor()
         let span = SourceSpan::merge(expression.span(), right.span())
         expression = Binary(expression, operator, right, span)
@@ -568,6 +813,7 @@ fn Parser::shift(self : Parser) -> Expr {
     }
     match operator {
       Some(operator) => {
+        self.skip_newlines()
         let right = self.term()
         let span = SourceSpan::merge(expression.span(), right.span())
         expression = Binary(expression, operator, right, span)
@@ -582,10 +828,12 @@ fn Parser::shift(self : Parser) -> Expr {
 fn Parser::range(self : Parser) -> Expr {
   let mut expression = self.shift()
   if self.take(DotDot) {
+    self.skip_newlines()
     let right = self.shift()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, InclusiveRange, right, span)
   } else if self.take(DotDotDot) {
+    self.skip_newlines()
     let right = self.shift()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, ExclusiveRange, right, span)
@@ -612,6 +860,7 @@ fn Parser::comparison(self : Parser) -> Expr {
     }
     match operator {
       Some(operator) => {
+        self.skip_newlines()
         let right = self.range()
         let span = SourceSpan::merge(expression.span(), right.span())
         expression = Binary(expression, operator, right, span)
@@ -635,6 +884,7 @@ fn Parser::equality(self : Parser) -> Expr {
     }
     match operator {
       Some(operator) => {
+        self.skip_newlines()
         let right = self.comparison()
         let span = SourceSpan::merge(expression.span(), right.span())
         expression = Binary(expression, operator, right, span)
@@ -649,6 +899,7 @@ fn Parser::equality(self : Parser) -> Expr {
 fn Parser::bitwise_and(self : Parser) -> Expr {
   let mut expression = self.equality()
   while self.take(Ampersand) {
+    self.skip_newlines()
     let right = self.equality()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, BitwiseAnd, right, span)
@@ -660,6 +911,7 @@ fn Parser::bitwise_and(self : Parser) -> Expr {
 fn Parser::bitwise_xor(self : Parser) -> Expr {
   let mut expression = self.bitwise_and()
   while self.take(Caret) {
+    self.skip_newlines()
     let right = self.bitwise_and()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, BitwiseXor, right, span)
@@ -671,6 +923,7 @@ fn Parser::bitwise_xor(self : Parser) -> Expr {
 fn Parser::bitwise_or(self : Parser) -> Expr {
   let mut expression = self.bitwise_xor()
   while self.take(Pipe) {
+    self.skip_newlines()
     let right = self.bitwise_xor()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, BitwiseOr, right, span)
@@ -682,6 +935,7 @@ fn Parser::bitwise_or(self : Parser) -> Expr {
 fn Parser::logical_and(self : Parser) -> Expr {
   let mut expression = self.bitwise_or()
   while self.take(AmpersandAmpersand) {
+    self.skip_newlines()
     let right = self.bitwise_or()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, LogicalAnd, right, span)
@@ -693,6 +947,7 @@ fn Parser::logical_and(self : Parser) -> Expr {
 fn Parser::logical_or(self : Parser) -> Expr {
   let mut expression = self.logical_and()
   while self.take(PipePipe) {
+    self.skip_newlines()
     let right = self.logical_and()
     let span = SourceSpan::merge(expression.span(), right.span())
     expression = Binary(expression, LogicalOr, right, span)
@@ -704,8 +959,19 @@ fn Parser::logical_or(self : Parser) -> Expr {
 fn Parser::conditional(self : Parser) -> Expr {
   let condition = self.logical_or()
   if self.take(Question) {
+    self.skip_newlines()
     let then_branch = self.expression()
+    match then_branch {
+      Conditional(_, _, _, nested_span) =>
+        self.report(
+          UnexpectedToken,
+          "a conditional expression in the then branch must be parenthesized",
+          nested_span,
+        )
+      _ => ()
+    }
     ignore(self.consume(Colon, "expected ':' in conditional expression"))
+    self.skip_newlines()
     let else_branch = self.conditional()
     let span = SourceSpan::merge(condition.span(), else_branch.span())
     Conditional(condition, then_branch, else_branch, span)
@@ -718,6 +984,7 @@ fn Parser::conditional(self : Parser) -> Expr {
 fn Parser::assignment(self : Parser) -> Expr {
   let target = self.conditional()
   if self.take(Equal) {
+    self.skip_newlines()
     let value = self.assignment()
     match target {
       Variable(name, target_span) =>
@@ -737,6 +1004,15 @@ fn Parser::assignment(self : Parser) -> Expr {
           value,
           SourceSpan::merge(target_span, value.span()),
         )
+      MethodCall(receiver, "[]", arguments, target_span) => {
+        arguments.push(value)
+        MethodCall(
+          receiver,
+          "[]=",
+          arguments,
+          SourceSpan::merge(target_span, value.span()),
+        )
+      }
       PropertyGet(receiver, name, target_span) =>
         PropertySet(
           receiver,
@@ -767,13 +1043,18 @@ fn Parser::expression(self : Parser) -> Expr {
 fn Parser::finish_statement(self : Parser) -> Unit {
   if self.take(Newline) {
     self.skip_newlines()
-  } else if !self.check(RightBrace) && !self.check(Eof) {
+  } else if !self.check(RightBrace) &&
+    !self.check(ElseKeyword) &&
+    !self.check(Eof) {
     self.report(
       ExpectedToken,
       "expected newline after statement",
       self.current_token().span,
     )
-    while !self.check(Newline) && !self.check(RightBrace) && !self.check(Eof) {
+    while !self.check(Newline) &&
+          !self.check(RightBrace) &&
+          !self.check(ElseKeyword) &&
+          !self.check(Eof) {
       ignore(self.advance())
     }
     self.skip_newlines()
@@ -784,6 +1065,7 @@ fn Parser::finish_statement(self : Parser) -> Unit {
 fn Parser::variable_declaration(self : Parser, start : Token) -> Stmt {
   let name = self.consume(Identifier, "expected variable name")
   let initializer = if self.take(Equal) {
+    self.skip_newlines()
     Some(self.expression())
   } else {
     None
@@ -802,6 +1084,7 @@ fn Parser::variable_declaration(self : Parser, start : Token) -> Stmt {
 
 ///|
 fn Parser::import_declaration(self : Parser, start : Token) -> Stmt {
+  self.skip_newlines()
   let module_token = self.consume(
     StringLiteral,
     "expected module string after import",
@@ -809,7 +1092,10 @@ fn Parser::import_declaration(self : Parser, start : Token) -> Stmt {
   let module_name = decode_string(module_token.lexeme)
   let bindings : Array[ImportBinding] = []
   let mut end_span = module_token.span
+  let after_module = self.current
+  self.skip_newlines()
   if self.take(ForKeyword) {
+    self.skip_newlines()
     while true {
       let imported = self.consume(Identifier, "expected imported name")
       let binding_token = if self.take(AsKeyword) {
@@ -819,10 +1105,16 @@ fn Parser::import_declaration(self : Parser, start : Token) -> Stmt {
       }
       bindings.push({ name: imported.lexeme, local_name: binding_token.lexeme, })
       end_span = binding_token.span
+      let after_binding = self.current
+      self.skip_newlines()
       if !self.take(Comma) {
+        self.current = after_binding
         break
       }
+      self.skip_newlines()
     }
+  } else {
+    self.current = after_module
   }
   self.finish_statement()
   ImportStatement(
@@ -861,6 +1153,13 @@ fn Parser::if_statement(self : Parser, start : Token) -> Stmt {
   let then_branch = self.statement()
   self.skip_newlines()
   let else_branch = if self.take(ElseKeyword) {
+    if self.check(Newline) {
+      self.report(
+        ExpectedExpression,
+        "expected statement on the same line after 'else'",
+        self.previous().span,
+      )
+    }
     self.skip_newlines()
     Some(self.statement())
   } else {
@@ -892,6 +1191,7 @@ fn Parser::for_statement(self : Parser, start : Token) -> Stmt {
   ignore(self.consume(LeftParen, "expected '(' after for"))
   let name = self.consume(Identifier, "expected loop variable name")
   ignore(self.consume(InKeyword, "expected 'in' after loop variable"))
+  self.skip_newlines()
   let sequence = self.expression()
   self.skip_newlines()
   ignore(self.consume(RightParen, "expected ')' after loop sequence"))
@@ -929,6 +1229,13 @@ fn Parser::parameter_list(self : Parser) -> Array[String] {
   if !self.check(RightParen) {
     while true {
       let parameter = self.consume(Identifier, "expected parameter name")
+      if string_array_contains(parameters, parameter.lexeme) {
+        self.report(
+          DuplicateVariable,
+          "duplicate parameter '\{parameter.lexeme}'",
+          parameter.span,
+        )
+      }
       parameters.push(parameter.lexeme)
       self.skip_newlines()
       if !self.take(Comma) {
@@ -942,7 +1249,87 @@ fn Parser::parameter_list(self : Parser) -> Array[String] {
 }
 
 ///|
-fn Parser::method_declaration(self : Parser) -> MethodDecl {
+fn Parser::attribute_value(self : Parser) -> Value {
+  let token = self.current_token()
+  if self.take(StringLiteral) {
+    if token.lexeme.has_prefix("\"\"\"") {
+      decode_raw_string_value(token.lexeme)
+    } else {
+      decode_string_value(token.lexeme)
+    }
+  } else if self.take(Number) {
+    Value::number(parse_number_value(token.lexeme))
+  } else if self.take(TrueKeyword) {
+    Value::bool(true)
+  } else if self.take(FalseKeyword) {
+    Value::bool(false)
+  } else if self.take(NullKeyword) {
+    Value::null()
+  } else if self.take(Identifier) {
+    Value::string(token.lexeme)
+  } else {
+    self.report(
+      ExpectedExpression,
+      "expected literal attribute value",
+      token.span,
+    )
+    if !self.check(Eof) {
+      ignore(self.advance())
+    }
+    Value::null()
+  }
+}
+
+///|
+fn Parser::attributes(self : Parser) -> Array[AttributeDecl] {
+  let attributes : Array[AttributeDecl] = []
+  while self.take(Hash) {
+    let runtime = self.take(Bang)
+    let owner = self.consume(Identifier, "expected attribute name")
+    if self.take(LeftParen) {
+      if self.check(RightParen) {
+        self.report(
+          ExpectedExpression,
+          "attribute group cannot be empty",
+          self.current_token().span,
+        )
+      }
+      while !self.check(RightParen) && !self.check(Eof) {
+        let key = self.consume(Identifier, "expected attribute key")
+        let value = if self.take(Equal) {
+          self.attribute_value()
+        } else {
+          Value::null()
+        }
+        if runtime {
+          attributes.push({ group: Some(owner.lexeme), key: key.lexeme, value, })
+        }
+        if !self.take(Comma) {
+          break
+        }
+      }
+      ignore(self.consume(RightParen, "expected ')' after attribute group"))
+    } else {
+      let value = if self.take(Equal) {
+        self.attribute_value()
+      } else {
+        Value::null()
+      }
+      if runtime {
+        attributes.push({ group: None, key: owner.lexeme, value, })
+      }
+    }
+    self.finish_statement()
+    self.skip_newlines()
+  }
+  attributes
+}
+
+///|
+fn Parser::method_declaration(
+  self : Parser,
+  attributes : Array[AttributeDecl],
+) -> MethodDecl {
   let start = self.current_token()
   let is_foreign = self.take(ForeignKeyword)
   let is_static = self.take(StaticKeyword)
@@ -963,6 +1350,13 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
       self.consume(Identifier, "expected subscript parameter name").lexeme,
     )
     self.skip_newlines()
+    while self.take(Comma) {
+      self.skip_newlines()
+      parameters.push(
+        self.consume(Identifier, "expected subscript parameter name").lexeme,
+      )
+      self.skip_newlines()
+    }
     ignore(self.consume(RightBracket, "expected ']' after subscript parameter"))
     if self.take(Equal) {
       method_name = "[]="
@@ -995,7 +1389,8 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
     self.check(LessLess) ||
     self.check(GreaterGreater) ||
     self.check(DotDot) ||
-    self.check(DotDotDot) {
+    self.check(DotDotDot) ||
+    self.check(IsKeyword) {
     is_operator = true
     let operator = self.advance()
     method_name = operator.lexeme
@@ -1040,6 +1435,13 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
       self.current_token().span,
     )
   }
+  if is_constructor && (is_operator || method_name.has_suffix("=")) {
+    self.report(
+      UnexpectedToken,
+      "a constructor must have a named method signature",
+      name_start.span,
+    )
+  }
   if is_foreign && is_constructor {
     self.report(
       UnexpectedToken,
@@ -1062,12 +1464,19 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
       is_getter: !is_constructor && !has_parameters && !is_operator,
       is_static,
       is_foreign,
+      attributes,
       span: SourceSpan::merge(start.span, end_span),
     }
   }
   self.skip_newlines()
+  let saved_method_name = self.current_method_name
+  let saved_method_is_constructor = self.current_method_is_constructor
+  self.current_method_name = method_name
+  self.current_method_is_constructor = is_constructor
   let opening = self.consume(LeftBrace, "expected '{' before method body")
   let block = self.block_statement(opening)
+  self.current_method_name = saved_method_name
+  self.current_method_is_constructor = saved_method_is_constructor
   match block {
     BlockStatement(body, span) =>
       {
@@ -1078,6 +1487,7 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
         is_getter: !is_constructor && !has_parameters && !is_operator,
         is_static,
         is_foreign,
+        attributes,
         span: SourceSpan::merge(start.span, span),
       }
     _ => abort("method body must be a block")
@@ -1088,13 +1498,14 @@ fn Parser::method_declaration(self : Parser) -> MethodDecl {
 fn Parser::class_declaration(
   self : Parser,
   start : Token,
+  attributes : Array[AttributeDecl],
   is_foreign : Bool,
 ) -> Stmt {
   let name = self.consume(Identifier, "expected class name")
   self.skip_newlines()
   let superclass = if self.take(IsKeyword) {
     self.skip_newlines()
-    Some(self.consume(Identifier, "expected superclass name").lexeme)
+    Some(self.expression())
   } else {
     None
   }
@@ -1103,7 +1514,8 @@ fn Parser::class_declaration(
   self.skip_newlines()
   let methods : Array[MethodDecl] = []
   while !self.check(RightBrace) && !self.check(Eof) {
-    methods.push(self.method_declaration())
+    let method_attributes = self.attributes()
+    methods.push(self.method_declaration(method_attributes))
     self.skip_newlines()
   }
   let closing = self.consume(RightBrace, "expected '}' after class body")
@@ -1111,6 +1523,7 @@ fn Parser::class_declaration(
     name.lexeme,
     superclass,
     methods,
+    attributes,
     is_foreign,
     SourceSpan::merge(start.span, closing.span),
   )
@@ -1146,13 +1559,29 @@ fn Parser::statement(self : Parser) -> Stmt {
 ///|
 fn Parser::declaration(self : Parser) -> Stmt {
   let start = self.current_token()
-  if self.take(ImportKeyword) {
+  if self.check(Hash) {
+    let attributes = self.attributes()
+    let declaration_start = self.current_token()
+    if self.take(ClassKeyword) {
+      self.class_declaration(declaration_start, attributes, false)
+    } else if self.take(ForeignKeyword) {
+      ignore(self.consume(ClassKeyword, "expected 'class' after 'foreign'"))
+      self.class_declaration(declaration_start, attributes, true)
+    } else {
+      self.report(
+        UnexpectedToken,
+        "attributes can only be applied to a class or method",
+        start.span,
+      )
+      self.declaration()
+    }
+  } else if self.take(ImportKeyword) {
     self.import_declaration(start)
   } else if self.take(ClassKeyword) {
-    self.class_declaration(start, false)
+    self.class_declaration(start, [], false)
   } else if self.take(ForeignKeyword) {
     ignore(self.consume(ClassKeyword, "expected 'class' after 'foreign'"))
-    self.class_declaration(start, true)
+    self.class_declaration(start, [], true)
   } else if self.take(VarKeyword) {
     self.variable_declaration(start)
   } else {

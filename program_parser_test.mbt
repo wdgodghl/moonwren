@@ -84,7 +84,7 @@ test "program parser recognizes classes constructors methods and getters" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParsed(
-      [@moonwren.ClassStatement("Point", None, declarations, false, _)]
+      [@moonwren.ClassStatement("Point", None, declarations, [], false, _)]
     ) => {
       assert_eq(declarations.length(), 3)
       assert_true(declarations[0].is_constructor)
@@ -106,8 +106,9 @@ test "program parser records superclass names and super constructor calls" {
       [
         @moonwren.ClassStatement(
           "Child",
-          Some("Parent"),
+          Some(@moonwren.Variable("Parent", _)),
           [initializer, getter],
+          [],
           false,
           _
         ),
@@ -150,7 +151,7 @@ test "parser records static methods getters and fields" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParsed(
-      [@moonwren.ClassStatement("Registry", None, [put, value], false, _)]
+      [@moonwren.ClassStatement("Registry", None, [put, value], [], false, _)]
     ) => {
       assert_true(put.is_static)
       assert_true(value.is_static)

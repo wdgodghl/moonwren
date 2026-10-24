@@ -60,18 +60,28 @@ fn file_loader(
 fn print_result(
   result : @moonwren.ProgramRunResult,
   fallback_source : String,
-) -> Unit {
+) -> Int {
   match result {
-    ProgramCompleted(_, output) =>
+    ProgramCompleted(_, output) => {
       for line in output {
         println(line)
       }
+      0
+    }
     ProgramFailed(diagnostics, output) => {
       for line in output {
         println(line)
       }
       for diagnostic in diagnostics {
         println(diagnostic.render(fallback_source))
+      }
+      if diagnostics.length() == 0 {
+        70
+      } else {
+        match diagnostics[0].phase {
+          Scan | Parse | Resolve => 65
+          Runtime => 70
+        }
       }
     }
   }
@@ -81,21 +91,27 @@ fn print_result(
 fn main {
   let arguments = @env.args()
   if arguments.length() <= 1 {
-    print_result(@moonwren.run(demo_source()), "<demo>")
+    @sys.exit(print_result(@moonwren.run(demo_source()), "<demo>"))
   } else if arguments[1] == "--eval" {
     if arguments.length() <= 2 {
       println("usage: moonwren --eval <source>")
+      @sys.exit(64)
     } else {
-      print_result(@moonwren.run(arguments[2]), "<eval>")
+      @sys.exit(print_result(@moonwren.run(arguments[2]), "<eval>"))
     }
   } else {
     let entry = canonical_path(arguments[1])
     match read_source(entry) {
-      None => println("cannot read source file: \{entry}")
+      None => {
+        println("cannot read source file: \{entry}")
+        @sys.exit(66)
+      }
       Some(source) =>
-        print_result(
-          @moonwren.run_with_loader(entry, source, 100000, file_loader),
-          entry,
+        @sys.exit(
+          print_result(
+            @moonwren.run_with_loader(entry, source, 20000000, file_loader),
+            entry,
+          ),
         )
     }
   }

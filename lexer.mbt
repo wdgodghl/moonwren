@@ -61,6 +61,12 @@ fn Lexer::span(self : Lexer) -> SourceSpan {
 }
 
 ///|
+fn Lexer::point_span(self : Lexer) -> SourceSpan {
+  let position = self.position()
+  { start: position, end: position, }
+}
+
+///|
 fn Lexer::lexeme(self : Lexer) -> String {
   self.source[self.start:self.current].to_owned()
 }
@@ -199,6 +205,9 @@ fn Lexer::number(self : Lexer, first : Int) -> Unit {
   } else {
     self.decimal_tail()
   }
+  if parse_number_value(self.lexeme()).is_inf() {
+    self.report(InvalidNumber, "number literal is too large")
+  }
   self.add(Number)
 }
 
@@ -217,6 +226,7 @@ fn valid_escape(code : Int) -> Bool {
   code == 114 ||
   code == 116 ||
   code == 117 ||
+  code == 120 ||
   code == 118
 }
 
@@ -239,6 +249,23 @@ fn Lexer::string(self : Lexer) -> Unit {
       let escaped = self.advance()
       if !valid_escape(escaped) {
         self.report(InvalidEscape, "invalid string escape")
+      } else {
+        let digits = if escaped == 120 {
+          2
+        } else if escaped == 117 {
+          4
+        } else if escaped == 85 {
+          8
+        } else {
+          0
+        }
+        for digit_index = 0; digit_index < digits; digit_index = digit_index + 1 {
+          if !is_hex_digit(self.peek()) {
+            self.report(InvalidEscape, "invalid string escape")
+            break
+          }
+          ignore(self.advance())
+        }
       }
     } else if interpolation_depth == 0 && code == 37 && self.peek_next() == 40 {
       ignore(self.advance())
@@ -262,11 +289,50 @@ fn Lexer::string(self : Lexer) -> Unit {
     }
   }
   if self.at_end() || interpolation_depth != 0 {
-    self.report(UnterminatedString, "unterminated string")
+    self.diagnostics.push(
+      Diagnostic::new(
+        Scan,
+        UnterminatedString,
+        "unterminated string",
+        self.point_span(),
+      ),
+    )
     return
   }
   ignore(self.advance())
   self.add(StringLiteral)
+}
+
+///|
+fn Lexer::raw_string(self : Lexer) -> Unit {
+  // The first quote was consumed by scan_one(). Consume the remaining two.
+  ignore(self.advance())
+  ignore(self.advance())
+  while !self.at_end() {
+    if self.peek() == 34 &&
+      self.peek_next() == 34 &&
+      self.current + 2 < self.source.length() &&
+      self.source.unsafe_get(self.current + 2).to_int() == 34 {
+      ignore(self.advance())
+      ignore(self.advance())
+      ignore(self.advance())
+      self.add(StringLiteral)
+      return
+    }
+    if self.peek() == 10 {
+      self.consume_newline()
+    } else {
+      ignore(self.advance())
+    }
+  }
+  self.diagnostics.push(
+    Diagnostic::new(
+      Scan,
+      UnterminatedString,
+      "unterminated raw string",
+      self.point_span(),
+    ),
+  )
 }
 
 ///|
@@ -295,7 +361,14 @@ fn Lexer::block_comment(self : Lexer) -> Unit {
     }
   }
   if depth > 0 {
-    self.report(UnterminatedComment, "unterminated block comment")
+    self.diagnostics.push(
+      Diagnostic::new(
+        Scan,
+        UnterminatedComment,
+        "unterminated block comment",
+        self.point_span(),
+      ),
+    )
   }
 }
 
@@ -318,6 +391,7 @@ fn Lexer::scan_one(self : Lexer) -> Unit {
     94 => self.add(Caret)
     126 => self.add(Tilde)
     63 => self.add(Question)
+    35 => self.add(Hash)
     46 =>
       if self.matches(46) {
         if self.matches(46) {
@@ -361,13 +435,23 @@ fn Lexer::scan_one(self : Lexer) -> Unit {
       } else {
         self.add(Slash)
       }
-    34 => self.string()
+    34 =>
+      if self.peek() == 34 && self.peek_next() == 34 {
+        self.raw_string()
+      } else {
+        self.string()
+      }
     10 => {
       self.line = self.line + 1
       self.column = 1
       self.add(Newline)
     }
-    9 | 13 | 32 => ()
+    13 =>
+      if self.peek() != 10 {
+        self.line = self.line + 1
+        self.column = 1
+      }
+    9 | 32 => ()
     _ =>
       if is_digit(code) {
         self.number(code)
@@ -381,6 +465,15 @@ fn Lexer::scan_one(self : Lexer) -> Unit {
 
 ///|
 fn Lexer::scan(self : Lexer) -> ScanResult {
+  if self.current == 0 &&
+    self.peek() == 35 &&
+    self.peek_next() == 33 &&
+    self.source.length() > 2 &&
+    self.source.unsafe_get(2).to_int() == 47 {
+    while !self.at_end() && self.peek() != 10 {
+      ignore(self.advance())
+    }
+  }
   while !self.at_end() {
     self.start = self.current
     self.start_line = self.line
@@ -397,5 +490,16 @@ fn Lexer::scan(self : Lexer) -> ScanResult {
 ///|
 /// Tokenize a Wren source string while collecting all recoverable scan errors.
 pub fn scan(source : String) -> ScanResult {
-  Lexer::new(source).scan()
+  let normalized = if source.length() >= 1 &&
+    source.unsafe_get(0).to_int() == 0xfeff {
+    source[1:].to_owned()
+  } else if source.length() >= 3 &&
+    source.unsafe_get(0).to_int() == 0xef &&
+    source.unsafe_get(1).to_int() == 0xbb &&
+    source.unsafe_get(2).to_int() == 0xbf {
+    source[3:].to_owned()
+  } else {
+    source
+  }
+  Lexer::new(normalized).scan()
 }

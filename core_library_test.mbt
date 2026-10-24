@@ -18,8 +18,39 @@ test "core class objects expose names supertypes and constructors" {
     "System.print(42 is Num)\n" +
     "System.print(Num.type.name)\n"
   expect_core_output(source, [
-    "List", "Sequence", "true", "true", "true", "true", "Class",
+    "List", "Sequence", "true", "true", "true", "true", "Num metaclass",
   ])
+}
+
+///|
+test "raw multiline strings trim delimiter-only lines" {
+  let source = "var value = \"\"\"   \n" +
+    "raw [\\] text\n" +
+    "      \"\"\"\n" +
+    "System.print(value)\n"
+  expect_core_output(source, ["raw [\\] text"])
+}
+
+///|
+test "runtime class and method attributes preserve groups and duplicates" {
+  let source = "#!tag\n" +
+    "#!group(key=first, key=second)\n" +
+    "class Tagged {\n" +
+    "  #!route = api\n" +
+    "  call(value) { value }\n" +
+    "}\n" +
+    "System.print(Tagged.attributes.self[null][\"tag\"])\n" +
+    "System.print(Tagged.attributes.self[\"group\"][\"key\"])\n" +
+    "System.print(Tagged.attributes.methods[\"call(_)\"][null][\"route\"])\n"
+  expect_core_output(source, ["[null]", "[first, second]", "[api]"])
+}
+
+///|
+test "number bitwise operators retain all unsigned 32 bits" {
+  let source = "System.print(0xffffffff & 0xffffffff)\n" +
+    "System.print(0xaaaaaaaa ^ 0x55555555)\n" +
+    "System.print(~0x7fffffff)\n"
+  expect_core_output(source, ["4294967295", "4294967295", "2147483648"])
 }
 
 ///|
@@ -59,7 +90,7 @@ test "Num getters and methods cover common mathematics" {
     "System.print(2.5.isInteger)\n" +
     "System.print(3.isInteger)\n"
   expect_core_output(source, [
-    "3.2", "-3", "-4", "-0.20000000000000018", "3", "32", "10", "false", "true",
+    "3.2", "-3", "-4", "-0.2", "3", "32", "10", "false", "true",
   ])
 }
 
@@ -68,7 +99,7 @@ test "Num.fromString accepts decimals and rejects malformed input" {
   let source = "System.print(Num.fromString(\"-12.5e2\"))\n" +
     "System.print(Num.fromString(\"not a number\"))\n" +
     "System.print(Num.maxSafeInteger)\n"
-  expect_core_output(source, ["-1250", "null", "9007199254740991"])
+  expect_core_output(source, ["-1250", "null", "9.007199254741e+15"])
 }
 
 ///|
@@ -262,9 +293,14 @@ test "string views expose their Wren core classes" {
 ///|
 test "Num.fromString handles extreme exponents without unbounded work" {
   let source = "System.print(Num.fromString(\"0e999999999999999999\"))\n" +
-    "System.print(Num.fromString(\"1e-999999999999999999\"))\n" +
-    "System.print(Num.fromString(\"1e999999999999999999\").isInfinity)\n"
-  expect_core_output(source, ["0", "0", "true"])
+    "System.print(Num.fromString(\"1e-999999999999999999\"))\n"
+  expect_core_output(source, ["0", "0"])
+  match @moonwren.run("Num.fromString(\"1e999999999999999999\")\n") {
+    @moonwren.ProgramCompleted(_, _) =>
+      fail("an overflowing number should fail")
+    @moonwren.ProgramFailed(issues, _) =>
+      assert_eq(issues[0].code, @moonwren.InvalidNumber)
+  }
 }
 
 ///|

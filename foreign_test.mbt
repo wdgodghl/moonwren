@@ -15,7 +15,7 @@ test "parser accepts foreign instance static and getter declarations" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParseFailed(issues) => fail(issues[0].message)
-    @moonwren.ProgramParsed([@moonwren.ClassStatement(_, _, methods, _, _)]) => {
+    @moonwren.ProgramParsed([@moonwren.ClassStatement(_, _, methods, _, _, _)]) => {
       assert_eq(methods.length(), 3)
       assert_true(methods[0].is_foreign)
       assert_true(methods[0].is_static)
@@ -33,7 +33,7 @@ test "parser marks foreign class declarations" {
     "}\n"
   match @moonwren.parse_program(source) {
     @moonwren.ProgramParsed(
-      [@moonwren.ClassStatement("Counter", None, methods, true, _)]
+      [@moonwren.ClassStatement("Counter", None, methods, [], true, _)]
     ) => {
       assert_eq(methods.length(), 2)
       assert_true(methods[0].is_constructor)

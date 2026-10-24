@@ -209,6 +209,7 @@ test "parser recognizes multi-statement functions and return" {
         [
           @moonwren.VariableStatement("doubled", Some(_), _),
           @moonwren.ReturnStatement(Some(@moonwren.Variable("doubled", _)), _),
+          @moonwren.ReturnStatement(None, _),
         ],
         _
       )
