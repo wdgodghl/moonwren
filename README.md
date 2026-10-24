@@ -19,7 +19,9 @@ explicit imports, loader callbacks, module caching,
 cross-module stack traces, multi-file CLI execution, cooperative Fiber values,
 host-bound foreign methods, and host-backed foreign classes are also available.
 Fibers preserve block and loop state across suspension and can suspend through
-direct function-call statements, initializers, and returns.
+functions, methods, callbacks, constructors, and imported modules. Runtime
+class and method attributes, raw strings, cyclic modules, and the complete
+32-bit numeric operator surface are supported as well.
 
 ## Goals
 
@@ -46,6 +48,7 @@ moon check
 moon test
 moon run cmd/main
 ./tools/check-conformance.ps1
+./tools/check-official-suite.ps1 -WrenRoot /path/to/wren-0.4.0
 ```
 
 Running the command without arguments executes the bundled summation example
@@ -124,8 +127,9 @@ System.print(point is Point)  // true
 See [`examples/inheritance.wren`](examples/inheritance.wren) for a complete
 multi-level example.
 
-Static methods and getters share class-owned `__fields`, participate in
-inheritance, and support dynamic `this` plus declaring-class `super` dispatch.
+Static methods and getters share class-owned `__fields` and support dynamic
+`this` plus declaring-class `super` dispatch. As in Wren 0.4.0, static methods
+are not inherited by subclasses.
 See [`examples/static_members.wren`](examples/static_members.wren).
 
 Both `while` and range `for` loops support `break` and `continue`. Loop control
@@ -260,19 +264,19 @@ it once when the interpreter run shuts down. See
 
 ## Project status
 
-MoonWren is not yet a complete Wren implementation. The method dispatcher
-supports constructor signatures, overloaded instance methods by arity,
-  user-defined getters, setters, operators and subscripts, core class metadata and constructors, captured
+MoonWren now passes all 779 runnable language and core-library cases in the
+official Wren 0.4.0 test tree; the remaining 22 files are marked `skip` or
+`nontest` by that upstream suite. The method dispatcher supports constructor
+signatures, overloaded instance methods by arity, user-defined getters,
+setters, operators and subscripts, core class metadata and constructors, captured
 `System.print`/`write` output, and the standard `from`, `to`, `min`, `max`, and
 `isInclusive` range properties. Collection and
 String subscripts produce structured invalid-index and bounds diagnostics, and
 Map keys are checked before lookup or mutation. Inherited
 lookup advances from each method's declaring class, so multi-level `super`
-calls remain correct. Static methods, getters, and class-owned fields use the
-same signature and superclass lookup model. See
-[`docs/compatibility.md`](docs/compatibility.md) for the current feature
-matrix and planned order of implementation. The current-status matrix is kept
-separate from the fixed Wren 0.4.0 completion contract.
+calls remain correct. See [`docs/compatibility.md`](docs/compatibility.md) for
+the completed source-language feature matrix and the explicitly excluded C ABI,
+VM layout, and garbage-collector timing details.
 
 Program execution has both a configurable statement-step budget and a call
 depth guard. These limits turn unbounded loops and runaway recursion into

@@ -131,9 +131,9 @@ returns both the declaration and its owning class. Calls bind a `super` handle
 from that owner, rather than from the instance's most-derived class; this keeps
 successive `super` calls correct across three or more inheritance levels.
 Constructors use local-only lookup and explicitly initialize the same instance
-through `super(...)`. Static members use the same resolved-owner model, with a
-field table on each class definition and a separate superclass handle for
-static dispatch.
+through `super(...)`. Static members have a field table on each declaring class
+and a separate superclass handle for lexical `super` dispatch; normal static
+lookup does not inherit methods, matching Wren 0.4.0.
 
 Statement execution represents normal completion, return, break, continue, and
 failure as distinct results. Blocks propagate those results without guessing
@@ -143,12 +143,13 @@ boundaries convert escaped loop control into structured diagnostics.
 ## Modules and diagnostics
 
 The runtime owns a registry keyed by each loader-provided canonical module
-name. A module enters the loading state before parsing and execution, making a
-back-edge immediately diagnosable as a circular import. Successful modules
-retain their isolated environment and are reused without executing top-level
-code again. Failed modules cannot be mistaken for a successful cached module.
-All modules share output capture, object registries, call-depth accounting, and
-the statement-step budget.
+name. A module enters the loading state before parsing and execution. A cyclic
+back-edge reuses that partially initialized environment, so names defined before
+the import are visible exactly as in Wren 0.4.0. Successful modules retain their
+isolated environment and are reused without executing top-level code again.
+Failed modules cannot be mistaken for a successful cached module. All modules
+share output capture, object registries, call-depth accounting, and the
+statement-step budget.
 
 Closures and classes remember the module where they were defined. When an error
 crosses a function or method boundary, the runtime keeps the original source

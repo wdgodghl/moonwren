@@ -30,6 +30,10 @@ This is a fixed compatibility endpoint, not an open-ended promise to add
 features gradually. The feature matrix in `compatibility.md` records current
 progress separately from this endpoint.
 
+The endpoint is currently satisfied for the upstream source-language suite:
+779 runnable `language` and `core` cases pass, with 0 failures; 22 upstream
+files are marked `skip` or `nontest` and are reported separately.
+
 ## Included edge cases
 
 ### UTF-8 byte semantics
@@ -88,6 +92,16 @@ reproduced and version-checked with:
 ```text
 ./tools/verify-official-wren.ps1 -WrenExecutable /path/to/wren
 ```
+
+The complete upstream suite can be run from an official Wren 0.4.0 checkout:
+
+```text
+./tools/check-official-suite.ps1 -WrenRoot /path/to/wren-0.4.0
+```
+
+That audit compares expected output and compile/runtime diagnostic locations
+encoded by the upstream tests. CI checks out tag `0.4.0` and runs this command
+after the normal MoonBit check, build, and unit-test stages.
 
 Normative references:
 
