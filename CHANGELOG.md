@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 - 2026-10-24
+
+- complete the declared Wren 0.4.0 language and core-library compatibility
+  endpoint;
+- add resolver validation, runtime attributes, raw strings, cyclic imports,
+  and cross-module Fiber suspension;
+- align string byte behavior, numeric bitwise operations, diagnostics, and
+  stress limits with the official Wren implementation;
+- verify all 779 applicable official Wren 0.4.0 cases in CI, alongside the
+  project test suite.
+
 ## 0.2.0 - 2026-10-23
 
 - preserve valid and invalid UTF-8 bytes across String operations and ranges;
