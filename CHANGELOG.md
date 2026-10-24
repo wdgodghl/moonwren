@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-10-25
 
 - add a persistent VM that retains modules and script state across host calls;
 - add bidirectional function, method, getter, and module-value access through
