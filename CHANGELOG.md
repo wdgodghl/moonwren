@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- add a persistent VM that retains modules and script state across host calls;
+- add bidirectional function, method, getter, and module-value access through
+  generation-checked strong handles;
+- add transactional module hot reload with primitive state migration and
+  dependent-root rebuilding;
+- add limits for output, modules, runtime objects, and source size alongside
+  host cancellation, step budgets, and call-depth protection;
+- add explicit reachability collection with deterministic finalization of
+  unreachable host-backed instances.
+
 ## 0.3.0 - 2026-10-24
 
 - complete the declared Wren 0.4.0 language and core-library compatibility

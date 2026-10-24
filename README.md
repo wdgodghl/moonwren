@@ -21,7 +21,10 @@ host-bound foreign methods, and host-backed foreign classes are also available.
 Fibers preserve block and loop state across suspension and can suspend through
 functions, methods, callbacks, constructors, and imported modules. Runtime
 class and method attributes, raw strings, cyclic modules, and the complete
-32-bit numeric operator surface are supported as well.
+32-bit numeric operator surface are supported as well. A persistent embedding
+VM retains script state across host calls and provides transactional module
+reload, strong host handles, configurable resource limits, host cancellation,
+and explicit reachability collection for Wren instances.
 
 ## Goals
 
@@ -239,6 +242,34 @@ match @moonwren.run("var answer = 6 * 7\nanswer\n") {
 directly by the library. Embedders can route those lines to a console, log,
 editor pane, or another host-provided destination.
 
+For long-lived applications, `Vm` owns a persistent runtime. The host can load
+root modules, capture values, call Wren functions and methods, read getters,
+and retain returned runtime values across later calls:
+
+```moonbit
+let vm = Vm::new(VmLimits::standard(100000), loader, [], [])
+ignore(vm.interpret(
+  "main",
+  "var count = 40\nvar next = Fn.new { count = count + 1 }\n",
+))
+
+match vm.capture("main", "next") {
+  VmHandleCreated(next) => {
+    ignore(vm.call(next, [])) // 41
+    ignore(vm.call(next, [])) // 42
+  }
+  VmHandleFailed(issue) => println(issue.message)
+}
+vm.close()
+```
+
+`reload_module` builds a candidate runtime, reloads every retained root module,
+and commits only after the whole graph succeeds. Selected primitive globals can
+be migrated by name. A successful reload starts a new generation and
+invalidates old handles; a failed reload leaves the current runtime and handles
+untouched. See [`docs/embedding.md`](docs/embedding.md) and run the complete
+example with `moon run cmd/vm_demo`.
+
 Embedders can provide modules from memory, a database, an archive, or another
 source through `run_with_loader`. `run_modules` is a convenience API for a
 fixed in-memory collection:
@@ -278,9 +309,11 @@ calls remain correct. See [`docs/compatibility.md`](docs/compatibility.md) for
 the completed source-language feature matrix and the explicitly excluded C ABI,
 VM layout, and garbage-collector timing details.
 
-Program execution has both a configurable statement-step budget and a call
-depth guard. These limits turn unbounded loops and runaway recursion into
-structured diagnostics instead of allowing them to consume host resources.
+Persistent VM operations enforce configurable statement, call-depth, captured
+output, loaded-module, runtime-object, and source-size limits. A host callback
+can also cancel work at interpreter checkpoints. These controls turn unbounded
+loops, runaway recursion, output floods, module fan-out, and allocation spikes
+into structured diagnostics instead of allowing them to consume host resources.
 Diagnostics retain their defining module and accumulate function, instance,
 static-method, and import frames while unwinding.
 

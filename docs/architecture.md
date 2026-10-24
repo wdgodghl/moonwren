@@ -51,10 +51,11 @@ Getter calls use a separate syntax node so `value.toString` remains distinct
 from a zero-argument method such as `System.print()`. Core class objects expose
 runtime type relationships without manufacturing user-defined class records.
 The built-in `System` receiver captures print and write output as lines, keeping
-the library independent of a particular console. The
-interpreter applies a configurable execution-step budget and a separate
-function call-depth guard. Both limits are shared by the complete runtime, so
-function calls cannot bypass resource accounting. Numeric range values
+the library independent of a particular console. Persistent VM operations apply
+separate limits for execution steps, call depth, captured output, loaded
+modules, runtime objects, and source size, plus an optional host cancellation
+callback. These limits are shared by the complete runtime, so function and
+module calls cannot bypass resource accounting. Numeric range values
 preserve their direction and endpoint mode, allowing `for` statements to
 support both ascending and descending inclusive or exclusive iteration.
 
@@ -105,7 +106,11 @@ to work across the boundary. Foreign class definitions also resolve an
 allocator/finalizer binding when executed. Constructed instances retain the
 host's opaque integer handle beside ordinary Wren fields; handle-aware foreign
 methods receive it without exposing runtime registry indexes. Interpreter
-shutdown walks allocated foreign instances and finalizes each handle once.
+shutdown walks allocated foreign instances and finalizes each handle once. An
+explicit persistent-VM collection pass traces module, class, closure, Fiber,
+collection, and host-handle roots. Unreachable instances are logically retired
+and foreign handles are finalized immediately; suspended opaque Fiber
+continuations conservatively retain instances.
 
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.
@@ -164,7 +169,14 @@ files and relative `.wren` imports.
 
 ## Extension path
 
-The next runtime layer can extend Fiber continuations through nested statement
-and callable frames, then add foreign classes with host-owned storage and
-finalizers. Both can reuse the existing source spans, diagnostics, environments,
-output capture, module loader, and execution limits.
+The persistent `Vm` keeps one runtime generation alive across host calls.
+Opaque `VmHandle` values form explicit strong roots and carry the runtime
+generation so reload and close can reject stale references deterministically.
+Transactional reload evaluates a complete candidate module graph before
+swapping the active generation; only portable primitive globals cross that
+boundary.
+
+Future runtime work can compact non-instance registries after tracing and expose
+incremental collection policies. The current explicit pass preserves live
+identities, reuses retired instance slots, and prioritizes deterministic
+foreign-resource finalization.

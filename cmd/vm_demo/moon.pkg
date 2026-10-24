@@ -1,0 +1,5 @@
+import {
+  "wdgodghl/moonwren",
+}
+
+pkgtype(kind: "executable")

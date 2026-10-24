@@ -114,8 +114,78 @@ class declaration. `ForeignObjectAllocationFailed` reports a rejected
 constructor allocation. Handles stay opaque to Wren and are delivered only to
 bindings created with `new_for_foreign_class`.
 
-Every successfully allocated handle is finalized exactly once when the
-interpreter run ends, including failed runs. MoonWren does not yet perform a
-reachability garbage collection pass, so finalizers do not run early when an
-object becomes unreachable. Explicit `close()`-style foreign methods are still
-recommended for resources that should be released before shutdown.
+Every successfully allocated handle is finalized exactly once when a one-shot
+interpreter run ends, including failed runs. Persistent VMs additionally expose
+an explicit reachability pass, described below.
+
+## Persistent VM
+
+`Vm` is the long-lived embedding surface. Unlike `run`, it retains loaded
+modules, globals, closures, Fibers, classes, instances, and foreign objects
+between calls:
+
+```moonbit
+let limits = VmLimits::new(
+  100000,   // statements per operation
+  64,       // Wren call depth
+  1000000,  // captured output characters
+  1024,     // loaded modules
+  1000000,  // runtime registry objects
+  10000000, // source characters per module
+)
+let vm = Vm::new(limits, loader, foreign_methods, foreign_classes)
+```
+
+`interpret(name, source)` loads a root module once. `read` returns a module
+variable without retaining it. `capture` creates a strong `VmHandle`, and
+`retain` turns a value returned by a host call into another strong handle.
+`call`, `call_method`, and `get` invoke functions, methods, and getters through
+those handles. `release` removes a host root. A released handle, a handle from a
+successful pre-reload generation, and every handle after `close` are rejected.
+
+Runtime-indexed `Value` variants are meaningful only inside the VM that created
+them. If such a value must survive an explicit collection pass, call `retain`
+before collecting. Primitive null, Boolean, number, String, and Range values are
+self-contained.
+
+`Vm::new_cancellable` accepts an additional zero-argument callback. Returning
+`true` stops the current operation with an `ExecutionLimit` diagnostic. The
+callback is evaluated at interpreter checkpoints; it is intended for deadlines,
+request cancellation, and application shutdown, not asynchronous re-entry into
+the same VM.
+
+## Transactional module reload
+
+`reload_module(name, source, preserve)` constructs a fresh candidate runtime,
+executes the replacement module, and then rebuilds every retained root. Only a
+fully successful candidate replaces the current generation. Parse, resolution,
+import, resource-limit, or runtime failures discard the candidate and preserve
+the active runtime and all existing handles.
+
+Names in `preserve` migrate their old values after the replacement module has
+initialized and before dependent roots execute. Migration is deliberately
+limited to portable primitives: null, Boolean, number, String, raw String, and
+Range. Closures, classes, instances, collections, iterators, and Fibers contain
+runtime-local identities and must be reconstructed by the new source.
+
+A successful reload invalidates every old handle, so the host must capture the
+new generation's entry points. Reload is transactional for MoonWren state.
+Foreign allocators, finalizers, method callbacks, module loaders, and other host
+callbacks may have external side effects that the VM cannot roll back; hosts
+should make those callbacks idempotent when reload failure is possible.
+
+## Reachability and foreign lifetimes
+
+`collect_garbage()` traces module environments, class and closure environments,
+the main Fiber, nested collections and sequences, and live host handles. It
+logically reclaims unreachable Wren instances and immediately invokes their
+foreign finalizers once. `VmGcStats` reports live instances before the pass,
+reachable instances, reclaimed instances, and finalized foreign instances.
+
+MoonBit closures used for suspended Fiber continuations are opaque to the
+runtime. While such a continuation exists, instance collection is conservative:
+all live instances are retained until the Fiber resumes or completes. Live
+instance identities remain stable, while retired instance slots may be reused
+by later allocations. The pass does not yet compact the other runtime
+registries. `close` finalizes every still-live foreign instance exactly once
+and invalidates all handles.
