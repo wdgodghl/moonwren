@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-10-25
+
+- make the official Wren suite runner discover MoonBit native executables on
+  both Windows and Linux CI hosts.
+
 ## 0.4.0 - 2026-10-25
 
 - add a persistent VM that retains modules and script state across host calls;

@@ -25,11 +25,16 @@ if (-not (Test-Path -LiteralPath $testRoot -PathType Container)) {
 }
 
 if (-not $Executable) {
-  $extension = if ($IsWindows) { ".exe" } else { "" }
-  $Executable = Join-Path $projectRoot "_build/native/debug/build/cmd/main/main$extension"
+  $candidates = @(
+    (Join-Path $projectRoot "_build/native/debug/build/cmd/main/main"),
+    (Join-Path $projectRoot "_build/native/debug/build/cmd/main/main.exe")
+  )
+  $Executable = $candidates |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
 }
 
-if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+if (-not $Executable -or -not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
   throw "MoonWren executable was not found: $Executable. Run 'moon build --target native' first."
 }
 
