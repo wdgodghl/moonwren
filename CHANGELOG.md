@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- add cached method handles, typed retained List/Map access, result-delivery
+  callbacks, host probes, and safe-boundary automatic garbage collection;
+- extend the bytecode backend with collections, subscripts, properties, core
+  method calls, and a replay debugger with stepping and line breakpoints;
+- add deterministic module archive encoding/validation and a portable polling
+  file-module watcher;
+- improve the browser playground with examples, keyboard execution, timing,
+  share links, responsive styling, and an optional GitHub Pages workflow;
+- expand differential fuzzing with semantic families, external corpora, failure
+  preservation and shrinking, and run six-metric performance gates in CI.
+
 ## 0.5.0 - 2026-10-25
 
 - expand explicit collection from foreign instances to the complete runtime

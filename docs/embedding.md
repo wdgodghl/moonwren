@@ -143,6 +143,12 @@ variable without retaining it. `capture` creates a strong `VmHandle`, and
 those handles. `release` removes a host root. A released handle, a handle from a
 successful pre-reload generation, and every handle after `close` are rejected.
 
+`bind_method` creates a generation-checked `VmMethodHandle` for repeated calls;
+`call_bound` also validates arity before entering Wren. Hosts can inspect and
+mutate retained Lists and Maps with the typed `list_*` and `map_*` operations.
+Those helpers return `VmHostResult` and copy snapshots, keeping runtime storage
+encapsulated. `has_module` and `has_variable` provide non-throwing probes.
+
 Runtime-indexed `Value` variants are meaningful only inside the VM that created
 them. If such a value must survive an explicit collection pass, call `retain`
 before collecting. Primitive null, Boolean, number, String, and Range values are
@@ -176,11 +182,18 @@ should make those callbacks idempotent when reload failure is possible.
 
 ## Reachability and foreign lifetimes
 
+Automatic collection is enabled by default and runs only at safe host-operation
+boundaries. `VmGcPolicy::new(minimum_objects, growth_percent)` controls the
+first threshold and subsequent heap-growth threshold;
+`configure_automatic_gc`, `disable_automatic_gc`, and `last_automatic_gc`
+control and inspect it. Wren's `System.gc()` sets a request that is honored at
+the next boundary rather than collecting through active MoonBit frames.
+
 `collect_garbage()` traces module environments, class and closure environments,
 the main Fiber, nested collections and sequences, and live host handles. It
-logically reclaims unreachable Wren instances and immediately invokes their
-foreign finalizers once. `VmGcStats` reports live instances before the pass,
-reachable instances, reclaimed instances, and finalized foreign instances.
+logically reclaims unreachable runtime objects and immediately invokes foreign
+finalizers once. `VmGcStats` reports object totals, reachable and reclaimed
+objects, instance counts, and finalized foreign instances.
 
 MoonBit closures used for suspended Fiber continuations are opaque to the
 runtime. While such a continuation exists, instance collection is conservative:

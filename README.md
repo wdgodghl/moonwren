@@ -30,6 +30,18 @@ module bundles, sandboxed filesystem loader, and browser playground support
 runtime development and production embedding without replacing the compatible
 tree-walking execution path.
 
+## Installation
+
+Add the published package to a MoonBit project:
+
+```text
+moon add wdgodghl/moonwren@0.5.0
+```
+
+Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
+the library as `@moonwren`. The optional root-confined filesystem loader is in
+`wdgodghl/moonwren/loaders`.
+
 ## Goals
 
 - implement the language runtime primarily in MoonBit;
@@ -228,10 +240,13 @@ moon run cmd/main -- examples/modules/main.wren
 See [`examples/modules`](examples/modules) for the complete project.
 
 For deployments, `verified_module_loader` rejects traversal names and verifies
-each bundled source before execution. The `wdgodghl/moonwren/loaders` package
-adds a filesystem loader confined to one canonical root with extension and
-source-size policies. `ModuleSnapshot::changes` supplies the change set for a
-polling watcher before calling transactional `reload_module`.
+each bundled source before execution. `encode_module_archive` and
+`decode_module_archive` provide a deterministic, versioned, length-delimited
+archive with per-module integrity checks. The `wdgodghl/moonwren/loaders`
+package adds a filesystem loader confined to one canonical root with extension
+and source-size policies. `FileModuleWatcher::poll` supplies verified modules
+and only the names changed since its last successful poll, ready to feed into
+transactional `reload_module`.
 
 The library API exposes the same pipeline:
 
@@ -253,6 +268,8 @@ match @moonwren.run("var answer = 6 * 7\nanswer\n") {
 `System.print` output is returned as an array of lines instead of being written
 directly by the library. Embedders can route those lines to a console, log,
 editor pane, or another host-provided destination.
+`ProgramRunResult::deliver` is a convenience adapter for separate output and
+diagnostic callbacks.
 
 For long-lived applications, `Vm` owns a persistent runtime. The host can load
 root modules, capture values, call Wren functions and methods, read getters,
@@ -275,16 +292,28 @@ match vm.capture("main", "next") {
 vm.close()
 ```
 
-`collect_garbage` traces the complete runtime heap: instances, closures,
+Repeated calls can cache lookup intent with `bind_method` and `call_bound`.
+Typed host collection operations (`list_snapshot`, `list_set`, `list_add`,
+`map_snapshot`, `map_get`, `map_set`, and `map_remove`) avoid reaching into
+runtime identities directly. `has_module` and `has_variable` support cheap host
+capability checks.
+
+Automatic collection runs only between host operations, never midway through a
+Wren call. Configure its minimum object count and growth percentage with
+`configure_automatic_gc(VmGcPolicy::new(...))`, inspect the last pass through
+`last_automatic_gc`, or disable it for latency-sensitive hosts. `System.gc()`
+requests a safe collection at the next host boundary. `collect_garbage` traces
+the complete runtime heap: instances, closures,
 classes, lists, maps, sequence views, iterators, map entries, and Fibers. Its
 statistics report total reachable and reclaimed objects as well as foreign
 finalizers. Host-owned resources can use `HostObjectTable[T]`, whose
 generation-checked handles reject stale identifiers after a slot is reused.
 
-The optional bytecode backend currently targets the procedural subset and
-fails explicitly on unsupported object syntax. It is suitable for experiments,
-profiling, and differential checks while the Wren 0.4-compatible interpreter
-remains the default:
+The optional bytecode backend covers procedural control flow plus List and Map
+literals, subscripts, core getters, setters, and method calls. User classes,
+closures, modules, and Fibers still fail explicitly with `UnsupportedFeature`.
+It is suitable for experiments, profiling, and differential checks while the
+Wren 0.4-compatible interpreter remains the default:
 
 ```moonbit
 match compile_bytecode("var n = 6\n n * 7\n") {
@@ -292,6 +321,9 @@ match compile_bytecode("var n = 6\n n * 7\n") {
     let profile = profile_bytecode(program, 10000)
     let trace = trace_bytecode(program, 10000)
     let listing = disassemble_bytecode(program)
+    let debugger = BytecodeTraceDebugger::new(trace, [1])
+    ignore(debugger.step())
+    ignore(debugger.continue_execution())
   }
   BytecodeCompileFailed(issues) => println(issues[0].message)
 }
@@ -303,7 +335,9 @@ back rejected submissions. `Value::as_bool`, `as_number`, `as_string`, and
 
 Development tools are described in [`docs/tooling.md`](docs/tooling.md),
 including deterministic differential fuzzing against official Wren, repeatable
-performance baselines, bytecode inspection, and the local browser playground.
+performance baselines, bytecode inspection, and the local/shareable browser
+playground. The manual `Playground Pages` workflow can deploy the static build
+to GitHub Pages after Pages is enabled for the repository.
 
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can

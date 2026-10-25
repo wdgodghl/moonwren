@@ -34,6 +34,9 @@ jobs:
         run: moon build --target js cmd/web_demo
       - name: Build performance benchmark
         run: moon build --target native --release cmd/benchmark
+      - name: Run performance smoke gate
+        shell: pwsh
+        run: ./tools/check-performance.ps1 -SmokeOnly
       - name: Run tests
         run: moon test
       - name: Compare Wren 0.4.0 fixtures
