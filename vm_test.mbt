@@ -351,3 +351,18 @@ test "VM handles cannot cross runtimes and closed VMs fail safely" {
   }
   replacement.close()
 }
+
+///|
+test "full heap collection reclaims temporary closures and collections" {
+  let vm = standard_vm()
+  match vm.interpret("main", "Fn.new { [1, 2, 3] }.call()\n") {
+    @moonwren.ProgramCompleted(_, _) => ()
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+  let stats = vm.collect_garbage()
+  assert_eq(stats.before_objects, 3)
+  assert_eq(stats.reachable_objects, 1)
+  assert_eq(stats.reclaimed_objects, 2)
+  assert_eq(stats.reclaimed_instances, 0)
+  vm.close()
+}

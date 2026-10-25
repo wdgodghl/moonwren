@@ -712,6 +712,9 @@ pub fn Vm::collect_garbage(self : Vm) -> VmGcStats {
   let roots : Array[Value] = []
   if self.closed {
     return {
+      before_objects: 0,
+      reachable_objects: 0,
+      reclaimed_objects: 0,
       before_instances: 0,
       reachable_instances: 0,
       reclaimed_instances: 0,

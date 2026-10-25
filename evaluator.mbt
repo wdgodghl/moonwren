@@ -7,6 +7,9 @@ pub(all) enum EvaluationResult {
 ///|
 /// Summary returned by a persistent VM garbage-collection pass.
 pub(all) struct VmGcStats {
+  before_objects : Int
+  reachable_objects : Int
+  reclaimed_objects : Int
   before_instances : Int
   reachable_instances : Int
   reclaimed_instances : Int
@@ -19,6 +22,7 @@ priv struct Closure {
   body : Array[Stmt]
   environment : Environment
   source_name : String
+  alive : Bool
 }
 
 ///|
@@ -33,6 +37,7 @@ priv struct ClassDefinition {
   static_fields : Array[InstanceField]
   attributes : Value
   source_name : String
+  alive : Bool
 }
 
 ///|
@@ -60,6 +65,7 @@ priv struct Instance {
 ///|
 priv struct RuntimeList {
   items : Array[Value]
+  mut alive : Bool
 }
 
 ///|
@@ -71,12 +77,14 @@ priv struct RuntimeMapEntry {
 ///|
 priv struct RuntimeMap {
   entries : Array[RuntimeMapEntry]
+  mut alive : Bool
 }
 
 ///|
 priv struct RuntimeMapEntryValue {
   key : Value
   value : Value
+  alive : Bool
 }
 
 ///|
@@ -107,6 +115,7 @@ priv enum CollectedValuesResult {
 ///|
 priv struct RuntimeSequence {
   kind : RuntimeSequenceKind
+  alive : Bool
 }
 
 ///|
@@ -117,6 +126,7 @@ priv struct RuntimeIterator {
   mut yielded : Int
   mut started : Bool
   mut completed : Bool
+  alive : Bool
 }
 
 ///|
@@ -132,6 +142,7 @@ priv struct RuntimeFiber {
   mut pending : ((Value) -> FiberStatementStep)?
   mut last : Value
   mut error : Value
+  alive : Bool
 }
 
 ///|
@@ -157,6 +168,12 @@ priv struct RuntimeContext {
   sequences : Array[RuntimeSequence]
   iterators : Array[RuntimeIterator]
   fibers : Array[RuntimeFiber]
+  free_instances : Array[Int]
+  free_lists : Array[Int]
+  free_maps : Array[Int]
+  free_map_entries : Array[Int]
+  free_sequences : Array[Int]
+  free_fibers : Array[Int]
   modules : Array[RuntimeModule]
   foreign_methods : Array[ForeignMethodBinding]
   foreign_classes : Array[ForeignClassBinding]
@@ -240,8 +257,15 @@ fn RuntimeContext::new_with_limits(
         pending: None,
         last: Value::null(),
         error: Value::null(),
+        alive: true,
       },
     ],
+    free_instances: [],
+    free_lists: [],
+    free_maps: [],
+    free_map_entries: [],
+    free_sequences: [],
+    free_fibers: [],
     modules: [],
     foreign_methods,
     foreign_classes,
@@ -288,21 +312,34 @@ fn RuntimeContext::begin_operation(self : RuntimeContext) -> Unit {
 
 ///|
 fn RuntimeContext::allocated_objects(self : RuntimeContext) -> Int {
-  let mut live_instances = 0
-  for instance in self.instances {
-    if instance.alive {
-      live_instances = live_instances + 1
+  let mut live = self.instances.length() -
+    self.free_instances.length() +
+    self.lists.length() -
+    self.free_lists.length() +
+    self.maps.length() -
+    self.free_maps.length() +
+    self.map_entries.length() -
+    self.free_map_entries.length() +
+    self.sequences.length() -
+    self.free_sequences.length() +
+    self.fibers.length() -
+    self.free_fibers.length()
+  for closure in self.closures {
+    if closure.alive {
+      live = live + 1
     }
   }
-  self.closures.length() +
-  self.classes.length() +
-  live_instances +
-  self.lists.length() +
-  self.maps.length() +
-  self.map_entries.length() +
-  self.sequences.length() +
-  self.iterators.length() +
-  self.fibers.length()
+  for class_definition in self.classes {
+    if class_definition.alive {
+      live = live + 1
+    }
+  }
+  for iterator in self.iterators {
+    if iterator.alive {
+      live = live + 1
+    }
+  }
+  live
 }
 
 ///|
@@ -311,10 +348,8 @@ fn RuntimeContext::new_instance(
   class_identifier : Int,
   foreign_handle : Int?,
 ) -> Int {
-  for identifier = 0
-      identifier < self.instances.length()
-      identifier = identifier + 1 {
-    if !self.instances[identifier].alive {
+  match self.free_instances.pop() {
+    Some(identifier) => {
       self.instances[identifier] = {
         class_identifier,
         fields: [],
@@ -324,6 +359,7 @@ fn RuntimeContext::new_instance(
       }
       return identifier
     }
+    None => ()
   }
   let identifier = self.instances.length()
   self.instances.push({
@@ -341,15 +377,29 @@ fn RuntimeContext::new_list(
   self : RuntimeContext,
   items : Array[Value],
 ) -> Value {
+  match self.free_lists.pop() {
+    Some(identifier) => {
+      self.lists[identifier] = { items, alive: true, }
+      return Value::list(identifier)
+    }
+    None => ()
+  }
   let identifier = self.lists.length()
-  self.lists.push({ items, })
+  self.lists.push({ items, alive: true, })
   Value::list(identifier)
 }
 
 ///|
 fn RuntimeContext::new_map(self : RuntimeContext) -> Value {
+  match self.free_maps.pop() {
+    Some(identifier) => {
+      self.maps[identifier] = { entries: [], alive: true, }
+      return Value::map(identifier)
+    }
+    None => ()
+  }
   let identifier = self.maps.length()
-  self.maps.push({ entries: [], })
+  self.maps.push({ entries: [], alive: true, })
   Value::map(identifier)
 }
 
@@ -358,6 +408,26 @@ fn RuntimeContext::new_fiber(
   self : RuntimeContext,
   function_identifier : Int,
 ) -> Value {
+  match self.free_fibers.pop() {
+    Some(identifier) => {
+      self.fibers[identifier] = {
+        function_identifier,
+        arguments: [],
+        identity: identifier,
+        is_call_frame: false,
+        environment: Environment::new(),
+        initialized: false,
+        state: 0,
+        next_statement: 0,
+        pending: None,
+        last: Value::null(),
+        error: Value::null(),
+        alive: true,
+      }
+      return Value::fiber(identifier)
+    }
+    None => ()
+  }
   let identifier = self.fibers.length()
   self.fibers.push({
     function_identifier,
@@ -371,6 +441,7 @@ fn RuntimeContext::new_fiber(
     pending: None,
     last: Value::null(),
     error: Value::null(),
+    alive: true,
   })
   Value::fiber(identifier)
 }
@@ -382,6 +453,26 @@ fn RuntimeContext::new_function_fiber(
   arguments : Array[Value],
   identity : Int,
 ) -> Int {
+  match self.free_fibers.pop() {
+    Some(identifier) => {
+      self.fibers[identifier] = {
+        function_identifier,
+        arguments,
+        identity,
+        is_call_frame: true,
+        environment: Environment::new(),
+        initialized: false,
+        state: 0,
+        next_statement: 0,
+        pending: None,
+        last: Value::null(),
+        error: Value::null(),
+        alive: true,
+      }
+      return identifier
+    }
+    None => ()
+  }
   let identifier = self.fibers.length()
   self.fibers.push({
     function_identifier,
@@ -395,6 +486,7 @@ fn RuntimeContext::new_function_fiber(
     pending: None,
     last: Value::null(),
     error: Value::null(),
+    alive: true,
   })
   identifier
 }
@@ -412,8 +504,15 @@ fn RuntimeContext::new_sequence_kind(
   self : RuntimeContext,
   kind : RuntimeSequenceKind,
 ) -> Value {
+  match self.free_sequences.pop() {
+    Some(identifier) => {
+      self.sequences[identifier] = { kind, alive: true, }
+      return Value::sequence(identifier)
+    }
+    None => ()
+  }
   let identifier = self.sequences.length()
-  self.sequences.push({ kind, })
+  self.sequences.push({ kind, alive: true, })
   Value::sequence(identifier)
 }
 
@@ -423,8 +522,15 @@ fn RuntimeContext::new_map_entry(
   key : Value,
   value : Value,
 ) -> Value {
+  match self.free_map_entries.pop() {
+    Some(identifier) => {
+      self.map_entries[identifier] = { key, value, alive: true, }
+      return Value::map_entry(identifier)
+    }
+    None => ()
+  }
   let identifier = self.map_entries.length()
-  self.map_entries.push({ key, value, })
+  self.map_entries.push({ key, value, alive: true, })
   Value::map_entry(identifier)
 }
 
@@ -3545,6 +3651,7 @@ fn method_call_closure(
     body: resolved.declaration.body,
     environment,
     source_name: owner.source_name,
+    alive: true,
   })
   Some(identifier)
 }
@@ -6059,6 +6166,7 @@ fn invoke_sequence_method(
         yielded: 0,
         started: false,
         completed: false,
+        alive: true,
       })
       next
     }
@@ -7892,6 +8000,7 @@ fn evaluate_expression_in(
         body,
         environment: environment.capture(),
         source_name: context.current_source,
+        alive: true,
       })
       EvaluationSucceeded(Value::function(identifier))
     }
@@ -8514,6 +8623,7 @@ fn execute_statement_in(
         static_fields: [],
         attributes,
         source_name: context.current_source,
+        alive: true,
       })
       let value = Value::class_value(identifier)
       ignore(environment.assign(name, value))
@@ -8580,7 +8690,8 @@ fn mark_closure(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.closures.length() ||
-    marks.closures[identifier] {
+    marks.closures[identifier] ||
+    !context.closures[identifier].alive {
     return
   }
   marks.closures[identifier] = true
@@ -8595,7 +8706,8 @@ fn mark_class(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.classes.length() ||
-    marks.classes[identifier] {
+    marks.classes[identifier] ||
+    !context.classes[identifier].alive {
     return
   }
   marks.classes[identifier] = true
@@ -8639,7 +8751,8 @@ fn mark_list(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.lists.length() ||
-    marks.lists[identifier] {
+    marks.lists[identifier] ||
+    !context.lists[identifier].alive {
     return
   }
   marks.lists[identifier] = true
@@ -8656,7 +8769,8 @@ fn mark_map(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.maps.length() ||
-    marks.maps[identifier] {
+    marks.maps[identifier] ||
+    !context.maps[identifier].alive {
     return
   }
   marks.maps[identifier] = true
@@ -8674,7 +8788,8 @@ fn mark_map_entry(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.map_entries.length() ||
-    marks.map_entries[identifier] {
+    marks.map_entries[identifier] ||
+    !context.map_entries[identifier].alive {
     return
   }
   marks.map_entries[identifier] = true
@@ -8691,7 +8806,8 @@ fn mark_sequence(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.sequences.length() ||
-    marks.sequences[identifier] {
+    marks.sequences[identifier] ||
+    !context.sequences[identifier].alive {
     return
   }
   marks.sequences[identifier] = true
@@ -8728,7 +8844,8 @@ fn mark_iterator(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.iterators.length() ||
-    marks.iterators[identifier] {
+    marks.iterators[identifier] ||
+    !context.iterators[identifier].alive {
     return
   }
   marks.iterators[identifier] = true
@@ -8746,7 +8863,8 @@ fn mark_fiber(
 ) -> Unit {
   if identifier < 0 ||
     identifier >= marks.fibers.length() ||
-    marks.fibers[identifier] {
+    marks.fibers[identifier] ||
+    !context.fibers[identifier].alive {
     return
   }
   marks.fibers[identifier] = true
@@ -8837,14 +8955,55 @@ fn collect_runtime_garbage(
     mark_runtime_value(root, context, marks)
   }
   if marks.has_opaque_continuation {
-    for identifier = 0
-        identifier < context.instances.length()
-        identifier = identifier + 1 {
-      if context.instances[identifier].alive {
-        mark_instance(identifier, context, marks)
+    // MoonBit does not expose values captured by continuation closures. Keep
+    // every live registry object until all suspended continuations complete.
+    for index = 0; index < context.closures.length(); index = index + 1 {
+      if context.closures[index].alive {
+        marks.closures[index] = true
+      }
+    }
+    for index = 0; index < context.classes.length(); index = index + 1 {
+      if context.classes[index].alive {
+        marks.classes[index] = true
+      }
+    }
+    for index = 0; index < context.instances.length(); index = index + 1 {
+      if context.instances[index].alive {
+        marks.instances[index] = true
+      }
+    }
+    for index = 0; index < context.lists.length(); index = index + 1 {
+      if context.lists[index].alive {
+        marks.lists[index] = true
+      }
+    }
+    for index = 0; index < context.maps.length(); index = index + 1 {
+      if context.maps[index].alive {
+        marks.maps[index] = true
+      }
+    }
+    for index = 0; index < context.map_entries.length(); index = index + 1 {
+      if context.map_entries[index].alive {
+        marks.map_entries[index] = true
+      }
+    }
+    for index = 0; index < context.sequences.length(); index = index + 1 {
+      if context.sequences[index].alive {
+        marks.sequences[index] = true
+      }
+    }
+    for index = 0; index < context.iterators.length(); index = index + 1 {
+      if context.iterators[index].alive {
+        marks.iterators[index] = true
+      }
+    }
+    for index = 0; index < context.fibers.length(); index = index + 1 {
+      if context.fibers[index].alive {
+        marks.fibers[index] = true
       }
     }
   }
+  let before_objects = context.allocated_objects()
   let mut before = 0
   let mut reachable = 0
   let mut reclaimed = 0
@@ -8865,10 +9024,134 @@ fn collect_runtime_garbage(
       }
       instance.fields.clear()
       instance.alive = false
+      context.free_instances.push(identifier)
       reclaimed = reclaimed + 1
     }
   }
+  let mut reclaimed_objects = reclaimed
+  for identifier = 0
+      identifier < context.closures.length()
+      identifier = identifier + 1 {
+    if context.closures[identifier].alive && !marks.closures[identifier] {
+      context.closures[identifier] = {
+        parameters: [],
+        body: [],
+        environment: Environment::new(),
+        source_name: "<collected>",
+        alive: false,
+      }
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 0
+      identifier < context.lists.length()
+      identifier = identifier + 1 {
+    if context.lists[identifier].alive && !marks.lists[identifier] {
+      context.lists[identifier].items.clear()
+      context.lists[identifier].alive = false
+      context.free_lists.push(identifier)
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 0
+      identifier < context.maps.length()
+      identifier = identifier + 1 {
+    if context.maps[identifier].alive && !marks.maps[identifier] {
+      context.maps[identifier].entries.clear()
+      context.maps[identifier].alive = false
+      context.free_maps.push(identifier)
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 0
+      identifier < context.map_entries.length()
+      identifier = identifier + 1 {
+    if context.map_entries[identifier].alive && !marks.map_entries[identifier] {
+      context.map_entries[identifier] = {
+        key: Value::null(),
+        value: Value::null(),
+        alive: false,
+      }
+      context.free_map_entries.push(identifier)
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 0
+      identifier < context.sequences.length()
+      identifier = identifier + 1 {
+    if context.sequences[identifier].alive && !marks.sequences[identifier] {
+      context.sequences[identifier] = {
+        kind: SequenceSnapshot([]),
+        alive: false,
+      }
+      context.free_sequences.push(identifier)
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 0
+      identifier < context.iterators.length()
+      identifier = identifier + 1 {
+    if context.iterators[identifier].alive && !marks.iterators[identifier] {
+      context.iterators[identifier] = {
+        sequence_identifier: -1,
+        source_iterator: Value::null(),
+        current: Value::null(),
+        yielded: 0,
+        started: false,
+        completed: true,
+        alive: false,
+      }
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  for identifier = 1
+      identifier < context.fibers.length()
+      identifier = identifier + 1 {
+    if context.fibers[identifier].alive && !marks.fibers[identifier] {
+      context.fibers[identifier] = {
+        function_identifier: -1,
+        arguments: [],
+        identity: identifier,
+        is_call_frame: false,
+        environment: Environment::new(),
+        initialized: true,
+        state: 2,
+        next_statement: 0,
+        pending: None,
+        last: Value::null(),
+        error: Value::null(),
+        alive: false,
+      }
+      context.free_fibers.push(identifier)
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
+  // Classes are retired last because foreign instance finalizers need their
+  // binding metadata during the instance sweep above.
+  for identifier = 0
+      identifier < context.classes.length()
+      identifier = identifier + 1 {
+    if context.classes[identifier].alive && !marks.classes[identifier] {
+      context.classes[identifier] = {
+        name: "<collected>",
+        superclass: None,
+        inherits_sequence: false,
+        methods: [],
+        is_foreign: false,
+        foreign_binding: None,
+        environment: Environment::new(),
+        static_fields: [],
+        attributes: Value::null(),
+        source_name: "<collected>",
+        alive: false,
+      }
+      reclaimed_objects = reclaimed_objects + 1
+    }
+  }
   {
+    before_objects,
+    reachable_objects: before_objects - reclaimed_objects,
+    reclaimed_objects,
     before_instances: before,
     reachable_instances: reachable,
     reclaimed_instances: reclaimed,
