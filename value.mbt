@@ -75,6 +75,13 @@ pub(all) enum Value {
 } derive(Eq, Debug)
 
 ///|
+/// Result of converting a dynamically typed Wren value at the host boundary.
+pub(all) enum ValueConversionResult[T] {
+  ValueConverted(T)
+  ValueConversionFailed(String, String)
+}
+
+///|
 pub extend Value with Eq::{equal, not_equal}
 
 ///|
@@ -110,6 +117,41 @@ fn Value::raw_string(bytes : Array[Int]) -> Value {
 ///|
 pub fn Value::range(from : Double, to : Double, inclusive : Bool) -> Value {
   RangeValue(from, to, inclusive)
+}
+
+///|
+pub fn Value::as_bool(self : Value) -> ValueConversionResult[Bool] {
+  match self {
+    BoolValue(value) => ValueConverted(value)
+    _ => ValueConversionFailed("Bool", self.type_name())
+  }
+}
+
+///|
+pub fn Value::as_number(self : Value) -> ValueConversionResult[Double] {
+  match self {
+    NumberValue(value) => ValueConverted(value)
+    _ => ValueConversionFailed("Num", self.type_name())
+  }
+}
+
+///|
+pub fn Value::as_string(self : Value) -> ValueConversionResult[String] {
+  match self {
+    StringValue(value) => ValueConverted(value)
+    RawStringValue(_) => ValueConversionFailed("valid UTF-8 String", "String")
+    _ => ValueConversionFailed("String", self.type_name())
+  }
+}
+
+///|
+pub fn Value::as_range(
+  self : Value,
+) -> ValueConversionResult[(Double, Double, Bool)] {
+  match self {
+    RangeValue(from, to, inclusive) => ValueConverted((from, to, inclusive))
+    _ => ValueConversionFailed("Range", self.type_name())
+  }
 }
 
 ///|
