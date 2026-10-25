@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- expand explicit collection from foreign instances to the complete runtime
+  heap and report aggregate reachable/reclaimed object statistics;
+- add an optional procedural stack-bytecode compiler and VM with step limits,
+  disassembly, dynamic profiling, and instruction traces;
+- add checked host-value conversion, generation-safe host object tables, and a
+  transactional incremental REPL API;
+- add verified in-memory module bundles, change snapshots, and a root-confined
+  filesystem module loader;
+- add deterministic differential fuzzing, performance regression tooling, and
+  a JavaScript browser playground build.
+
 ## 0.4.1 - 2026-10-25
 
 - make the official Wren suite runner discover MoonBit native executables on

@@ -24,7 +24,11 @@ class and method attributes, raw strings, cyclic modules, and the complete
 32-bit numeric operator surface are supported as well. A persistent embedding
 VM retains script state across host calls and provides transactional module
 reload, strong host handles, configurable resource limits, host cancellation,
-and explicit reachability collection for Wren instances.
+and explicit full-heap reachability collection. An optional stack-bytecode
+backend, instruction profiler/trace, transactional REPL session, verified
+module bundles, sandboxed filesystem loader, and browser playground support
+runtime development and production embedding without replacing the compatible
+tree-walking execution path.
 
 ## Goals
 
@@ -50,6 +54,8 @@ The project requires MoonBit `0.10.14` or newer.
 moon check
 moon test
 moon run cmd/main
+moon run cmd/benchmark --target native
+./tools/build-web-demo.ps1
 ./tools/check-conformance.ps1
 ./tools/check-official-suite.ps1 -WrenRoot /path/to/wren-0.4.0
 ```
@@ -221,6 +227,12 @@ moon run cmd/main -- examples/modules/main.wren
 
 See [`examples/modules`](examples/modules) for the complete project.
 
+For deployments, `verified_module_loader` rejects traversal names and verifies
+each bundled source before execution. The `wdgodghl/moonwren/loaders` package
+adds a filesystem loader confined to one canonical root with extension and
+source-size policies. `ModuleSnapshot::changes` supplies the change set for a
+polling watcher before calling transactional `reload_module`.
+
 The library API exposes the same pipeline:
 
 ```moonbit
@@ -262,6 +274,36 @@ match vm.capture("main", "next") {
 }
 vm.close()
 ```
+
+`collect_garbage` traces the complete runtime heap: instances, closures,
+classes, lists, maps, sequence views, iterators, map entries, and Fibers. Its
+statistics report total reachable and reclaimed objects as well as foreign
+finalizers. Host-owned resources can use `HostObjectTable[T]`, whose
+generation-checked handles reject stale identifiers after a slot is reused.
+
+The optional bytecode backend currently targets the procedural subset and
+fails explicitly on unsupported object syntax. It is suitable for experiments,
+profiling, and differential checks while the Wren 0.4-compatible interpreter
+remains the default:
+
+```moonbit
+match compile_bytecode("var n = 6\n n * 7\n") {
+  BytecodeCompiled(program) => {
+    let profile = profile_bytecode(program, 10000)
+    let trace = trace_bytecode(program, 10000)
+    let listing = disassemble_bytecode(program)
+  }
+  BytecodeCompileFailed(issues) => println(issues[0].message)
+}
+```
+
+`ReplSession` retains accepted declarations by deterministic replay and rolls
+back rejected submissions. `Value::as_bool`, `as_number`, `as_string`, and
+`as_range` provide checked conversions at the host boundary.
+
+Development tools are described in [`docs/tooling.md`](docs/tooling.md),
+including deterministic differential fuzzing against official Wren, repeatable
+performance baselines, bytecode inspection, and the local browser playground.
 
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can

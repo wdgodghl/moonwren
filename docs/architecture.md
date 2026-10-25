@@ -108,9 +108,18 @@ host's opaque integer handle beside ordinary Wren fields; handle-aware foreign
 methods receive it without exposing runtime registry indexes. Interpreter
 shutdown walks allocated foreign instances and finalizes each handle once. An
 explicit persistent-VM collection pass traces module, class, closure, Fiber,
-collection, and host-handle roots. Unreachable instances are logically retired
-and foreign handles are finalized immediately; suspended opaque Fiber
-continuations conservatively retain instances.
+collection, and host-handle roots. Unreachable instances, classes, closures,
+collections, sequence views, iterators, map entries, and Fibers are logically
+retired; foreign handles are finalized immediately. Suspended opaque Fiber
+continuations conservatively retain the complete live heap because their host
+continuation cannot yet be inspected safely.
+
+The optional bytecode path compiles a deliberately bounded procedural subset
+to immutable constants and stack instructions. Unsupported syntax produces a
+structured compile diagnostic and never silently falls back. The bytecode VM
+shares primitive operators with the interpreter, enforces its own instruction
+budget, and can emit an offset/source-position listing, aggregate profile, or
+complete execution trace for debugger frontends.
 
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.

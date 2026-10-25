@@ -25,11 +25,15 @@ jobs:
       - name: Check formatting
         run: moon fmt --check
       - name: Check packages
-        run: moon check
+        run: moon check --target all --deny-warn
       - name: Build packages
         run: moon build
       - name: Build native CLI
         run: moon build --target native
+      - name: Build browser playground
+        run: moon build --target js cmd/web_demo
+      - name: Build performance benchmark
+        run: moon build --target native --release cmd/benchmark
       - name: Run tests
         run: moon test
       - name: Compare Wren 0.4.0 fixtures
