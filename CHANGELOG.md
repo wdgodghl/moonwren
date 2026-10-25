@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-10-25
 
 - expand explicit collection from foreign instances to the complete runtime
   heap and report aggregate reachable/reclaimed object statistics;
