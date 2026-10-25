@@ -1,0 +1,6 @@
+import {
+  "moonbitlang/core/bench",
+  "wdgodghl/moonwren",
+}
+
+pkgtype(kind: "executable")
