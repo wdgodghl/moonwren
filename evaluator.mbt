@@ -193,6 +193,7 @@ priv struct RuntimeContext {
   mut transfer_target : Int
   mut transferred_to_main : Bool
   mut terminate_main : Bool
+  mut gc_requested : Bool
 }
 
 ///|
@@ -285,6 +286,7 @@ fn RuntimeContext::new_with_limits(
     transfer_target: -1,
     transferred_to_main: false,
     terminate_main: false,
+    gc_requested: false,
   }
 }
 
@@ -7034,6 +7036,7 @@ fn invoke_method(
         if arguments.length() != 0 {
           invalid_collection_arity("System", name, 0, arguments.length(), span)
         } else {
+          context.gc_requested = true
           EvaluationSucceeded(Value::null())
         }
       } else {

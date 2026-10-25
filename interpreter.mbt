@@ -16,6 +16,23 @@ pub(all) struct VmLimits {
 }
 
 ///|
+/// Automatic collection policy evaluated between host operations. Collection
+/// never interrupts a running Wren call, so temporary host return values remain
+/// valid until the next VM operation unless retained with a handle.
+pub(all) struct VmGcPolicy {
+  minimum_objects : Int
+  growth_percent : Int
+}
+
+///|
+pub fn VmGcPolicy::new(
+  minimum_objects : Int,
+  growth_percent : Int,
+) -> VmGcPolicy {
+  { minimum_objects, growth_percent, }
+}
+
+///|
 pub fn VmLimits::new(
   max_steps : Int,
   max_call_depth : Int,
@@ -95,6 +112,11 @@ pub struct Vm {
   foreign_methods : Array[ForeignMethodBinding]
   foreign_classes : Array[ForeignClassBinding]
   should_cancel : () -> Bool
+  mut automatic_gc : Bool
+  mut gc_minimum_objects : Int
+  mut gc_growth_percent : Int
+  mut next_gc_objects : Int
+  mut last_gc_stats : VmGcStats?
 }
 
 ///|
@@ -241,7 +263,72 @@ pub fn Vm::new_cancellable(
     foreign_methods: methods,
     foreign_classes: classes,
     should_cancel,
+    automatic_gc: true,
+    gc_minimum_objects: 10000,
+    gc_growth_percent: 100,
+    next_gc_objects: 10000,
+    last_gc_stats: None,
   }
+}
+
+///|
+fn Vm::root_values(self : Vm) -> Array[Value] {
+  let roots : Array[Value] = []
+  for handle in self.handles {
+    if handle.alive && handle.generation == self.generation {
+      roots.push(handle.value)
+    }
+  }
+  roots
+}
+
+///|
+fn Vm::record_collection(self : Vm, stats : VmGcStats) -> Unit {
+  self.last_gc_stats = Some(stats)
+  let grown = stats.reachable_objects * (100 + self.gc_growth_percent) / 100 + 1
+  self.next_gc_objects = if grown < self.gc_minimum_objects {
+    self.gc_minimum_objects
+  } else {
+    grown
+  }
+}
+
+///|
+fn Vm::prepare_operation(self : Vm) -> Unit {
+  if self.closed {
+    return
+  }
+  let context = self.runtime()
+  if context.gc_requested ||
+    (self.automatic_gc && context.allocated_objects() >= self.next_gc_objects) {
+    let stats = collect_runtime_garbage(context, self.root_values())
+    context.gc_requested = false
+    self.record_collection(stats)
+  }
+}
+
+///|
+/// Enable automatic collection between host operations. Invalid policies are
+/// rejected without changing the active configuration.
+pub fn Vm::configure_automatic_gc(self : Vm, policy : VmGcPolicy) -> Bool {
+  if policy.minimum_objects <= 0 || policy.growth_percent < 0 {
+    return false
+  }
+  self.automatic_gc = true
+  self.gc_minimum_objects = policy.minimum_objects
+  self.gc_growth_percent = policy.growth_percent
+  self.next_gc_objects = policy.minimum_objects
+  true
+}
+
+///|
+pub fn Vm::disable_automatic_gc(self : Vm) -> Unit {
+  self.automatic_gc = false
+}
+
+///|
+pub fn Vm::last_automatic_gc(self : Vm) -> VmGcStats? {
+  self.last_gc_stats
 }
 
 ///|
@@ -303,6 +390,7 @@ pub fn Vm::interpret(
   if self.closed {
     return ProgramFailed([invalid_vm_state("VM is closed", source_name)], [])
   }
+  self.prepare_operation()
   let context = self.runtime()
   context.begin_operation()
   match validate_vm_limits(self.limits, source_name) {
@@ -398,6 +486,7 @@ pub fn Vm::read(
   if self.closed {
     return ProgramFailed([invalid_vm_state("VM is closed", module_name)], [])
   }
+  self.prepare_operation()
   let context = self.runtime()
   context.begin_operation()
   match self.module_value(module_name, variable) {
@@ -477,6 +566,7 @@ fn Vm::invoke_host(
   if self.closed {
     return ProgramFailed([invalid_vm_state("VM is closed", "<host>")], [])
   }
+  self.prepare_operation()
   let context = self.runtime()
   context.begin_operation()
   let receiver = match self.resolve_handle(handle) {
@@ -536,6 +626,7 @@ pub fn Vm::get(
   if self.closed {
     return ProgramFailed([invalid_vm_state("VM is closed", "<host>")], [])
   }
+  self.prepare_operation()
   let context = self.runtime()
   context.begin_operation()
   let receiver = match self.resolve_handle(handle) {
@@ -591,6 +682,7 @@ pub fn Vm::reload_module(
   if self.closed {
     return ProgramFailed([invalid_vm_state("VM is closed", module_name)], [])
   }
+  self.prepare_operation()
   let context = self.runtime()
   context.begin_operation()
   if source.length() > self.limits.max_source_characters {
@@ -709,7 +801,6 @@ pub fn Vm::reload_module(
 /// Trace VM roots and release unreachable instances. Suspended opaque
 /// continuations conservatively retain instances until the Fiber resumes.
 pub fn Vm::collect_garbage(self : Vm) -> VmGcStats {
-  let roots : Array[Value] = []
   if self.closed {
     return {
       before_objects: 0,
@@ -721,12 +812,11 @@ pub fn Vm::collect_garbage(self : Vm) -> VmGcStats {
       finalized_foreign_instances: 0,
     }
   }
-  for handle in self.handles {
-    if handle.alive && handle.generation == self.generation {
-      roots.push(handle.value)
-    }
-  }
-  collect_runtime_garbage(self.runtime(), roots)
+  let context = self.runtime()
+  let stats = collect_runtime_garbage(context, self.root_values())
+  context.gc_requested = false
+  self.record_collection(stats)
+  stats
 }
 
 ///|
