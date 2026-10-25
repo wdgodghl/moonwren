@@ -11,6 +11,13 @@ pub(all) enum BytecodeOp {
   ExitScope
   UnaryOp(UnaryOperator)
   BinaryOp(BinaryOperator)
+  BuildList(Int)
+  BuildMap(Int)
+  GetSubscript
+  SetSubscript
+  GetProperty(String)
+  SetProperty(String)
+  InvokeMethod(String, Int)
   Jump(Int)
   JumpIfFalse(Int)
   JumpIfFalseKeep(Int)
@@ -68,6 +75,7 @@ pub(all) struct BytecodeProfile {
   stores : Int
   branches : Int
   arithmetic_operations : Int
+  calls : Int
 }
 
 ///|
@@ -92,6 +100,7 @@ priv struct BytecodeProfiler {
   mut stores : Int
   mut branches : Int
   mut arithmetic_operations : Int
+  mut calls : Int
   capture_trace : Bool
   events : Array[BytecodeTraceEvent]
 }
@@ -104,6 +113,7 @@ fn BytecodeProfiler::new(capture_trace : Bool) -> BytecodeProfiler {
     stores: 0,
     branches: 0,
     arithmetic_operations: 0,
+    calls: 0,
     capture_trace,
     events: [],
   }
@@ -128,6 +138,11 @@ fn BytecodeProfiler::observe(
       self.branches = self.branches + 1
     UnaryOp(_) | BinaryOp(_) =>
       self.arithmetic_operations = self.arithmetic_operations + 1
+    GetSubscript
+    | SetSubscript
+    | GetProperty(_)
+    | SetProperty(_)
+    | InvokeMethod(_, _) => self.calls = self.calls + 1
     _ => ()
   }
   if self.capture_trace {
@@ -247,17 +262,50 @@ fn BytecodeBuilder::compile_expression(
       self.compile_expression(falsey)
       self.patch_jump(end_jump, self.instructions.length())
     }
+    ListLiteral(items, span) => {
+      for item in items {
+        self.compile_expression(item)
+      }
+      ignore(self.emit(BuildList(items.length()), span))
+    }
+    MapLiteral(entries, span) => {
+      for entry in entries {
+        self.compile_expression(entry.key)
+        self.compile_expression(entry.value)
+      }
+      ignore(self.emit(BuildMap(entries.length()), span))
+    }
+    SubscriptGet(receiver, index, span) => {
+      self.compile_expression(receiver)
+      self.compile_expression(index)
+      ignore(self.emit(GetSubscript, span))
+    }
+    SubscriptSet(receiver, index, value, span) => {
+      self.compile_expression(receiver)
+      self.compile_expression(index)
+      self.compile_expression(value)
+      ignore(self.emit(SetSubscript, span))
+    }
+    PropertyGet(receiver, name, span) => {
+      self.compile_expression(receiver)
+      ignore(self.emit(GetProperty(name), span))
+    }
+    PropertySet(receiver, name, value, span) => {
+      self.compile_expression(receiver)
+      self.compile_expression(value)
+      ignore(self.emit(SetProperty(name), span))
+    }
+    MethodCall(receiver, name, arguments, span) => {
+      self.compile_expression(receiver)
+      for argument in arguments {
+        self.compile_expression(argument)
+      }
+      ignore(self.emit(InvokeMethod(name, arguments.length()), span))
+    }
     FieldGet(_, span)
     | FieldAssign(_, _, span)
     | StaticFieldGet(_, span)
     | StaticFieldAssign(_, _, span)
-    | ListLiteral(_, span)
-    | MapLiteral(_, span)
-    | SubscriptGet(_, _, span)
-    | SubscriptSet(_, _, _, span)
-    | PropertyGet(_, _, span)
-    | PropertySet(_, _, _, span)
-    | MethodCall(_, _, _, span)
     | SuperConstructorCall(_, span)
     | FunctionLiteral(_, _, span)
     | FiberCallResume(_, _, _, span)
@@ -423,6 +471,7 @@ fn execute_bytecode(
     )
   }
   let environment = Environment::new()
+  bind_core_globals(environment)
   let context = RuntimeContext::new(max_steps)
   let stack : Array[Value] = []
   let mut last = Value::null()
@@ -573,6 +622,165 @@ fn execute_bytecode(
           EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
         }
       }
+      BuildList(count) => {
+        if count < 0 || stack.length() < count {
+          return bytecode_failure(
+            InvalidOperand,
+            "invalid bytecode list item count",
+            instruction.span,
+            steps,
+          )
+        }
+        let reversed : Array[Value] = []
+        for item_index = 0; item_index < count; item_index = item_index + 1 {
+          reversed.push(stack.pop().unwrap())
+        }
+        let items : Array[Value] = []
+        let mut index = reversed.length() - 1
+        while index >= 0 {
+          items.push(reversed[index])
+          index = index - 1
+        }
+        stack.push(context.new_list(items))
+      }
+      BuildMap(count) => {
+        if count < 0 || stack.length() < count * 2 {
+          return bytecode_failure(
+            InvalidOperand,
+            "invalid bytecode map entry count",
+            instruction.span,
+            steps,
+          )
+        }
+        let keys : Array[Value] = []
+        let values : Array[Value] = []
+        for entry_index = 0; entry_index < count; entry_index = entry_index + 1 {
+          values.push(stack.pop().unwrap())
+          keys.push(stack.pop().unwrap())
+        }
+        let map = context.new_map()
+        let identifier = match map {
+          MapValue(value) => value
+          _ => -1
+        }
+        let mut index = count - 1
+        while index >= 0 {
+          if !is_valid_map_key(keys[index]) {
+            return BytecodeFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidMapKey,
+                "Map keys must be immutable values, received \{keys[index].type_name()}",
+                instruction.span,
+              ).with_source("<bytecode>"),
+              steps,
+            )
+          }
+          ignore(context.set_map_entry(identifier, keys[index], values[index]))
+          index = index - 1
+        }
+        stack.push(map)
+      }
+      GetSubscript => {
+        if stack.length() < 2 {
+          return bytecode_failure(
+            InvalidOperand,
+            "bytecode stack underflow while reading subscript",
+            instruction.span,
+            steps,
+          )
+        }
+        let index = stack.pop().unwrap()
+        let receiver = stack.pop().unwrap()
+        match read_subscript(receiver, index, instruction.span, context) {
+          EvaluationSucceeded(value) => stack.push(value)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      }
+      SetSubscript => {
+        if stack.length() < 3 {
+          return bytecode_failure(
+            InvalidOperand,
+            "bytecode stack underflow while writing subscript",
+            instruction.span,
+            steps,
+          )
+        }
+        let value = stack.pop().unwrap()
+        let index = stack.pop().unwrap()
+        let receiver = stack.pop().unwrap()
+        match
+          write_subscript(receiver, index, value, instruction.span, context) {
+          EvaluationSucceeded(result) => stack.push(result)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      }
+      GetProperty(name) => {
+        if stack.is_empty() {
+          return bytecode_failure(
+            InvalidOperand,
+            "bytecode stack underflow while reading property",
+            instruction.span,
+            steps,
+          )
+        }
+        let receiver = stack.pop().unwrap()
+        match read_property(receiver, name, instruction.span, context) {
+          EvaluationSucceeded(value) => stack.push(value)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      }
+      SetProperty(name) => {
+        if stack.length() < 2 {
+          return bytecode_failure(
+            InvalidOperand,
+            "bytecode stack underflow while writing property",
+            instruction.span,
+            steps,
+          )
+        }
+        let value = stack.pop().unwrap()
+        let receiver = stack.pop().unwrap()
+        match
+          invoke_method(
+            receiver,
+            name + "=",
+            [value],
+            instruction.span,
+            context,
+          ) {
+          EvaluationSucceeded(result) => stack.push(result)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      }
+      InvokeMethod(name, arity) => {
+        if arity < 0 || stack.length() < arity + 1 {
+          return bytecode_failure(
+            InvalidOperand,
+            "invalid bytecode method arity",
+            instruction.span,
+            steps,
+          )
+        }
+        let reversed : Array[Value] = []
+        for argument_index = 0
+            argument_index < arity
+            argument_index = argument_index + 1 {
+          reversed.push(stack.pop().unwrap())
+        }
+        let arguments : Array[Value] = []
+        let mut index = reversed.length() - 1
+        while index >= 0 {
+          arguments.push(reversed[index])
+          index = index - 1
+        }
+        let receiver = stack.pop().unwrap()
+        match
+          invoke_method(receiver, name, arguments, instruction.span, context) {
+          EvaluationSucceeded(value) => stack.push(value)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      }
       Jump(target) => ip = target
       JumpIfFalse(target) => {
         let (value, failure) = pop_bytecode_value(
@@ -667,6 +875,7 @@ pub fn profile_bytecode(
     stores: profiler.stores,
     branches: profiler.branches,
     arithmetic_operations: profiler.arithmetic_operations,
+    calls: profiler.calls,
   }
 }
 

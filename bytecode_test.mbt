@@ -70,6 +70,7 @@ test "bytecode profiler and disassembler expose execution details" {
   assert_true(profile.loads > 0)
   assert_true(profile.stores > 0)
   assert_true(profile.arithmetic_operations > 0)
+  assert_eq(profile.calls, 0)
   let listing = @moonwren.disassemble_bytecode(program)
   assert_eq(listing.length(), program.instructions.length())
   assert_true(listing[0].contains("PushConstant"))
@@ -77,4 +78,49 @@ test "bytecode profiler and disassembler expose execution details" {
   assert_eq(trace.events.length(), profile.executed_instructions)
   assert_eq(trace.events[0].instruction_pointer, 0)
   assert_eq(trace.events[0].step, 1)
+}
+
+///|
+test "bytecode executes collection literals, subscripts, and core methods" {
+  assert_compiled_number(
+    "var values = [1, 2]\n" +
+    "values.add(3)\n" +
+    "values[0] = 5\n" +
+    "values[0] + values.count\n",
+    8.0,
+  )
+  assert_compiled_number(
+    "var values = {\"left\": 2}\n" +
+    "values[\"right\"] = 4\n" +
+    "values[\"left\"] + values[\"right\"]\n",
+    6.0,
+  )
+  let program = match @moonwren.compile_bytecode("[1, 2].count\n") {
+    @moonwren.BytecodeCompiled(value) => value
+    @moonwren.BytecodeCompileFailed(issues) => fail(issues[0].message)
+  }
+  assert_true(@moonwren.profile_bytecode(program, 100).calls > 0)
+}
+
+///|
+test "bytecode trace debugger steps and stops on source breakpoints" {
+  let program = match
+    @moonwren.compile_bytecode("var x = 1\nx = x + 2\nx * 4\n") {
+    @moonwren.BytecodeCompiled(value) => value
+    @moonwren.BytecodeCompileFailed(issues) => fail(issues[0].message)
+  }
+  let trace = @moonwren.trace_bytecode(program, 100)
+  let debugger = @moonwren.BytecodeTraceDebugger::new(trace, [2])
+  match debugger.step() {
+    @moonwren.DebuggerFinished(_) => fail("first instruction should be visible")
+    @moonwren.DebuggerPaused(event) => assert_eq(event.step, 1)
+  }
+  match debugger.continue_execution() {
+    @moonwren.DebuggerFinished(_) => fail("line two breakpoint should be hit")
+    @moonwren.DebuggerPaused(event) =>
+      assert_eq(event.instruction.span.line(), 2)
+  }
+  debugger.reset()
+  assert_eq(debugger.position(), 0)
+  assert_true(debugger.event_count() > 0)
 }
