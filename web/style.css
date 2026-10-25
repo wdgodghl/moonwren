@@ -1,0 +1,9 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+body { margin: 0; }
+main { width: min(900px, calc(100% - 32px)); margin: 40px auto; }
+h1 { color: #93c5fd; }
+label { display: block; margin: 18px 0 8px; font-weight: 650; }
+textarea, pre { box-sizing: border-box; width: 100%; min-height: 240px; padding: 16px; border: 1px solid #374151; border-radius: 10px; background: #030712; color: #f9fafb; font: 15px/1.55 ui-monospace, monospace; }
+pre { min-height: 120px; white-space: pre-wrap; }
+button { margin-top: 14px; padding: 10px 22px; border: 0; border-radius: 8px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }
+button:hover { background: #1d4ed8; }

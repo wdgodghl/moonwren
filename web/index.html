@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoonWren Playground</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>MoonWren Playground</h1>
+    <p>Run Wren 0.4-compatible scripts locally in your browser.</p>
+    <label for="source">Wren source</label>
+    <textarea id="source" spellcheck="false">var total = 0
+for (n in 1..10) total = total + n
+System.print(total)</textarea>
+    <button id="run" type="button">Run</button>
+    <label for="output">Output</label>
+    <pre id="output" aria-live="polite"></pre>
+  </main>
+  <script type="module" src="moonwren.js"></script>
+</body>
+</html>
