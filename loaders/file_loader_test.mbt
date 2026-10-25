@@ -28,3 +28,22 @@ test "filesystem loader enforces source size" {
       assert_true(message.contains("source-size"))
   }
 }
+
+///|
+test "filesystem watcher reports only newly observed content" {
+  let watcher = @loaders.FileModuleWatcher::new(
+    @loaders.FileLoaderConfig::new("loaders/testdata", ".wren", 1000),
+    ["answer"],
+  )
+  match watcher.poll() {
+    @loaders.FileWatchFailed(message) => fail(message)
+    @loaders.FileWatchReady(changed, modules) => {
+      assert_eq(changed, ["answer"])
+      assert_eq(modules.length(), 1)
+    }
+  }
+  match watcher.poll() {
+    @loaders.FileWatchFailed(message) => fail(message)
+    @loaders.FileWatchReady(changed, _) => assert_true(changed.is_empty())
+  }
+}

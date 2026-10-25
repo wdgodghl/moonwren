@@ -73,3 +73,49 @@ pub fn file_module_loader(
     }
   }
 }
+
+///|
+pub(all) enum FileWatchResult {
+  FileWatchReady(Array[String], Array[@moonwren.VerifiedModule])
+  FileWatchFailed(String)
+}
+
+///|
+/// Portable polling watcher for a declared set of module specifiers. Hosts
+/// decide the polling interval, so the API works on native and server targets
+/// without relying on an operating-system-specific notification service.
+pub struct FileModuleWatcher {
+  config : FileLoaderConfig
+  names : Array[String]
+  mut snapshot : @moonwren.ModuleSnapshot?
+}
+
+///|
+pub fn FileModuleWatcher::new(
+  config : FileLoaderConfig,
+  names : Array[String],
+) -> FileModuleWatcher {
+  { config, names, snapshot: None, }
+}
+
+///|
+/// Read all watched modules, verify their contents and return only names that
+/// were added or changed since the previous successful poll.
+pub fn FileModuleWatcher::poll(self : FileModuleWatcher) -> FileWatchResult {
+  let loader = file_module_loader(self.config)
+  let modules : Array[@moonwren.VerifiedModule] = []
+  for name in self.names {
+    match loader("<watcher>", name) {
+      @moonwren.ModuleLoadFailed(message) => return FileWatchFailed(message)
+      @moonwren.ModuleLoaded(_, source) =>
+        modules.push(@moonwren.VerifiedModule::new(name, source))
+    }
+  }
+  let current = @moonwren.ModuleSnapshot::from_modules(modules)
+  let changed = match self.snapshot {
+    None => current.names.copy()
+    Some(previous) => previous.changes(current)
+  }
+  self.snapshot = Some(current)
+  FileWatchReady(changed, modules)
+}
