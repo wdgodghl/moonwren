@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-10-25
 
 - add cached method handles, typed retained List/Map access, result-delivery
   callbacks, host probes, and safe-boundary automatic garbage collection;

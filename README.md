@@ -35,7 +35,7 @@ tree-walking execution path.
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.5.0
+moon add wdgodghl/moonwren@0.6.0
 ```
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
