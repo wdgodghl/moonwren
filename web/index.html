@@ -8,15 +8,34 @@
 </head>
 <body>
   <main>
-    <h1>MoonWren Playground</h1>
-    <p>Run Wren 0.4-compatible scripts locally in your browser.</p>
+    <header>
+      <div>
+        <p class="eyebrow">Wren 0.4 compatibility on MoonBit</p>
+        <h1>MoonWren Playground</h1>
+        <p>Run scripts locally. Source stays in your browser unless you share its URL.</p>
+      </div>
+      <label class="example-picker" for="example">Example
+        <select id="example">
+          <option value="sum">Loop and range</option>
+          <option value="collections">Collections</option>
+          <option value="fiber">Fiber suspension</option>
+          <option value="unicode">UTF-8 byte semantics</option>
+        </select>
+      </label>
+    </header>
     <label for="source">Wren source</label>
     <textarea id="source" spellcheck="false">var total = 0
 for (n in 1..10) total = total + n
 System.print(total)</textarea>
-    <button id="run" type="button">Run</button>
-    <label for="output">Output</label>
+    <div class="actions">
+      <button id="run" type="button">Run <kbd>Ctrl</kbd> + <kbd>Enter</kbd></button>
+      <button id="share" class="secondary" type="button">Copy share link</button>
+      <button id="reset" class="secondary" type="button">Reset</button>
+      <span id="status" role="status"></span>
+    </div>
+    <label for="output">Output and diagnostics</label>
     <pre id="output" aria-live="polite"></pre>
+    <noscript>This playground requires JavaScript.</noscript>
   </main>
   <script type="module" src="moonwren.js"></script>
 </body>
