@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 - 2026-10-27
+
+- add generation-safe asynchronous host tasks that retain suspended Fibers and
+  yielded request values across later VM calls and garbage collection;
+- add a live interpreter debugger with source breakpoints, visible locals,
+  call depth, step-into/over/out commands, and controlled termination;
+- add integrity-checked `MWS1` state archives for selected module globals,
+  preserving raw strings, shared List/Map identity, and cyclic graphs;
+- document the production embedding patterns and add a runnable runtime-tools
+  example plus focused regression tests.
+
 ## 0.6.0 - 2026-10-25
 
 - add cached method handles, typed retained List/Map access, result-delivery

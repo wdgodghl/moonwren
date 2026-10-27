@@ -160,6 +160,51 @@ callback is evaluated at interpreter checkpoints; it is intended for deadlines,
 request cancellation, and application shutdown, not asynchronous re-entry into
 the same VM.
 
+## Resumable host tasks
+
+`new_async_task` retains a captured Wren Fiber as a host-owned task.
+`start_async` runs it until completion, failure, or `Fiber.yield`. A yield
+returns `VmAsyncRequest`; the host may leave the VM, perform asynchronous work,
+and later call `resume_async` with the response. The request carries a monotonic
+sequence and is accepted only once by the exact task and VM generation.
+
+Both the suspended Fiber and yielded request value are strong VM roots. They
+therefore survive unrelated calls and `collect_garbage`. Completion, failure,
+or `cancel_async` releases the roots. Use a small Wren wrapper around foreign
+methods when a script should express `await`-style operations: create a request
+descriptor synchronously, yield it, and interpret the resumed value as the
+host response. Foreign callbacks themselves remain synchronous and must not
+re-enter the VM.
+
+## Live debugger hook
+
+`attach_debugger(breakpoints, pause_on_entry, hook)` installs an execution-time
+hook on the tree-walking interpreter. Stops occur before the selected statement
+runs. `DebugSnapshot` copies the current source span, call depth, and visible
+lexical variables; internal `$` bindings are excluded. The hook chooses
+continue, step into, step over, step out, or terminate. Termination returns a
+structured `DebugTerminated` runtime diagnostic.
+
+The hook is synchronous. An interactive frontend may block inside it while
+waiting for its own command channel, but must not call back into that VM.
+`detach_debugger` removes it. A successful transactional reload replaces the
+runtime, so the host should attach its debugger again afterward.
+
+## Portable state snapshots
+
+`save_state(module, names)` serializes selected globals into the deterministic
+`MWS1` format. `restore_state(archive)` verifies the checksum, module and root
+names, node references, numbers, and Map keys before changing module bindings.
+The graph codec supports null, Boolean, number, valid or raw String, Range,
+List, and Map values. Object identity, aliases, self-cycles, and mutual cycles
+are preserved.
+
+Runtime-local values such as functions, Fibers, classes, instances, iterators,
+and foreign objects fail export with a path to the unsupported value. This
+explicit boundary makes snapshots suitable for application configuration,
+save games, durable worker state, and process migration without pretending that
+native resources or execution stacks are portable.
+
 ## Transactional module reload
 
 `reload_module(name, source, preserve)` constructs a fresh candidate runtime,

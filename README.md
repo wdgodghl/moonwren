@@ -28,14 +28,15 @@ and explicit full-heap reachability collection. An optional stack-bytecode
 backend, instruction profiler/trace, transactional REPL session, verified
 module bundles, sandboxed filesystem loader, and browser playground support
 runtime development and production embedding without replacing the compatible
-tree-walking execution path.
+tree-walking execution path. Resumable host tasks, live statement debugging,
+and portable cyclic state snapshots cover long-running service and tool hosts.
 
 ## Installation
 
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.6.0
+moon add wdgodghl/moonwren@0.7.0
 ```
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
@@ -66,6 +67,7 @@ The project requires MoonBit `0.10.14` or newer.
 moon check
 moon test
 moon run cmd/main
+moon run cmd/runtime_tools_demo
 moon run cmd/benchmark --target native
 ./tools/build-web-demo.ps1
 ./tools/check-conformance.ps1
@@ -298,6 +300,45 @@ Typed host collection operations (`list_snapshot`, `list_set`, `list_add`,
 runtime identities directly. `has_module` and `has_variable` support cheap host
 capability checks.
 
+Long-running hosts can turn a Wren Fiber into a retained asynchronous task.
+The script yields a request descriptor, the host performs I/O without entering
+the VM, and a later event-loop turn resumes the exact suspended continuation:
+
+```moonbit
+let fiber = match vm.capture("main", "worker") {
+  VmHandleCreated(handle) => handle
+  VmHandleFailed(issue) => abort(issue.message)
+}
+let task = match vm.new_async_task(fiber) {
+  VmAsyncTaskCreated(task) => task
+  VmAsyncTaskCreateFailed(issue) => abort(issue.message)
+}
+match vm.start_async(task, None) {
+  VmAsyncYielded(request, _) =>
+    ignore(vm.resume_async(task, request, Value::string("host response")))
+  _ => ()
+}
+```
+
+Each request is one-shot and bound to its task and VM generation. The task owns
+strong roots for both its Fiber and current request; `cancel_async` releases
+them. This cooperative design preserves Wren semantics and never re-enters a
+running VM from a foreign callback.
+
+`attach_debugger` observes the live interpreter immediately before statements
+execute. Source breakpoints and pause-on-entry can return `DebugContinue`,
+`DebugStepInto`, `DebugStepOver`, `DebugStepOut`, or `DebugTerminate`. Each
+`DebugSnapshot` includes the source span, call depth, and visible variables.
+The hook is synchronous so a desktop or terminal frontend may wait for a user
+command, but it must not re-enter the same VM.
+
+`save_state(module, names)` exports selected globals to an integrity-checked
+`MWS1` archive. `restore_state` validates the complete archive before changing
+bindings. Null, Boolean, Num, String (including arbitrary bytes), Range, List,
+and Map values are supported; shared references and cycles are preserved.
+Functions, Fibers, classes, instances, iterators, and foreign objects are
+rejected because their identities cannot be moved safely between runtimes.
+
 Automatic collection runs only between host operations, never midway through a
 Wren call. Configure its minimum object count and growth percentage with
 `configure_automatic_gc(VmGcPolicy::new(...))`, inspect the last pass through
@@ -329,7 +370,9 @@ match compile_bytecode("var n = 6\n n * 7\n") {
 }
 ```
 
-`ReplSession` retains accepted declarations by deterministic replay and rolls
+`BytecodeTraceDebugger` remains useful for deterministic trace replay, while
+the `Vm` live debugger observes real interpreter state and can control the
+running operation. `ReplSession` retains accepted declarations by deterministic replay and rolls
 back rejected submissions. `Value::as_bool`, `as_number`, `as_string`, and
 `as_range` provide checked conversions at the host boundary.
 
@@ -344,7 +387,7 @@ and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and
 invalidates old handles; a failed reload leaves the current runtime and handles
 untouched. See [`docs/embedding.md`](docs/embedding.md) and run the complete
-example with `moon run cmd/vm_demo`.
+examples with `moon run cmd/vm_demo` and `moon run cmd/runtime_tools_demo`.
 
 Embedders can provide modules from memory, a database, an archive, or another
 source through `run_with_loader`. `run_modules` is a convenience API for a

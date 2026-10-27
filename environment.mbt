@@ -203,7 +203,7 @@ fn Environment::debug_bindings(self : Environment) -> Array[DebugVariable] {
   let mut scope_index = self.scopes.length() - 1
   while scope_index >= 0 {
     for binding in self.scopes[scope_index].bindings {
-      if !binding.name.has_prefix("$") {
+      if !binding.name.has_prefix("$") && !debug_core_binding(binding.name) {
         let mut present = false
         for existing in result {
           if existing.name == binding.name {
@@ -218,4 +218,26 @@ fn Environment::debug_bindings(self : Environment) -> Array[DebugVariable] {
     scope_index = scope_index - 1
   }
   result
+}
+
+///|
+fn debug_core_binding(name : String) -> Bool {
+  name == "System" ||
+  name == "Object" ||
+  name == "Bool" ||
+  name == "Class" ||
+  name == "Fiber" ||
+  name == "Fn" ||
+  name == "List" ||
+  name == "Map" ||
+  name == "MapEntry" ||
+  name == "MapKeySequence" ||
+  name == "MapValueSequence" ||
+  name == "Null" ||
+  name == "Num" ||
+  name == "Range" ||
+  name == "Sequence" ||
+  name == "String" ||
+  name == "StringByteSequence" ||
+  name == "StringCodePointSequence"
 }

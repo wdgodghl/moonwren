@@ -18,6 +18,12 @@ instruction. `BytecodeTraceDebugger` adds deterministic single-step, reset, and
 continue-to-source-line-breakpoint navigation. It is a replay debugger over a
 completed trace, so it does not mutate or resume the live VM.
 
+For execution-time inspection, the persistent `Vm` exposes `attach_debugger`.
+Its hook runs before a real interpreter statement, receives visible locals and
+call depth, and controls subsequent stepping or termination. The two debuggers
+serve different purposes: trace replay is deterministic and offline, while the
+VM hook can inspect state that is currently executing.
+
 ## Differential fuzzing
 
 Build MoonWren for the native target, build the official Wren 0.4 interpreter,
