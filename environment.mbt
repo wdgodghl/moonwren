@@ -194,3 +194,28 @@ fn Environment::retained_values(self : Environment) -> Array[Value] {
   }
   values
 }
+
+///|
+/// Copy the visible user bindings for a debugger stop. Inner scopes shadow
+/// outer scopes and runtime-only names beginning with `$` are omitted.
+fn Environment::debug_bindings(self : Environment) -> Array[DebugVariable] {
+  let result : Array[DebugVariable] = []
+  let mut scope_index = self.scopes.length() - 1
+  while scope_index >= 0 {
+    for binding in self.scopes[scope_index].bindings {
+      if !binding.name.has_prefix("$") {
+        let mut present = false
+        for existing in result {
+          if existing.name == binding.name {
+            present = true
+          }
+        }
+        if !present {
+          result.push({ name: binding.name, value: binding.value.val, })
+        }
+      }
+    }
+    scope_index = scope_index - 1
+  }
+  result
+}

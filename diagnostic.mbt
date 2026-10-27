@@ -49,6 +49,7 @@ pub(all) enum DiagnosticCode {
   ForeignCallFailed
   InvalidFiberState
   FiberAborted
+  DebugTerminated
   UnsupportedFeature
 } derive(Eq, Debug)
 

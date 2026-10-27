@@ -194,6 +194,7 @@ priv struct RuntimeContext {
   mut transferred_to_main : Bool
   mut terminate_main : Bool
   mut gc_requested : Bool
+  mut debugger : RuntimeDebugger?
 }
 
 ///|
@@ -287,6 +288,7 @@ fn RuntimeContext::new_with_limits(
     transferred_to_main: false,
     terminate_main: false,
     gc_requested: false,
+    debugger: None,
   }
 }
 
@@ -880,6 +882,7 @@ priv enum StatementResult {
 fn RuntimeContext::step(
   self : RuntimeContext,
   span : SourceSpan,
+  environment : Environment,
 ) -> Diagnostic? {
   if (self.should_cancel)() {
     return Some(
@@ -911,7 +914,7 @@ fn RuntimeContext::step(
       ),
     )
   } else {
-    None
+    self.debug_before_statement(span, environment)
   }
 }
 
@@ -5415,7 +5418,7 @@ fn execute_fiber_statement(
 ) -> FiberStatementStep {
   match statement {
     BlockStatement(statements, span) => {
-      match context.step(span) {
+      match context.step(span, environment) {
         Some(issue) => return FiberStatementFailed(issue)
         None => ()
       }
@@ -5432,7 +5435,7 @@ fn execute_fiber_statement(
       )
     }
     IfStatement(condition, then_branch, else_branch, span) => {
-      match context.step(span) {
+      match context.step(span, environment) {
         Some(issue) => return FiberStatementFailed(issue)
         None => ()
       }
@@ -5465,14 +5468,14 @@ fn execute_fiber_statement(
       }
     }
     WhileStatement(condition, body, span) => {
-      match context.step(span) {
+      match context.step(span, environment) {
         Some(issue) => return FiberStatementFailed(issue)
         None => ()
       }
       execute_fiber_while(condition, body, Value::null(), environment, context)
     }
     ForStatement(name, sequence, body, span) => {
-      match context.step(span) {
+      match context.step(span, environment) {
         Some(issue) => return FiberStatementFailed(issue)
         None => ()
       }
@@ -8386,7 +8389,7 @@ fn execute_statement_in(
   environment : Environment,
   context : RuntimeContext,
 ) -> StatementResult {
-  match context.step(statement.span()) {
+  match context.step(statement.span(), environment) {
     Some(issue) => return StatementFailed(issue)
     None => ()
   }
