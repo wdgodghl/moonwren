@@ -210,6 +210,14 @@ fn decode_string_value(text : String) -> Value {
   let mut index = 0
   while index < characters.length() {
     let code = characters[index].to_int()
+    if code == 13 {
+      bytes.push(10)
+      index = index + 1
+      if index < characters.length() && characters[index].to_int() == 10 {
+        index = index + 1
+      }
+      continue
+    }
     if code != 92 {
       append_utf8_bytes(bytes, code)
       index = index + 1
@@ -270,8 +278,33 @@ fn only_horizontal_whitespace(text : String) -> Bool {
 }
 
 ///|
+/// Source-file line endings are lexical newlines, not String data chosen by
+/// the host checkout mode. Normalize CRLF and lone CR while decoding literal
+/// text; an explicit `\r` escape in a regular String remains byte 13.
+fn normalize_literal_newlines(text : String) -> String {
+  let result : Array[Char] = []
+  let characters = text.to_array()
+  let mut index = 0
+  while index < characters.length() {
+    if characters[index].to_int() == 13 {
+      result.push('\n')
+      index = index + 1
+      if index < characters.length() && characters[index].to_int() == 10 {
+        index = index + 1
+      }
+    } else {
+      result.push(characters[index])
+      index = index + 1
+    }
+  }
+  String::from_array(result)
+}
+
+///|
 fn decode_raw_string_value(text : String) -> Value {
-  let mut content = text[3:text.length() - 3].to_owned()
+  let mut content = normalize_literal_newlines(
+    text[3:text.length() - 3].to_owned(),
+  )
   let mut first_newline = -1
   for index = 0; index < content.length(); index = index + 1 {
     if content.unsafe_get(index).to_int() == 10 {

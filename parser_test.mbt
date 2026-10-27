@@ -52,6 +52,22 @@ test "parser supports hexadecimal and exponent numbers" {
 }
 
 ///|
+test "parser normalizes source line endings inside string literals" {
+  match @moonwren.parse_expression("\"first\r\nsecond\rthird\"") {
+    @moonwren.ExpressionParsed(
+      @moonwren.Literal(@moonwren.StringValue(value), _)
+    ) => assert_eq(value, "first\nsecond\nthird")
+    _ => fail("regular String should normalize source newlines")
+  }
+  match @moonwren.parse_expression("\"\"\"\r\nfirst\r\nsecond\r\n\"\"\"") {
+    @moonwren.ExpressionParsed(
+      @moonwren.Literal(@moonwren.StringValue(value), _)
+    ) => assert_eq(value, "first\nsecond")
+    _ => fail("raw String should normalize source newlines")
+  }
+}
+
+///|
 test "parser reports a missing operand" {
   match @moonwren.parse_expression("1 +") {
     @moonwren.ExpressionParsed(_) => fail("expression should fail")
