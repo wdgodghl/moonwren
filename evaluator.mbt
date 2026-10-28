@@ -195,6 +195,7 @@ priv struct RuntimeContext {
   mut terminate_main : Bool
   mut gc_requested : Bool
   mut debugger : RuntimeDebugger?
+  builtin_random_states : Array[BuiltinRandomState]
 }
 
 ///|
@@ -242,7 +243,10 @@ fn RuntimeContext::new_with_limits(
   for binding in foreign_classes {
     runtime_foreign_classes.push(binding)
   }
-  append_optional_bindings(runtime_foreign_methods, runtime_foreign_classes)
+  let builtin_random_states : Array[BuiltinRandomState] = []
+  append_optional_bindings(
+    runtime_foreign_methods, runtime_foreign_classes, builtin_random_states,
+  )
   {
     start_clock: @bench.monotonic_clock_start(),
     output: [],
@@ -298,6 +302,7 @@ fn RuntimeContext::new_with_limits(
     terminate_main: false,
     gc_requested: false,
     debugger: None,
+    builtin_random_states,
   }
 }
 
@@ -1449,12 +1454,21 @@ fn trace_call_failure(
 ) -> EvaluationResult {
   match result {
     EvaluationSucceeded(value) => EvaluationSucceeded(value)
-    EvaluationFailed(issue) =>
+    EvaluationFailed(issue) => {
+      if (definition_source == "random" || definition_source == "meta") &&
+        caller_source != definition_source {
+        return EvaluationFailed(
+          Diagnostic::new(issue.phase, issue.code, issue.message, span).with_source(
+            caller_source,
+          ),
+        )
+      }
       EvaluationFailed(
         issue
         .with_source(definition_source)
         .with_frame(CallFrame::new(callable, caller_source, span)),
       )
+    }
   }
 }
 
@@ -1697,7 +1711,10 @@ fn find_foreign_class_binding(
 
 ///|
 fn normalize_meta_module_name(name : String) -> String {
-  let normalized = name.replace(old="\\", new="/")
+  let mut normalized = name.replace_all(old="\\", new="/")
+  while normalized.has_prefix("./") {
+    normalized = normalized[2:].to_owned()
+  }
   if normalized.has_suffix(".wren") {
     normalized[:normalized.length() - 5].to_owned()
   } else {
@@ -1925,6 +1942,26 @@ fn invoke_user_method(
   }
   let declaration = resolved.declaration
   let owner = context.classes[resolved.owner_identifier]
+  if owner.source_name == "random" {
+    match
+      invoke_builtin_random_collection_method(
+        instance_identifier,
+        declaration.name,
+        arguments,
+        span,
+        context,
+      ) {
+      Some(result) =>
+        return trace_call_failure(
+          result,
+          owner.source_name,
+          "\{owner.name}.\{declaration.name}",
+          context.current_source,
+          span,
+        )
+      None => ()
+    }
+  }
   if declaration.is_foreign {
     return trace_call_failure(
       invoke_foreign_method(

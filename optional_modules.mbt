@@ -42,12 +42,22 @@ let optional_random_source =
   #|  sample(list, count) {
   #|    if (count > list.count) Fiber.abort("Not enough elements to sample.")
   #|    var result = []
-  #|    var picked = List.filled(list.count, false)
-  #|    for (i in list.count - count...list.count) {
-  #|      var index = int(i + 1)
-  #|      if (picked[index]) index = i
-  #|      picked[index] = true
-  #|      result.add(list[index])
+  #|    if (count * 4 < list.count) {
+  #|      var picked = {}
+  #|      for (i in list.count - count...list.count) {
+  #|        var index = int(i + 1)
+  #|        if (picked.containsKey(index)) index = i
+  #|        picked[index] = true
+  #|        result.add(list[index])
+  #|      }
+  #|    } else {
+  #|      var picked = List.filled(list.count, false)
+  #|      for (i in list.count - count...list.count) {
+  #|        var index = int(i + 1)
+  #|        if (picked[index]) index = i
+  #|        picked[index] = true
+  #|        result.add(list[index])
+  #|      }
   #|    }
   #|    return result
   #|  }
@@ -194,9 +204,131 @@ fn advance_random(state : BuiltinRandomState) -> UInt {
 }
 
 ///|
+fn builtin_random_float(state : BuiltinRandomState) -> Double {
+  let high = advance_random(state).to_double() * 2097152.0
+  let low = (advance_random(state) & 0x1fffffU).to_double()
+  (high + low) / 9007199254740992.0
+}
+
+///|
+fn invoke_builtin_random_collection_method(
+  receiver : Int,
+  name : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult? {
+  if name != "sample" && name != "shuffle" {
+    return None
+  }
+  let handle = if receiver >= 0 && receiver < context.instances.length() {
+    context.instances[receiver].foreign_handle
+  } else {
+    None
+  }
+  let state = match handle {
+    Some(identifier) =>
+      match random_state_for_handle(context.builtin_random_states, identifier) {
+        Some(value) => value
+        None =>
+          return Some(
+            evaluation_error(
+              InvalidOperand,
+              "random generator is no longer available",
+              span,
+            ),
+          )
+      }
+    None =>
+      return Some(
+        evaluation_error(
+          InvalidOperand,
+          "random generator has no host state",
+          span,
+        ),
+      )
+  }
+  let list_identifier = match arguments[0] {
+    ListValue(identifier) => identifier
+    value =>
+      return Some(
+        evaluation_error(
+          InvalidOperand,
+          "expected List, received \{value.type_name()}",
+          span,
+        ),
+      )
+  }
+  if list_identifier < 0 || list_identifier >= context.lists.length() {
+    return Some(evaluation_error(InvalidOperand, "list is unavailable", span))
+  }
+  let items = context.lists[list_identifier].items
+  if name == "shuffle" {
+    for index = 0; index + 1 < items.length(); index = index + 1 {
+      let remaining = items.length() - index
+      let offset = (builtin_random_float(state) * remaining.to_double())
+        .floor()
+        .to_int()
+      let selected = index + offset
+      let temporary = items[selected]
+      items[selected] = items[index]
+      items[index] = temporary
+    }
+    return Some(EvaluationSucceeded(Value::null()))
+  }
+  if arguments.length() == 1 {
+    if items.is_empty() {
+      return Some(
+        evaluation_error(FiberAborted, "Not enough elements to sample.", span),
+      )
+    }
+    let index = (builtin_random_float(state) * items.length().to_double())
+      .floor()
+      .to_int()
+    return Some(EvaluationSucceeded(items[index]))
+  }
+  let count = match arguments[1] {
+    NumberValue(number) => number.to_int()
+    value =>
+      return Some(
+        evaluation_error(
+          InvalidOperand,
+          "sample count must be Num, received \{value.type_name()}",
+          span,
+        ),
+      )
+  }
+  if count > items.length() {
+    return Some(
+      evaluation_error(FiberAborted, "Not enough elements to sample.", span),
+    )
+  }
+  if count < 0 {
+    return Some(
+      evaluation_error(InvalidOperand, "sample count is negative", span),
+    )
+  }
+  let pool = items.copy()
+  let result : Array[Value] = []
+  for index = 0; index < count; index = index + 1 {
+    let remaining = pool.length() - index
+    let offset = (builtin_random_float(state) * remaining.to_double())
+      .floor()
+      .to_int()
+    let selected = index + offset
+    let temporary = pool[selected]
+    pool[selected] = pool[index]
+    pool[index] = temporary
+    result.push(pool[index])
+  }
+  Some(EvaluationSucceeded(context.new_list(result)))
+}
+
+///|
 fn append_optional_bindings(
   methods : Array[ForeignMethodBinding],
   classes : Array[ForeignClassBinding],
+  states : Array[BuiltinRandomState],
 ) -> Unit {
   for
     signature in [
@@ -208,7 +340,6 @@ fn append_optional_bindings(
       }),
     )
   }
-  let states : Array[BuiltinRandomState] = []
   let nonce = Ref(0)
   classes.push(
     ForeignClassBinding::new(
@@ -300,11 +431,8 @@ fn append_optional_bindings(
     ) {
       match random_state_for_handle(states, handle) {
         None => ForeignCallFailed("random generator is no longer available")
-        Some(state) => {
-          let high = advance_random(state).to_double() * 2097152.0
-          let low = (advance_random(state) & 0x1fffffU).to_double()
-          ForeignCallSucceeded(Value::number((high + low) / 9007199254740992.0))
-        }
+        Some(state) =>
+          ForeignCallSucceeded(Value::number(builtin_random_float(state)))
       }
     }),
   )
