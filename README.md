@@ -30,6 +30,8 @@ module bundles, sandboxed filesystem loader, and browser playground support
 runtime development and production embedding without replacing the compatible
 tree-walking execution path. Resumable host tasks, live statement debugging,
 and portable cyclic state snapshots cover long-running service and tool hosts.
+The official Wren 0.4 `random` and `meta` optional modules are built in and do
+not require a host loader.
 
 ## Installation
 
@@ -58,6 +60,22 @@ behavior (including invalid UTF-8) and Fiber suspension through arbitrary Wren
 calls and callbacks. The precise definition of done, exclusions, and official
 input/output comparison cases are recorded in
 [`docs/wren-0.4-conformance.md`](docs/wren-0.4-conformance.md).
+
+## Optional Wren modules
+
+`random` implements the Wren 0.4 `Random` API, including deterministic numeric
+and sequence seeds, uniform numbers, sampling, and in-place shuffling. `meta`
+compiles or evaluates source in the importing module and can enumerate its
+visible variables:
+
+```wren
+import "random" for Random
+import "meta" for Meta
+
+var random = Random.new(2026)
+System.print(random.sample(["moon", "wren", "bit"]))
+System.print(Meta.compileExpression("20 + 22").call())
+```
 
 ## Development
 

@@ -234,6 +234,15 @@ fn RuntimeContext::new_with_limits(
   foreign_classes : Array[ForeignClassBinding],
   should_cancel : () -> Bool,
 ) -> RuntimeContext {
+  let runtime_foreign_methods : Array[ForeignMethodBinding] = []
+  for binding in foreign_methods {
+    runtime_foreign_methods.push(binding)
+  }
+  let runtime_foreign_classes : Array[ForeignClassBinding] = []
+  for binding in foreign_classes {
+    runtime_foreign_classes.push(binding)
+  }
+  append_optional_bindings(runtime_foreign_methods, runtime_foreign_classes)
   {
     start_clock: @bench.monotonic_clock_start(),
     output: [],
@@ -269,8 +278,8 @@ fn RuntimeContext::new_with_limits(
     free_sequences: [],
     free_fibers: [],
     modules: [],
-    foreign_methods,
-    foreign_classes,
+    foreign_methods: runtime_foreign_methods,
+    foreign_classes: runtime_foreign_classes,
     loader,
     current_source: source_name,
     steps: 0,
@@ -1687,6 +1696,143 @@ fn find_foreign_class_binding(
 }
 
 ///|
+fn normalize_meta_module_name(name : String) -> String {
+  let normalized = name.replace(old="\\", new="/")
+  if normalized.has_suffix(".wren") {
+    normalized.substring(start=0, end=normalized.length() - 5)
+  } else {
+    normalized
+  }
+}
+
+///|
+fn find_meta_module(
+  context : RuntimeContext,
+  requested : String,
+) -> RuntimeModule? {
+  for runtime_module in context.modules {
+    if runtime_module.name == requested {
+      return Some(runtime_module)
+    }
+  }
+  let requested_name = normalize_meta_module_name(requested)
+  for runtime_module in context.modules {
+    let candidate = normalize_meta_module_name(runtime_module.name)
+    if candidate == requested_name ||
+      candidate.has_suffix("/" + requested_name) ||
+      requested_name.has_suffix("/" + candidate) {
+      return Some(runtime_module)
+    }
+  }
+  None
+}
+
+///|
+fn compile_meta_closure(
+  source : String,
+  expression : Bool,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  let body : Array[Stmt] = if expression {
+    match parse_expression(source) {
+      ExpressionParseFailed(_) => return EvaluationSucceeded(Value::null())
+      ExpressionParsed(parsed) => [ReturnStatement(Some(parsed), parsed.span())]
+    }
+  } else {
+    match parse_program(source) {
+      ProgramParseFailed(_) => return EvaluationSucceeded(Value::null())
+      ProgramParsed(statements) => statements
+    }
+  }
+  let environment = match find_meta_module(context, context.current_source) {
+    Some(runtime_module) => runtime_module.environment
+    None => Environment::new()
+  }
+  let identifier = context.closures.length()
+  context.closures.push({
+    parameters: [],
+    body,
+    environment: environment.capture(),
+    source_name: context.current_source,
+    alive: true,
+  })
+  EvaluationSucceeded(Value::function(identifier))
+}
+
+///|
+fn invoke_builtin_meta_method(
+  signature : String,
+  arguments : Array[Value],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  match signature {
+    "getModuleVariables(_)" =>
+      match arguments[0] {
+        StringValue(name) =>
+          match find_meta_module(context, name) {
+            None =>
+              evaluation_error(
+                InvalidOperand,
+                "Could not find a module named '\{name}'.",
+                span,
+              )
+            Some(runtime_module) => {
+              let values : Array[Value] = []
+              for variable in runtime_module.environment.binding_names() {
+                values.push(Value::string(variable))
+              }
+              EvaluationSucceeded(context.new_list(values))
+            }
+          }
+        _ =>
+          evaluation_error(
+            InvalidOperand,
+            "Module name must be a string.",
+            span,
+          )
+      }
+    "compileExpression(_)" | "compile(_)" | "eval(_)" =>
+      match arguments[0] {
+        StringValue(source) => {
+          let compiled = compile_meta_closure(
+            source,
+            signature == "compileExpression(_)",
+            context,
+          )
+          if signature != "eval(_)" {
+            compiled
+          } else {
+            match compiled {
+              EvaluationSucceeded(FunctionValue(identifier)) =>
+                invoke_function(identifier, [], span, context)
+              EvaluationSucceeded(_) =>
+                evaluation_error(
+                  InvalidOperand,
+                  "Could not compile source code.",
+                  span,
+                )
+              EvaluationFailed(issue) => EvaluationFailed(issue)
+            }
+          }
+        }
+        _ =>
+          evaluation_error(
+            InvalidOperand,
+            "Source code must be a string.",
+            span,
+          )
+      }
+    _ =>
+      evaluation_error(
+        ForeignBindingMissing,
+        "no built-in Meta binding for \{signature}",
+        span,
+      )
+  }
+}
+
+///|
 fn invoke_foreign_method(
   receiver : Value,
   owner : ClassDefinition,
@@ -1696,6 +1842,9 @@ fn invoke_foreign_method(
   context : RuntimeContext,
 ) -> EvaluationResult {
   let signature = method_signature(declaration)
+  if owner.source_name == "meta" && owner.name == "Meta" {
+    return invoke_builtin_meta_method(signature, arguments, span, context)
+  }
   for binding in context.foreign_methods {
     if binding.matches(
         owner.source_name,
@@ -8347,6 +8496,14 @@ fn load_imported_module(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> ModuleExecutionResult {
+  match optional_module_source(specifier) {
+    Some(source) =>
+      return match execute_module_source(specifier, source, context) {
+        ModuleExecuted(environment, value) => ModuleExecuted(environment, value)
+        ModuleExecutionFailed(issues) => ModuleExecutionFailed(issues)
+      }
+    None => ()
+  }
   match (context.loader)(importer, specifier) {
     ModuleLoadFailed(message) =>
       ModuleExecutionFailed([

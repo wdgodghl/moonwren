@@ -9,5 +9,9 @@ conformance/wren-0.4.0 are included for differential testing.
 Wren is available at https://github.com/wren-lang/wren and is distributed
 under the MIT License by Robert Nystrom and contributors.
 
+The built-in `random` and `meta` optional modules reproduce the public API and
+algorithms of Wren 0.4.0's optional modules. Their MoonBit implementation is
+adapted from that MIT-licensed reference behavior.
+
 The command-line package depends on moonbitlang/x, distributed under the
 Apache License 2.0 by the MoonBit project contributors.

@@ -196,6 +196,29 @@ fn Environment::retained_values(self : Environment) -> Array[Value] {
 }
 
 ///|
+/// Names visible from a module environment, preserving declaration order and
+/// excluding interpreter-only bindings.
+fn Environment::binding_names(self : Environment) -> Array[String] {
+  let names : Array[String] = []
+  for scope in self.scopes {
+    for binding in scope.bindings {
+      if !binding.name.has_prefix("$") {
+        let mut present = false
+        for name in names {
+          if name == binding.name {
+            present = true
+          }
+        }
+        if !present {
+          names.push(binding.name)
+        }
+      }
+    }
+  }
+  names
+}
+
+///|
 /// Copy the visible user bindings for a debugger stop. Inner scopes shadow
 /// outer scopes and runtime-only names beginning with `$` are omitted.
 fn Environment::debug_bindings(self : Environment) -> Array[DebugVariable] {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- add built-in Wren 0.4-compatible `random` and `meta` optional modules with
+  isolated generator state, runtime compilation, evaluation, and module
+  variable discovery;
+
 ## 0.7.0 - 2026-10-27
 
 - add generation-safe asynchronous host tasks that retain suspended Fibers and

@@ -74,7 +74,8 @@ recreated on resume.
 
 ## Explicit exclusions
 
-The compatibility claim does not include the separate `wren_cli` application's
+The compatibility claim includes Wren 0.4's optional `random` and `meta`
+modules. It does not include the separate `wren_cli` application's
 filesystem/process/terminal modules, the C API's binary ABI, the official VM's
 garbage collector timing, bytecode format, object layout, performance, or
 memory usage. MoonWren provides a MoonBit embedding API in place of the C ABI.
