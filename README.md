@@ -343,6 +343,21 @@ strong roots for both its Fiber and current request; `cancel_async` releases
 them. This cooperative design preserves Wren semantics and never re-enters a
 running VM from a foreign callback.
 
+For multiple concurrent Fibers, `VmScheduler` consumes the built-in `timer`,
+`task`, and `scheduler` module protocols. It supports virtual-time sleeps,
+child spawning, `Task.await`, ordered `Task.all`, first-completion `Task.race`,
+host requests, cancellation, task limits, and retained results. Virtual time
+keeps tests deterministic; a real event loop calls `advance` from its monotonic
+timer and `deliver` when an I/O result arrives. Run the complete example with:
+
+```text
+moon run cmd/scheduler_demo
+```
+
+The scheduler never performs I/O itself. Any yielded value that is not one of
+its reserved request maps is surfaced as `VmSchedulerExternalRequest`, keeping
+networking, databases, and UI work under host control.
+
 `attach_debugger` observes the live interpreter immediately before statements
 execute. Source breakpoints and pause-on-entry can return `DebugContinue`,
 `DebugStepInto`, `DebugStepOver`, `DebugStepOut`, or `DebugTerminate`. Each

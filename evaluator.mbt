@@ -1699,7 +1699,7 @@ fn find_foreign_class_binding(
 fn normalize_meta_module_name(name : String) -> String {
   let normalized = name.replace(old="\\", new="/")
   if normalized.has_suffix(".wren") {
-    normalized.substring(start=0, end=normalized.length() - 5)
+    normalized[:normalized.length() - 5].to_owned()
   } else {
     normalized
   }

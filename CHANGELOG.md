@@ -5,6 +5,9 @@
 - add built-in Wren 0.4-compatible `random` and `meta` optional modules with
   isolated generator state, runtime compilation, evaluation, and module
   variable discovery;
+- add a deterministic cooperative `VmScheduler` plus built-in `timer`, `task`,
+  and `scheduler` modules for sleeps, child tasks, joins, races, cancellation,
+  and host-delivered requests;
 
 ## 0.7.0 - 2026-10-27
 

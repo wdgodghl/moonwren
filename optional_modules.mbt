@@ -72,10 +72,60 @@ let optional_meta_source =
   #|}
 
 ///|
+let optional_timer_source =
+  #|class Timer {
+  #|  static sleep(milliseconds) {
+  #|    if (!(milliseconds is Num)) Fiber.abort("Sleep duration must be a number.")
+  #|    if (milliseconds < 0) Fiber.abort("Sleep duration cannot be negative.")
+  #|    return Fiber.yield({"$moonwren": "sleep", "milliseconds": milliseconds})
+  #|  }
+  #|}
+
+///|
+let optional_task_source =
+  #|class Task {
+  #|  construct new(id) { _id = id }
+  #|  id { _id }
+  #|  static run(callable) {
+  #|    if (!(callable is Fn)) Fiber.abort("Task callable must be a function.")
+  #|    return Task.new(Fiber.yield({"$moonwren": "spawn", "callable": callable}))
+  #|  }
+  #|  await { return Fiber.yield({"$moonwren": "join", "task": _id}) }
+  #|  static all(tasks) {
+  #|    var ids = []
+  #|    for (task in tasks) {
+  #|      if (!(task is Task)) Fiber.abort("Task.all expects Task values.")
+  #|      ids.add(task.id)
+  #|    }
+  #|    return Fiber.yield({"$moonwren": "joinAll", "tasks": ids})
+  #|  }
+  #|  static race(tasks) {
+  #|    var ids = []
+  #|    for (task in tasks) {
+  #|      if (!(task is Task)) Fiber.abort("Task.race expects Task values.")
+  #|      ids.add(task.id)
+  #|    }
+  #|    return Fiber.yield({"$moonwren": "race", "tasks": ids})
+  #|  }
+  #|}
+
+///|
+let optional_scheduler_source =
+  #|import "task" for Task
+  #|class Scheduler {
+  #|  static spawn(callable) { Task.run(callable) }
+  #|  static all(tasks) { Task.all(tasks) }
+  #|  static race(tasks) { Task.race(tasks) }
+  #|}
+
+///|
 fn optional_module_source(name : String) -> String? {
   match name {
     "random" => Some(optional_random_source)
     "meta" => Some(optional_meta_source)
+    "timer" => Some(optional_timer_source)
+    "task" => Some(optional_task_source)
+    "scheduler" => Some(optional_scheduler_source)
     _ => None
   }
 }
