@@ -38,7 +38,7 @@ not require a host loader.
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.7.0
+moon add wdgodghl/moonwren@0.8.0
 ```
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use

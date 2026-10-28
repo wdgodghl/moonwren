@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-10-28
 
 - add built-in Wren 0.4-compatible `random` and `meta` optional modules with
   isolated generator state, runtime compilation, evaluation, and module
