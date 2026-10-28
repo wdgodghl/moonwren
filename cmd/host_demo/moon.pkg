@@ -1,0 +1,6 @@
+import {
+  "wdgodghl/moonwren",
+  "wdgodghl/moonwren/host",
+}
+
+pkgtype(kind: "executable")

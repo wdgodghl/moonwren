@@ -43,7 +43,8 @@ moon add wdgodghl/moonwren@0.7.0
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
 the library as `@moonwren`. The optional root-confined filesystem loader is in
-`wdgodghl/moonwren/loaders`.
+`wdgodghl/moonwren/loaders`; capability-limited script I/O is in
+`wdgodghl/moonwren/host`.
 
 ## Goals
 
@@ -357,6 +358,14 @@ moon run cmd/scheduler_demo
 The scheduler never performs I/O itself. Any yielded value that is not one of
 its reserved request maps is surfaced as `VmSchedulerExternalRequest`, keeping
 networking, databases, and UI work under host control.
+
+Scripts that genuinely need local data can opt into the separate host package.
+`HostModuleKit` installs `moon/io` and `moon/env` with a per-VM policy: a single
+filesystem root, independent read/write grants, UTF-8 byte limits, and an
+explicit environment-value allowlist. The default policy grants nothing, and
+no process or network module exists. See
+[`docs/host-capabilities.md`](docs/host-capabilities.md) for the security model
+or run `moon run cmd/host_demo` for a complete example.
 
 `attach_debugger` observes the live interpreter immediately before statements
 execute. Source breakpoints and pause-on-entry can return `DebugContinue`,

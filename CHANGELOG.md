@@ -8,6 +8,9 @@
 - add a deterministic cooperative `VmScheduler` plus built-in `timer`, `task`,
   and `scheduler` modules for sleeps, child tasks, joins, races, cancellation,
   and host-delivered requests;
+- add opt-in `moon/io` and `moon/env` host modules with per-VM capabilities,
+  root-confined relative paths, independent read/write grants, UTF-8 byte
+  limits, and explicit environment allowlists;
 
 ## 0.7.0 - 2026-10-27
 
