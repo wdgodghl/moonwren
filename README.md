@@ -427,6 +427,12 @@ performance baselines, bytecode inspection, and the local/shareable browser
 playground. The manual `Playground Pages` workflow can deploy the static build
 to GitHub Pages after Pages is enabled for the repository.
 
+Production module graphs can be packaged as deterministic, signed `MWDS1`
+deployment bundles. Bundles cryptographically bind the Wren target, compiler
+ABI, entry module, capability declaration, sources, and compiled metadata with
+SHA-256; caller-supplied sign/verify callbacks support Ed25519 or managed keys.
+See [`docs/deployment-bundles.md`](docs/deployment-bundles.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

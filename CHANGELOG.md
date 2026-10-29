@@ -8,6 +8,8 @@
 - make the hybrid bytecode backend accept classes, closures, modules, Fibers,
   and structured loop control through explicit, profiled semantic instructions;
 - add named-module bytecode compilation plus loader/foreign-binding execution;
+- add deterministic `MWDS1` deployment bundles with UTF-8 SHA-256, capability
+  manifests, compiler-cache metadata, external signing hooks, and tamper checks;
 
 ## 0.8.0 - 2026-10-28
 
