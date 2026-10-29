@@ -457,6 +457,12 @@ concurrency limits, stale-token rejection, fault invalidation, VM rotation, and
 an isolated mode that resets every released runtime. See
 [`docs/vm-pool.md`](docs/vm-pool.md).
 
+Asynchronous executions can be recorded and replayed through deterministic
+`MWR1` transcripts. Virtual time, host responses, cancellation and observable
+events are verified against a workload digest, with first-divergence reporting
+for regression reproduction. See
+[`docs/deterministic-replay.md`](docs/deterministic-replay.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

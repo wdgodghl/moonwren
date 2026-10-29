@@ -20,6 +20,8 @@
   scheduler-mediated HTTP modules with structured host request snapshots;
 - add a bounded multi-tenant VM pool with opaque leases, tenant concurrency
   limits, isolated reset, use-count rotation, invalidation, and statistics;
+- add deterministic scheduler record/replay with portable `MWR1` logs,
+  workload binding, host-owned responses, and first-divergence diagnostics;
 
 ## 0.8.0 - 2026-10-28
 

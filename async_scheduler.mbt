@@ -581,6 +581,30 @@ pub fn VmScheduler::deliver(
 }
 
 ///|
+/// Materialize host-owned recursive data inside this scheduler's VM and
+/// deliver it to a suspended task.
+pub fn VmScheduler::deliver_owned(
+  self : VmScheduler,
+  task_identifier : Int,
+  response : ForeignOwnedValue,
+) -> Bool {
+  if self.closed ||
+    task_identifier < 0 ||
+    task_identifier >= self.entries.length() {
+    return false
+  }
+  let entry = self.entries[task_identifier]
+  if entry.status != ScheduledWaitingForHost || entry.request is None {
+    return false
+  }
+  let value = match materialize_foreign_value(response, self.vm.runtime()) {
+    Ok(value) => value
+    Err(_) => return false
+  }
+  self.deliver(task_identifier, value)
+}
+
+///|
 pub fn VmScheduler::cancel(self : VmScheduler, task_identifier : Int) -> Bool {
   if self.closed ||
     task_identifier < 0 ||
