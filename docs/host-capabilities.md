@@ -7,6 +7,7 @@ network access. Applications may opt into the separate
 `HostAccessPolicy` starts from explicit capabilities:
 
 - `moon/io` reads and writes only relative paths that resolve below one root;
+- directory listing returns an ordinary Wren List through the context binding API;
 - reads and writes have independent switches and UTF-8 byte limits;
 - `moon/env` sees only name/value pairs supplied by the embedder;
 - process execution and networking are not provided;

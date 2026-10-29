@@ -7,6 +7,52 @@ fn no_foreign_modules(
 }
 
 ///|
+test "context-aware foreign bindings materialize nested values" {
+  let binding = @moonwren.ForeignMethodBinding::new_context(
+    "main",
+    "Host",
+    true,
+    "payload()",
+    fn(call) {
+      if call.argument_count() != 0 {
+        return @moonwren.ForeignContextAborted("unexpected arguments")
+      }
+      @moonwren.ForeignContextReturned(
+        @moonwren.ForeignMap([
+          @moonwren.ForeignOwnedMapEntry::new(
+            @moonwren.ForeignString("items"),
+            @moonwren.ForeignList([
+              @moonwren.ForeignNumber(20.0),
+              @moonwren.ForeignNumber(22.0),
+            ]),
+          ),
+          @moonwren.ForeignOwnedMapEntry::new(
+            @moonwren.ForeignString("bytes"),
+            @moonwren.ForeignBytes([0xff, 0x00]),
+          ),
+        ]),
+      )
+    },
+  )
+  let source =
+    #|class Host { foreign static payload() }
+    #|var value = Host.payload()
+    #|System.print(value["items"][0] + value["items"][1])
+    #|System.print(value["bytes"].bytes.count)
+  match
+    @moonwren.run_with_foreign_methods(
+      "main",
+      source,
+      100000,
+      no_foreign_modules,
+      [binding],
+    ) {
+    @moonwren.ProgramCompleted(_, output) => assert_eq(output, ["42", "2"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
 test "parser accepts foreign instance static and getter declarations" {
   let source = "class Host {\n" +
     "  foreign static add(a, b)\n" +

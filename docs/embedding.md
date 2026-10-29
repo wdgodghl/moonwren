@@ -49,6 +49,37 @@ has no exact binding, execution produces `ForeignBindingMissing` and includes
 the complete lookup tuple in the message. A callback cannot re-enter the same
 runtime, matching Wren's non-reentrant foreign-call model.
 
+### Context-aware bindings
+
+`ForeignMethodBinding::new_context` is the preferred API for bindings that
+return structured data. Its `ForeignCallContext` exposes the receiver and
+checked argument positions without exposing runtime object registries. The
+callback returns a `ForeignOwnedValue` tree, which the VM materializes only
+after the callback exits. Supported results include nested Lists and Maps,
+Ranges, arbitrary String bytes, and existing argument values:
+
+```moonbit
+let payload = ForeignMethodBinding::new_context(
+  "main",
+  "Host",
+  true,
+  "payload()",
+  fn(_) {
+    ForeignContextReturned(ForeignMap([
+      ForeignOwnedMapEntry::new(
+        ForeignString("items"),
+        ForeignList([ForeignNumber(20.0), ForeignNumber(22.0)]),
+      ),
+    ]))
+  },
+)
+```
+
+`new_context_for_foreign_class` additionally receives the host object's opaque
+handle. Invalid mutable Map keys and aborted callbacks become structured
+`ForeignCallFailed` diagnostics. The original callback constructors remain
+available for small primitive-only bindings.
+
 ## Host-backed classes
 
 A Wren foreign class is declared separately from its methods. Its constructor

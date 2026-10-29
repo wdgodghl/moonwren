@@ -72,6 +72,7 @@ let host_io_source =
   #|  foreign static readText(path)
   #|  foreign static writeText(path, text)
   #|  foreign static exists(path)
+  #|  foreign static list(path)
   #|}
 
 ///|
@@ -271,6 +272,56 @@ fn host_exists_binding(
 }
 
 ///|
+fn host_list_binding(
+  policy : HostAccessPolicy,
+) -> @moonwren.ForeignMethodBinding {
+  @moonwren.ForeignMethodBinding::new_context(
+    "moon/io",
+    "FileSystem",
+    true,
+    "list(_)",
+    fn(call) {
+      if !policy.allow_read {
+        return @moonwren.ForeignContextAborted(
+          "filesystem read capability is disabled",
+        )
+      }
+      let requested = match call.argument(0) {
+        Some(value) =>
+          match value.as_string() {
+            @moonwren.ValueConverted(text) => text
+            @moonwren.ValueConversionFailed(_, received) =>
+              return @moonwren.ForeignContextAborted(
+                "path must be a String, received \{received}",
+              )
+          }
+        None => return @moonwren.ForeignContextAborted("path is missing")
+      }
+      let resolved = match
+        resolve_host_path(canonical(policy.root), requested) {
+        Some(value) => value
+        None =>
+          return @moonwren.ForeignContextAborted(
+            "path must remain below the configured root",
+          )
+      }
+      let is_directory = @fs.is_dir(resolved) catch { _ => false }
+      if !is_directory {
+        return @moonwren.ForeignContextAborted("directory cannot be read")
+      }
+      let names = @fs.read_dir(resolved) catch {
+        _ => return @moonwren.ForeignContextAborted("directory cannot be read")
+      }
+      let result : Array[@moonwren.ForeignOwnedValue] = []
+      for name in names {
+        result.push(@moonwren.ForeignString(name))
+      }
+      @moonwren.ForeignContextReturned(@moonwren.ForeignList(result))
+    },
+  )
+}
+
+///|
 fn host_environment_binding(
   policy : HostAccessPolicy,
   signature : String,
@@ -309,6 +360,7 @@ pub fn HostModuleKit::new(policy : HostAccessPolicy) -> HostModuleKit {
     host_read_binding(policy),
     host_write_binding(policy),
     host_exists_binding(policy),
+    host_list_binding(policy),
     host_environment_binding(policy, "get(_)"),
     host_environment_binding(policy, "has(_)"),
   ]

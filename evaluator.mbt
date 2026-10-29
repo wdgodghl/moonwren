@@ -1710,6 +1710,85 @@ fn find_foreign_class_binding(
 }
 
 ///|
+fn materialize_foreign_value(
+  value : ForeignOwnedValue,
+  context : RuntimeContext,
+) -> Result[Value, String] {
+  match value {
+    ForeignNull => Ok(Value::null())
+    ForeignBool(value) => Ok(Value::bool(value))
+    ForeignNumber(value) => Ok(Value::number(value))
+    ForeignString(value) => Ok(Value::string(value))
+    ForeignBytes(bytes) => Ok(Value::raw_string(bytes.copy()))
+    ForeignRange(from, to, inclusive) => Ok(Value::range(from, to, inclusive))
+    ForeignExisting(value) => Ok(value)
+    ForeignList(items) => {
+      let values : Array[Value] = []
+      for item in items {
+        match materialize_foreign_value(item, context) {
+          Ok(value) => values.push(value)
+          Err(message) => return Err(message)
+        }
+      }
+      Ok(context.new_list(values))
+    }
+    ForeignMap(entries) => {
+      let map = context.new_map()
+      let identifier = match map {
+        MapValue(value) => value
+        _ => return Err("could not allocate foreign Map result")
+      }
+      for entry in entries {
+        let key = match materialize_foreign_value(entry.key, context) {
+          Ok(value) => value
+          Err(message) => return Err(message)
+        }
+        if !is_valid_map_key(key) {
+          return Err(
+            "foreign Map key must be immutable, received \{key.type_name()}",
+          )
+        }
+        let entry_value = match
+          materialize_foreign_value(entry.value, context) {
+          Ok(value) => value
+          Err(message) => return Err(message)
+        }
+        ignore(context.set_map_entry(identifier, key, entry_value))
+      }
+      Ok(map)
+    }
+  }
+}
+
+///|
+fn finish_foreign_context_call(
+  result : ForeignContextResult,
+  span : SourceSpan,
+  owner : ClassDefinition,
+  signature : String,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  match result {
+    ForeignContextAborted(message) =>
+      evaluation_error(
+        ForeignCallFailed,
+        "foreign method \{owner.name}.\{signature} failed: \{message}",
+        span,
+      )
+    ForeignContextReturned(value) =>
+      match materialize_foreign_value(value, context) {
+        Ok(value) => EvaluationSucceeded(value)
+        Err(message) =>
+          evaluation_error(
+            ForeignCallFailed,
+            "foreign method \{owner.name}.\{signature} returned an invalid value: \{message}",
+            span,
+          )
+      }
+  }
+}
+
+///|
 fn normalize_meta_module_name(name : String) -> String {
   let mut normalized = name.replace_all(old="\\", new="/")
   while normalized.has_prefix("./") {
@@ -1869,6 +1948,29 @@ fn invoke_foreign_method(
         declaration.is_static,
         signature,
       ) {
+      if binding.accepts_context() {
+        let context_result = match receiver {
+          InstanceValue(identifier) =>
+            if identifier >= 0 &&
+              identifier < context.instances.length() &&
+              binding.accepts_handle() {
+              match context.instances[identifier].foreign_handle {
+                Some(handle) =>
+                  binding.call_handle_context(handle, receiver, arguments)
+                None =>
+                  ForeignContextAborted(
+                    "receiver does not contain foreign data",
+                  )
+              }
+            } else {
+              binding.call_context(receiver, arguments)
+            }
+          _ => binding.call_context(receiver, arguments)
+        }
+        return finish_foreign_context_call(
+          context_result, span, owner, signature, context,
+        )
+      }
       let call_result = match receiver {
         InstanceValue(identifier) =>
           if identifier >= 0 &&

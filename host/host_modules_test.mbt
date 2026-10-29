@@ -34,12 +34,15 @@ test "host modules expose only granted filesystem and environment values" {
     #|System.print(FileSystem.readText("input.txt").contains("MoonWren"))
     #|System.print(FileSystem.exists("input.txt"))
     #|System.print(FileSystem.writeText("write_target.txt", "updated\n"))
+    #|System.print(FileSystem.list(".").contains("input.txt"))
     #|System.print(Environment.get("MODE"))
     #|System.print(Environment.has("SECRET"))
     #|System.print(Environment.get("SECRET") == null)
   match vm.interpret("main", source) {
     @moonwren.ProgramCompleted(_, output) =>
-      assert_eq(output, ["true", "true", "true", "test", "false", "true"])
+      assert_eq(output, [
+        "true", "true", "true", "true", "test", "false", "true",
+      ])
     @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
   }
   vm.close()

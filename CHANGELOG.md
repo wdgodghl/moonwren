@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- add context-aware foreign bindings that safely materialize nested List, Map,
+  Range, byte String, and existing values inside the receiving VM;
+- extend the capability-limited filesystem module with directory listing;
+
 ## 0.8.0 - 2026-10-28
 
 - add built-in Wren 0.4-compatible `random` and `meta` optional modules with
