@@ -1,6 +1,6 @@
 {
   "name": "@wdgodghl/moonwren",
-  "version": "0.9.0-dev",
+  "version": "0.9.0",
   "description": "Wren 0.4-compatible runtime compiled from MoonBit for browsers and Node.js",
   "type": "module",
   "exports": {

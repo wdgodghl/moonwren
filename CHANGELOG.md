@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-29
+
 - add context-aware foreign bindings that safely materialize nested List, Map,
   Range, byte String, and existing values inside the receiving VM;
 - extend the capability-limited filesystem module with directory listing;
