@@ -433,6 +433,13 @@ ABI, entry module, capability declaration, sources, and compiled metadata with
 SHA-256; caller-supplied sign/verify callbacks support Ed25519 or managed keys.
 See [`docs/deployment-bundles.md`](docs/deployment-bundles.md).
 
+Editor integrations can reuse `LanguageServer` for diagnostics, symbols,
+completion, hover, definition, references, and rename edits. A
+`DebugAdapterSession` connects breakpoints and DAP-style step commands to the
+live VM debugger and exposes real variable snapshots. The transport-neutral
+integration contract is documented in
+[`docs/editor-tooling.md`](docs/editor-tooling.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

@@ -10,6 +10,10 @@
 - add named-module bytecode compilation plus loader/foreign-binding execution;
 - add deterministic `MWDS1` deployment bundles with UTF-8 SHA-256, capability
   manifests, compiler-cache metadata, external signing hooks, and tamper checks;
+- add a transport-neutral language service for diagnostics, symbols,
+  completion, hover, definition, references, and validated rename edits;
+- add a live-VM debug adapter session for breakpoints, step commands, visible
+  variables, stop history, and termination;
 
 ## 0.8.0 - 2026-10-28
 
