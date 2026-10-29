@@ -16,6 +16,8 @@
   variables, stop history, and termination;
 - add a browser/Node ES module SDK with structured results, TypeScript types,
   execution limits, a Worker entrypoint, a runnable Node example, and CI smoke tests;
+- add portable JSON, Base64, URL-component, SHA-256 name UUID, and
+  scheduler-mediated HTTP modules with structured host request snapshots;
 
 ## 0.8.0 - 2026-10-28
 

@@ -62,6 +62,80 @@ pub struct VmScheduler {
 }
 
 ///|
+fn snapshot_scheduler_value(
+  context : RuntimeContext,
+  value : Value,
+  depth : Int,
+) -> ForeignOwnedValue? {
+  if depth > 64 {
+    return None
+  }
+  match value {
+    NullValue => Some(ForeignNull)
+    BoolValue(item) => Some(ForeignBool(item))
+    NumberValue(item) => Some(ForeignNumber(item))
+    StringValue(item) => Some(ForeignString(item))
+    RawStringValue(bytes) => Some(ForeignBytes(bytes.copy()))
+    RangeValue(from, to, inclusive) => Some(ForeignRange(from, to, inclusive))
+    ListValue(identifier) => {
+      if identifier < 0 ||
+        identifier >= context.lists.length() ||
+        !context.lists[identifier].alive {
+        return None
+      }
+      let items : Array[ForeignOwnedValue] = []
+      for item in context.lists[identifier].items {
+        match snapshot_scheduler_value(context, item, depth + 1) {
+          Some(snapshot) => items.push(snapshot)
+          None => return None
+        }
+      }
+      Some(ForeignList(items))
+    }
+    MapValue(identifier) => {
+      if identifier < 0 ||
+        identifier >= context.maps.length() ||
+        !context.maps[identifier].alive {
+        return None
+      }
+      let entries : Array[ForeignOwnedMapEntry] = []
+      for entry in context.maps[identifier].entries {
+        let key = match
+          snapshot_scheduler_value(context, entry.key, depth + 1) {
+          Some(snapshot) => snapshot
+          None => return None
+        }
+        let item = match
+          snapshot_scheduler_value(context, entry.value, depth + 1) {
+          Some(snapshot) => snapshot
+          None => return None
+        }
+        entries.push(ForeignOwnedMapEntry::new(key, item))
+      }
+      Some(ForeignMap(entries))
+    }
+    _ => None
+  }
+}
+
+///|
+/// Copy an external request into host-owned recursive data. This makes HTTP and
+/// other structured yielded requests inspectable without exposing VM-local
+/// collection identifiers. Unsupported runtime objects and excessive nesting
+/// return None.
+pub fn VmScheduler::snapshot_request(
+  self : VmScheduler,
+  request : VmAsyncRequest,
+) -> ForeignOwnedValue? {
+  if self.closed ||
+    request.vm_identity != self.vm.identity ||
+    request.generation != self.vm.generation {
+    return None
+  }
+  snapshot_scheduler_value(self.vm.runtime(), request.value(), 0)
+}
+
+///|
 fn scheduler_issue(message : String) -> Diagnostic {
   Diagnostic::new(Runtime, InvalidFiberState, message, SourceSpan::empty()).with_source(
     "<scheduler>",

@@ -136,7 +136,7 @@ fn optional_module_source(name : String) -> String? {
     "timer" => Some(optional_timer_source)
     "task" => Some(optional_task_source)
     "scheduler" => Some(optional_scheduler_source)
-    _ => None
+    _ => standard_module_source(name)
   }
 }
 
@@ -330,6 +330,7 @@ fn append_optional_bindings(
   classes : Array[ForeignClassBinding],
   states : Array[BuiltinRandomState],
 ) -> Unit {
+  append_standard_module_bindings(methods)
   for
     signature in [
       "getModuleVariables(_)", "eval(_)", "compileExpression(_)", "compile(_)",

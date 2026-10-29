@@ -446,6 +446,12 @@ types, and an optional Worker entrypoint; CI runs the SDK directly in Node.
 See [`docs/javascript-sdk.md`](docs/javascript-sdk.md) and
 [`examples/node-sdk.mjs`](examples/node-sdk.mjs).
 
+Portable `moon/json`, `moon/base64`, `moon/url`, `moon/uuid`, and scheduler-
+mediated `moon/http` modules cover common embedding data paths. HTTP yields an
+inspectable host request and never grants direct network access; filesystem and
+environment modules remain explicitly capability-gated. See
+[`docs/standard-modules.md`](docs/standard-modules.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and
