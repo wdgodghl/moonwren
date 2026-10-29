@@ -22,6 +22,8 @@
   limits, isolated reset, use-count rotation, invalidation, and statistics;
 - add deterministic scheduler record/replay with portable `MWR1` logs,
   workload binding, host-owned responses, and first-divergence diagnostics;
+- add atomic multi-module hot reload with dependency ordering, cyclic state
+  migration, host archive transforms, and full failure rollback;
 
 ## 0.8.0 - 2026-10-28
 

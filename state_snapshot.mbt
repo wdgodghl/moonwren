@@ -263,7 +263,15 @@ pub fn Vm::save_state(
   if self.closed {
     return VmStateSaveFailed(state_issue("VM is closed", module_name))
   }
-  let context = self.runtime()
+  save_context_state(self.runtime(), module_name, names)
+}
+
+///|
+fn save_context_state(
+  context : RuntimeContext,
+  module_name : String,
+  names : Array[String],
+) -> VmStateSaveResult {
   let module_index = match find_runtime_module(context, module_name) {
     Some(index) => index
     None =>
@@ -677,6 +685,14 @@ pub fn Vm::restore_state(self : Vm, archive : String) -> VmStateRestoreResult {
   if self.closed {
     return VmStateRestoreFailed(state_issue("VM is closed", "<state>"))
   }
+  restore_context_state(self.runtime(), archive)
+}
+
+///|
+fn restore_context_state(
+  context : RuntimeContext,
+  archive : String,
+) -> VmStateRestoreResult {
   let document = match decode_state_document(archive) {
     Some(document) => document
     None =>
@@ -684,7 +700,6 @@ pub fn Vm::restore_state(self : Vm, archive : String) -> VmStateRestoreResult {
         state_issue("invalid or corrupted MWS1 state archive", "<state>"),
       )
   }
-  let context = self.runtime()
   let module_index = match find_runtime_module(context, document.module_name) {
     Some(index) => index
     None =>

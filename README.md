@@ -463,6 +463,11 @@ events are verified against a workload digest, with first-divergence reporting
 for regression reproduction. See
 [`docs/deterministic-replay.md`](docs/deterministic-replay.md).
 
+Hot reload now also supports atomic multi-module replacement, import dependency
+ordering, complete `MWS1` collection-graph migration, host schema transforms,
+and rollback that preserves old handles on every failure. See
+[`docs/hot-reload.md`](docs/hot-reload.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and
