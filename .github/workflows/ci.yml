@@ -32,6 +32,11 @@ jobs:
         run: moon build --target native
       - name: Build browser playground
         run: moon build --target js cmd/web_demo
+      - name: Test browser and Node SDK
+        shell: pwsh
+        run: |
+          ./tools/build-web-demo.ps1
+          node web/sdk.test.mjs
       - name: Build performance benchmark
         run: moon build --target native --release cmd/benchmark
       - name: Run performance smoke gate

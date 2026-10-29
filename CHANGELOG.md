@@ -14,6 +14,8 @@
   completion, hover, definition, references, and validated rename edits;
 - add a live-VM debug adapter session for breakpoints, step commands, visible
   variables, stop history, and termination;
+- add a browser/Node ES module SDK with structured results, TypeScript types,
+  execution limits, a Worker entrypoint, a runnable Node example, and CI smoke tests;
 
 ## 0.8.0 - 2026-10-28
 

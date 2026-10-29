@@ -440,6 +440,12 @@ live VM debugger and exposes real variable snapshots. The transport-neutral
 integration contract is documented in
 [`docs/editor-tooling.md`](docs/editor-tooling.md).
 
+The generated ES module under `web/` now doubles as a browser and Node.js SDK.
+It exposes structured evaluation results, configurable step limits, TypeScript
+types, and an optional Worker entrypoint; CI runs the SDK directly in Node.
+See [`docs/javascript-sdk.md`](docs/javascript-sdk.md) and
+[`examples/node-sdk.mjs`](examples/node-sdk.mjs).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

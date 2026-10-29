@@ -1,0 +1,24 @@
+{
+  "name": "@wdgodghl/moonwren",
+  "version": "0.9.0-dev",
+  "description": "Wren 0.4-compatible runtime compiled from MoonBit for browsers and Node.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./sdk.d.ts",
+      "import": "./sdk.mjs"
+    },
+    "./worker": "./worker.mjs"
+  },
+  "files": [
+    "moonwren.js",
+    "sdk.mjs",
+    "sdk.d.ts",
+    "worker.mjs"
+  ],
+  "sideEffects": [
+    "./moonwren.js"
+  ],
+  "license": "Apache-2.0",
+  "repository": "https://github.com/wdgodghl/moonwren"
+}
