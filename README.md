@@ -392,10 +392,13 @@ statistics report total reachable and reclaimed objects as well as foreign
 finalizers. Host-owned resources can use `HostObjectTable[T]`, whose
 generation-checked handles reject stale identifiers after a slot is reused.
 
-The optional bytecode backend covers procedural control flow plus List and Map
-literals, subscripts, core getters, setters, and method calls. User classes,
-closures, modules, and Fibers still fail explicitly with `UnsupportedFeature`.
-It is suitable for experiments, profiling, and differential checks while the
+The optional hybrid bytecode backend accepts the complete MoonWren Wren 0.4
+surface. Procedural control flow, collections, subscripts, properties, and
+calls lower to stack instructions; classes, closures, modules, Fibers, and
+structured loop control currently lower to explicit semantic instructions
+executed against the same environment and resource limits. This makes compiled
+programs deployable without a syntax-dependent fallback decision while keeping
+the optimization boundary measurable through `semantic_fallbacks`. The
 Wren 0.4-compatible interpreter remains the default:
 
 ```moonbit

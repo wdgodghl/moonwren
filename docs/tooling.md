@@ -5,15 +5,19 @@ runtime. The tools below are optional surfaces for embedders and maintainers.
 
 ## Bytecode inspection and tracing
 
-`compile_bytecode` accepts literals, variables, assignment, arithmetic,
-conditionals, blocks, `if`, `while`, logical short-circuiting, `return`, List
-and Map literals, subscripts, properties, and core method calls. User-defined
-classes, closures, modules, Fibers, and loop-control syntax are rejected with
-`UnsupportedFeature` until they have bytecode semantics.
+`compile_bytecode` accepts the complete supported Wren 0.4 language surface.
+Literals, variables, assignment, arithmetic, conditionals, blocks, `if`,
+`while`, logical short-circuiting, `return`, List/Map operations, subscripts,
+properties, and calls use native stack instructions. User-defined classes,
+closures, imports, Fibers, `for`, `break`, and `continue` use explicit semantic
+escape instructions that share the compiled program's environment and limits.
+Use `compile_module_bytecode` plus `run_bytecode_with_loader` when imports need
+a host loader, or `run_bytecode_with_bindings` when foreign methods/classes are
+also required.
 
 `disassemble_bytecode` returns stable instruction offsets with source lines and
 columns. `profile_bytecode` reports dynamic instruction, stack, load/store,
-branch, and arithmetic counts. `trace_bytecode` records every executed
+branch, arithmetic, call, and semantic-fallback counts. `trace_bytecode` records every executed
 instruction. `BytecodeTraceDebugger` adds deterministic single-step, reset, and
 continue-to-source-line-breakpoint navigation. It is a replay debugger over a
 completed trace, so it does not mutate or resume the live VM.

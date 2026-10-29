@@ -50,11 +50,53 @@ test "bytecode enforces a deterministic instruction budget" {
 }
 
 ///|
-test "bytecode reports unsupported object syntax explicitly" {
-  match @moonwren.compile_bytecode("class Example {}\n") {
-    @moonwren.BytecodeCompiled(_) => fail("class should not compile yet")
-    @moonwren.BytecodeCompileFailed(issues) =>
-      assert_eq(issues[0].code, @moonwren.UnsupportedFeature)
+test "hybrid bytecode executes classes, closures, loops, and fibers" {
+  assert_compiled_number(
+    "class Example {\n static answer { return 40 }\n}\n" +
+    "var offset = 2\n" +
+    "var add = Fn.new { |value| value + offset }\n" +
+    "add.call(Example.answer)\n",
+    42.0,
+  )
+  assert_compiled_number(
+    "var total = 0\n" +
+    "for (number in 1..10) { if (number == 4) break\n total = total + number }\n" +
+    "total\n",
+    6.0,
+  )
+  assert_compiled_number(
+    "var fiber = Fiber.new {\n Fiber.yield(20)\n return 42\n}\n" +
+    "fiber.call()\n" +
+    "fiber.call()\n",
+    42.0,
+  )
+  let program = match @moonwren.compile_bytecode("class Example {}\n") {
+    @moonwren.BytecodeCompiled(value) => value
+    @moonwren.BytecodeCompileFailed(issues) => fail(issues[0].message)
+  }
+  assert_true(@moonwren.profile_bytecode(program, 100).semantic_fallbacks > 0)
+}
+
+///|
+test "hybrid bytecode executes imported modules with a host loader" {
+  let program = match
+    @moonwren.compile_module_bytecode(
+      "main", "import \"dep\" for answer\nanswer + 2\n",
+    ) {
+    @moonwren.BytecodeCompiled(value) => value
+    @moonwren.BytecodeCompileFailed(issues) => fail(issues[0].message)
+  }
+  let loader = fn(_from, name) {
+    if name == "dep" {
+      @moonwren.ModuleLoaded("dep", "var answer = 40\n")
+    } else {
+      @moonwren.ModuleLoadFailed("missing module")
+    }
+  }
+  match @moonwren.run_bytecode_with_loader(program, 1000, loader) {
+    @moonwren.BytecodeCompleted(value, _) =>
+      assert_eq(value, @moonwren.Value::number(42.0))
+    @moonwren.BytecodeFailed(issue, _) => fail(issue.message)
   }
 }
 

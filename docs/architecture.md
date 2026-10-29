@@ -114,12 +114,17 @@ retired; foreign handles are finalized immediately. Suspended opaque Fiber
 continuations conservatively retain the complete live heap because their host
 continuation cannot yet be inspected safely.
 
-The optional bytecode path compiles a deliberately bounded procedural subset
-to immutable constants and stack instructions. Unsupported syntax produces a
-structured compile diagnostic and never silently falls back. The bytecode VM
-shares primitive operators with the interpreter, enforces its own instruction
-budget, and can emit an offset/source-position listing, aggregate profile, or
-complete execution trace for debugger frontends.
+The optional hybrid bytecode path compiles every supported Wren construct to an
+immutable instruction stream. Hot procedural operations use native stack
+instructions. Complex class, closure, module, Fiber, and structured-control
+nodes use explicit semantic escape instructions against the same environment,
+loader, foreign bindings, and runtime context. These escapes are visible in
+disassembly and counted as `semantic_fallbacks`; they are not a hidden restart
+through a second execution path. The VM enforces a combined instruction and
+semantic step budget and can emit an offset/source-position listing, aggregate
+profile, or complete execution trace for debugger frontends. Future native
+lowering can replace individual escape instructions without changing the
+compiled-program API.
 
 Function values store a runtime-local closure identifier. The closure registry
 retains the statement body, parameter list, and a captured environment.

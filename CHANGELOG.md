@@ -5,6 +5,9 @@
 - add context-aware foreign bindings that safely materialize nested List, Map,
   Range, byte String, and existing values inside the receiving VM;
 - extend the capability-limited filesystem module with directory listing;
+- make the hybrid bytecode backend accept classes, closures, modules, Fibers,
+  and structured loop control through explicit, profiled semantic instructions;
+- add named-module bytecode compilation plus loader/foreign-binding execution;
 
 ## 0.8.0 - 2026-10-28
 

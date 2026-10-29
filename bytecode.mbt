@@ -18,6 +18,8 @@ pub(all) enum BytecodeOp {
   GetProperty(String)
   SetProperty(String)
   InvokeMethod(String, Int)
+  EvaluateSemantic(Expr)
+  ExecuteSemantic(Stmt)
   Jump(Int)
   JumpIfFalse(Int)
   JumpIfFalseKeep(Int)
@@ -46,9 +48,11 @@ pub extend BytecodeInstruction with Eq::{equal, not_equal}
 pub extend BytecodeInstruction with Debug::{to_repr}
 
 ///|
-/// Immutable compiled program. The initial backend intentionally covers the
-/// procedural expression subset and rejects unsupported object constructs.
+/// Immutable compiled program. Frequently used procedural operations lower to
+/// native stack instructions; object/module/Fiber constructs use semantic
+/// escape instructions so every supported Wren construct remains executable.
 pub(all) struct BytecodeProgram {
+  source_name : String
   constants : Array[Value]
   instructions : Array[BytecodeInstruction]
 }
@@ -76,6 +80,7 @@ pub(all) struct BytecodeProfile {
   branches : Int
   arithmetic_operations : Int
   calls : Int
+  semantic_fallbacks : Int
 }
 
 ///|
@@ -101,6 +106,7 @@ priv struct BytecodeProfiler {
   mut branches : Int
   mut arithmetic_operations : Int
   mut calls : Int
+  mut semantic_fallbacks : Int
   capture_trace : Bool
   events : Array[BytecodeTraceEvent]
 }
@@ -114,6 +120,7 @@ fn BytecodeProfiler::new(capture_trace : Bool) -> BytecodeProfiler {
     branches: 0,
     arithmetic_operations: 0,
     calls: 0,
+    semantic_fallbacks: 0,
     capture_trace,
     events: [],
   }
@@ -143,6 +150,8 @@ fn BytecodeProfiler::observe(
     | GetProperty(_)
     | SetProperty(_)
     | InvokeMethod(_, _) => self.calls = self.calls + 1
+    EvaluateSemantic(_) | ExecuteSemantic(_) =>
+      self.semantic_fallbacks = self.semantic_fallbacks + 1
     _ => ()
   }
   if self.capture_trace {
@@ -154,12 +163,11 @@ fn BytecodeProfiler::observe(
 priv struct BytecodeBuilder {
   constants : Array[Value]
   instructions : Array[BytecodeInstruction]
-  mut failure : Diagnostic?
 }
 
 ///|
 fn BytecodeBuilder::new() -> BytecodeBuilder {
-  { constants: [], instructions: [], failure: None, }
+  { constants: [], instructions: [], }
 }
 
 ///|
@@ -178,21 +186,6 @@ fn BytecodeBuilder::constant(self : BytecodeBuilder, value : Value) -> Int {
   let index = self.constants.length()
   self.constants.push(value)
   index
-}
-
-///|
-fn BytecodeBuilder::unsupported(
-  self : BytecodeBuilder,
-  message : String,
-  span : SourceSpan,
-) -> Unit {
-  if self.failure is None {
-    self.failure = Some(
-      Diagnostic::new(Parse, UnsupportedFeature, message, span).with_source(
-        "<bytecode>",
-      ),
-    )
-  }
 }
 
 ///|
@@ -217,9 +210,6 @@ fn BytecodeBuilder::compile_expression(
   self : BytecodeBuilder,
   expression : Expr,
 ) -> Unit {
-  if self.failure is Some(_) {
-    return
-  }
   match expression {
     Literal(value, span) =>
       ignore(self.emit(PushConstant(self.constant(value)), span))
@@ -310,9 +300,7 @@ fn BytecodeBuilder::compile_expression(
     | FunctionLiteral(_, _, span)
     | FiberCallResume(_, _, _, span)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, span) =>
-      self.unsupported(
-        "expression is not supported by the bytecode backend", span,
-      )
+      ignore(self.emit(EvaluateSemantic(expression), span))
   }
 }
 
@@ -321,9 +309,6 @@ fn BytecodeBuilder::compile_statement(
   self : BytecodeBuilder,
   statement : Stmt,
 ) -> Unit {
-  if self.failure is Some(_) {
-    return
-  }
   match statement {
     ExpressionStatement(expression, span) => {
       self.compile_expression(expression)
@@ -379,16 +364,16 @@ fn BytecodeBuilder::compile_statement(
     | ContinueStatement(span)
     | ImportStatement(_, _, span)
     | ClassStatement(_, _, _, _, _, span) =>
-      self.unsupported(
-        "statement is not supported by the bytecode backend", span,
-      )
+      ignore(self.emit(ExecuteSemantic(statement), span))
   }
 }
 
 ///|
-/// Compile the arithmetic/control-flow subset to portable stack bytecode.
-/// Unsupported constructs fail explicitly and can continue to use `run`.
-pub fn compile_bytecode(source : String) -> BytecodeCompileResult {
+/// Compile a named module through the complete hybrid bytecode backend.
+pub fn compile_module_bytecode(
+  source_name : String,
+  source : String,
+) -> BytecodeCompileResult {
   match parse_program(source) {
     ProgramParseFailed(issues) => BytecodeCompileFailed(issues)
     ProgramParsed(statements) => {
@@ -396,27 +381,29 @@ pub fn compile_bytecode(source : String) -> BytecodeCompileResult {
       for statement in statements {
         builder.compile_statement(statement)
       }
-      match builder.failure {
-        Some(issue) => BytecodeCompileFailed([issue])
-        None => {
-          ignore(
-            builder.emit(
-              ReturnLast,
-              if statements.is_empty() {
-                SourceSpan::empty()
-              } else {
-                statements[statements.length() - 1].span()
-              },
-            ),
-          )
-          BytecodeCompiled({
-            constants: builder.constants,
-            instructions: builder.instructions,
-          })
-        }
-      }
+      ignore(
+        builder.emit(
+          ReturnLast,
+          if statements.is_empty() {
+            SourceSpan::empty()
+          } else {
+            statements[statements.length() - 1].span()
+          },
+        ),
+      )
+      BytecodeCompiled({
+        source_name,
+        constants: builder.constants,
+        instructions: builder.instructions,
+      })
     }
   }
+}
+
+///|
+/// Compile one anonymous source through the complete hybrid bytecode backend.
+pub fn compile_bytecode(source : String) -> BytecodeCompileResult {
+  compile_module_bytecode("<bytecode>", source)
 }
 
 ///|
@@ -461,6 +448,9 @@ fn execute_bytecode(
   program : BytecodeProgram,
   max_steps : Int,
   profiler : BytecodeProfiler?,
+  loader : (String, String) -> ModuleLoadResult,
+  foreign_methods : Array[ForeignMethodBinding],
+  foreign_classes : Array[ForeignClassBinding],
 ) -> BytecodeRunResult {
   if max_steps <= 0 {
     return bytecode_failure(
@@ -472,7 +462,15 @@ fn execute_bytecode(
   }
   let environment = Environment::new()
   bind_core_globals(environment)
-  let context = RuntimeContext::new(max_steps)
+  let context = RuntimeContext::new_with_loader(
+    max_steps,
+    program.source_name,
+    loader,
+    foreign_methods,
+    foreign_classes,
+  )
+  context.begin_operation()
+  context.current_source = program.source_name
   let stack : Array[Value] = []
   let mut last = Value::null()
   let mut ip = 0
@@ -781,6 +779,33 @@ fn execute_bytecode(
           EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
         }
       }
+      EvaluateSemantic(expression) =>
+        match evaluate_expression_in(expression, environment, context) {
+          EvaluationSucceeded(value) => stack.push(value)
+          EvaluationFailed(issue) => return BytecodeFailed(issue, steps)
+        }
+      ExecuteSemantic(statement) =>
+        match execute_statement_in(statement, environment, context) {
+          StatementCompleted(value) => last = value
+          StatementReturned(value, _) =>
+            return BytecodeCompleted(value, steps + context.steps)
+          StatementFailed(issue) =>
+            return BytecodeFailed(issue, steps + context.steps)
+          StatementBroken(span) =>
+            return bytecode_failure(
+              BreakOutsideLoop,
+              "break cannot cross a bytecode semantic boundary",
+              span,
+              steps + context.steps,
+            )
+          StatementContinued(span) =>
+            return bytecode_failure(
+              ContinueOutsideLoop,
+              "continue cannot cross a bytecode semantic boundary",
+              span,
+              steps + context.steps,
+            )
+        }
       Jump(target) => ip = target
       JumpIfFalse(target) => {
         let (value, failure) = pop_bytecode_value(
@@ -852,7 +877,44 @@ pub fn run_bytecode(
   program : BytecodeProgram,
   max_steps : Int,
 ) -> BytecodeRunResult {
-  execute_bytecode(program, max_steps, None)
+  execute_bytecode(
+    program,
+    max_steps,
+    None,
+    fn(_, name) { ModuleLoadFailed("module '\{name}' is not available") },
+    [],
+    [],
+  )
+}
+
+///|
+/// Execute complete bytecode semantics with host-provided modules and foreign
+/// bindings. Complex object operations currently use semantic escape
+/// instructions while sharing the same environment, limits, and object heap.
+pub fn run_bytecode_with_bindings(
+  program : BytecodeProgram,
+  max_steps : Int,
+  loader : (String, String) -> ModuleLoadResult,
+  foreign_methods : Array[ForeignMethodBinding],
+  foreign_classes : Array[ForeignClassBinding],
+) -> BytecodeRunResult {
+  execute_bytecode(
+    program,
+    max_steps,
+    None,
+    loader,
+    foreign_methods,
+    foreign_classes,
+  )
+}
+
+///|
+pub fn run_bytecode_with_loader(
+  program : BytecodeProgram,
+  max_steps : Int,
+  loader : (String, String) -> ModuleLoadResult,
+) -> BytecodeRunResult {
+  run_bytecode_with_bindings(program, max_steps, loader, [], [])
 }
 
 ///|
@@ -863,7 +925,14 @@ pub fn profile_bytecode(
   max_steps : Int,
 ) -> BytecodeProfile {
   let profiler = BytecodeProfiler::new(false)
-  let result = execute_bytecode(program, max_steps, Some(profiler))
+  let result = execute_bytecode(
+    program,
+    max_steps,
+    Some(profiler),
+    fn(_, name) { ModuleLoadFailed("module '\{name}' is not available") },
+    [],
+    [],
+  )
   let executed_instructions = match result {
     BytecodeCompleted(_, steps) | BytecodeFailed(_, steps) => steps
   }
@@ -876,6 +945,7 @@ pub fn profile_bytecode(
     branches: profiler.branches,
     arithmetic_operations: profiler.arithmetic_operations,
     calls: profiler.calls,
+    semantic_fallbacks: profiler.semantic_fallbacks,
   }
 }
 
@@ -887,7 +957,14 @@ pub fn trace_bytecode(
   max_steps : Int,
 ) -> BytecodeTrace {
   let profiler = BytecodeProfiler::new(true)
-  let result = execute_bytecode(program, max_steps, Some(profiler))
+  let result = execute_bytecode(
+    program,
+    max_steps,
+    Some(profiler),
+    fn(_, name) { ModuleLoadFailed("module '\{name}' is not available") },
+    [],
+    [],
+  )
   { result, events: profiler.events, }
 }
 
