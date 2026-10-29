@@ -183,6 +183,8 @@ priv struct RuntimeContext {
   max_steps : Int
   mut call_depth : Int
   max_call_depth : Int
+  mut peak_call_depth : Int
+  mut foreign_calls : Int
   mut output_characters : Int
   max_output_characters : Int
   max_modules : Int
@@ -290,6 +292,8 @@ fn RuntimeContext::new_with_limits(
     max_steps,
     call_depth: 0,
     max_call_depth,
+    peak_call_depth: 0,
+    foreign_calls: 0,
     output_characters: 0,
     max_output_characters,
     max_modules,
@@ -321,11 +325,26 @@ fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
 fn RuntimeContext::begin_operation(self : RuntimeContext) -> Unit {
   self.steps = 0
   self.call_depth = 0
+  self.peak_call_depth = 0
+  self.foreign_calls = 0
   self.output.clear()
   self.output_line_open = false
   self.output_characters = 0
   self.transferred_to_main = false
   self.terminate_main = false
+}
+
+///|
+fn RuntimeContext::push_call(self : RuntimeContext) -> Unit {
+  self.call_depth = self.call_depth + 1
+  if self.call_depth > self.peak_call_depth {
+    self.peak_call_depth = self.call_depth
+  }
+}
+
+///|
+fn RuntimeContext::pop_call(self : RuntimeContext) -> Unit {
+  self.call_depth = self.call_depth - 1
 }
 
 ///|
@@ -1508,9 +1527,9 @@ fn invoke_function(
   }
   let caller_source = context.current_source
   context.current_source = closure.source_name
-  context.call_depth = context.call_depth + 1
+  context.push_call()
   let result = execute_statements_in(closure.body, environment, context)
-  context.call_depth = context.call_depth - 1
+  context.pop_call()
   context.current_source = caller_source
   ignore(environment.pop_scope())
   let evaluation = match result {
@@ -1948,6 +1967,7 @@ fn invoke_foreign_method(
         declaration.is_static,
         signature,
       ) {
+      context.foreign_calls = context.foreign_calls + 1
       if binding.accepts_context() {
         let context_result = match receiver {
           InstanceValue(identifier) =>
@@ -2103,9 +2123,9 @@ fn invoke_user_method(
   }
   let caller_source = context.current_source
   context.current_source = owner.source_name
-  context.call_depth = context.call_depth + 1
+  context.push_call()
   let result = execute_statements_in(declaration.body, environment, context)
-  context.call_depth = context.call_depth - 1
+  context.pop_call()
   context.current_source = caller_source
   ignore(environment.pop_scope())
   let evaluation = match result {
@@ -2195,9 +2215,9 @@ fn invoke_static_method(
   }
   let caller_source = context.current_source
   context.current_source = owner.source_name
-  context.call_depth = context.call_depth + 1
+  context.push_call()
   let result = execute_statements_in(declaration.body, environment, context)
-  context.call_depth = context.call_depth - 1
+  context.pop_call()
   context.current_source = caller_source
   ignore(environment.pop_scope())
   let evaluation = match result {
@@ -5823,7 +5843,7 @@ fn restore_fiber_caller(
 ) -> Unit {
   context.current_fiber = previous_fiber
   context.current_source = previous_source
-  context.call_depth = context.call_depth - 1
+  context.pop_call()
 }
 
 ///|
@@ -5915,7 +5935,7 @@ fn resume_runtime_fiber(
   let previous_source = context.current_source
   context.current_fiber = fiber.identity
   context.current_source = closure.source_name
-  context.call_depth = context.call_depth + 1
+  context.push_call()
   fiber.state = 1
   let mut pending_input = Some(input)
   while true {

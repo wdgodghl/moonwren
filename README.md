@@ -468,6 +468,12 @@ ordering, complete `MWS1` collection-graph migration, host schema transforms,
 and rollback that preserves old handles on every failure. See
 [`docs/hot-reload.md`](docs/hot-reload.md).
 
+`ObservedVm` provides bounded per-operation telemetry and subscriber callbacks,
+including evaluator, resource, foreign-call, call-depth and GC measurements.
+Histories export to Prometheus text or Chrome/Perfetto Trace JSON without
+capturing script source or host values. See
+[`docs/observability.md`](docs/observability.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

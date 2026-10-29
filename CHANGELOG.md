@@ -24,6 +24,8 @@
   workload binding, host-owned responses, and first-divergence diagnostics;
 - add atomic multi-module hot reload with dependency ordering, cyclic state
   migration, host archive transforms, and full failure rollback;
+- add bounded VM telemetry with subscribers, evaluator/resource/foreign/GC
+  metrics, Prometheus exposition, and Chrome/Perfetto trace export;
 
 ## 0.8.0 - 2026-10-28
 
