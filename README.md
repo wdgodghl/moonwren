@@ -452,6 +452,11 @@ inspectable host request and never grants direct network access; filesystem and
 environment modules remain explicitly capability-gated. See
 [`docs/standard-modules.md`](docs/standard-modules.md).
 
+`VmPool` adds bounded multi-tenant execution with opaque leases, per-tenant
+concurrency limits, stale-token rejection, fault invalidation, VM rotation, and
+an isolated mode that resets every released runtime. See
+[`docs/vm-pool.md`](docs/vm-pool.md).
+
 `reload_module` builds a candidate runtime, reloads every retained root module,
 and commits only after the whole graph succeeds. Selected primitive globals can
 be migrated by name. A successful reload starts a new generation and

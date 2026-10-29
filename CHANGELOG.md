@@ -18,6 +18,8 @@
   execution limits, a Worker entrypoint, a runnable Node example, and CI smoke tests;
 - add portable JSON, Base64, URL-component, SHA-256 name UUID, and
   scheduler-mediated HTTP modules with structured host request snapshots;
+- add a bounded multi-tenant VM pool with opaque leases, tenant concurrency
+  limits, isolated reset, use-count rotation, invalidation, and statistics;
 
 ## 0.8.0 - 2026-10-28
 
