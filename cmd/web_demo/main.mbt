@@ -7,7 +7,7 @@ extern "js" fn install_web_sdk(
   #| (runSource, evaluateSource) => {
   #|   const normalizeLimit = (value) => Number.isSafeInteger(value) && value > 0 ? value : 1000000;
   #|   globalThis.MoonWrenCore = Object.freeze({
-  #|     version: "0.9.1",
+  #|     version: "0.9.2",
   #|     runText(source, options = {}) {
   #|       return runSource(String(source), normalizeLimit(options.maxSteps));
   #|     },

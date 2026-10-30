@@ -6,6 +6,10 @@ reference commit, edge cases, and exclusions are defined in
 [`wren-0.4-conformance.md`](wren-0.4-conformance.md). This table reports current
 progress and does not redefine that endpoint.
 
+The broader supported API, optional tooling, security boundary, and non-goals
+are defined in [`project-boundary.md`](project-boundary.md). A row marked
+implemented here does not make a separate protocol, ABI, or performance claim.
+
 | Area | Status | Notes |
 | --- | --- | --- |
 | Source spans and diagnostics | Implemented | File, line, column, and cross-module call frames |

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.9.2 - 2026-10-30
+
+- define a single Wren 0.4.0 embedding boundary with explicit supported,
+  optional, experimental, security, and non-goal sections;
+- add reproducible getting-started and testing guides, local documentation and
+  release-metadata gates, and six native CLI acceptance cases;
+- strengthen CI with all-target tests, CLI acceptance, documentation checks,
+  consistent release metadata, and an uploaded official conformance report.
+
 ## 0.9.1 - 2026-10-30
 
 - raise the minimum supported MoonBit compiler to 0.10.16 and verify the

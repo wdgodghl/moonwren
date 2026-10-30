@@ -4,41 +4,30 @@ MoonWren is a Wren 0.4.0-compatible scripting language implementation written in
 MoonBit. It is designed as an embeddable interpreter with a small public API, a
 standalone command-line runner, and behavior-focused compatibility tests.
 
-The project is under active development. The current milestone covers source
-locations, lexical analysis, primitive expressions, variables, lexical block
-scope, assignment, conditionals, `while` loops, protocol-based `for` loops,
-method and getter calls, captured program output, the core class model,
-universal `toString`, range metadata getters, multiline functions with lexical closures,
-early `return`, classes, constructors, instances, fields, methods, getters, and
-`this`, inheritance, method overriding, `super`, class relationship checks,
-static members, and structured `break`/`continue` control flow. Core values
-include mutable List and Map collections, Unicode-aware String operations,
-negative indexes, range slices, MapEntry iteration, eager sequence aggregations,
-and composable lazy `map`/`where`/`skip`/`take` pipelines. Named modules,
-explicit imports, loader callbacks, module caching,
-cross-module stack traces, multi-file CLI execution, cooperative Fiber values,
-host-bound foreign methods, and host-backed foreign classes are also available.
-Fibers preserve block and loop state across suspension and can suspend through
-functions, methods, callbacks, constructors, and imported modules. Runtime
-class and method attributes, raw strings, cyclic modules, and the complete
-32-bit numeric operator surface are supported as well. A persistent embedding
-VM retains script state across host calls and provides transactional module
-reload, strong host handles, configurable resource limits, host cancellation,
-and explicit full-heap reachability collection. An optional stack-bytecode
-backend, instruction profiler/trace, transactional REPL session, verified
-module bundles, sandboxed filesystem loader, and browser playground support
-runtime development and production embedding without replacing the compatible
-tree-walking execution path. Resumable host tasks, live statement debugging,
-and portable cyclic state snapshots cover long-running service and tool hosts.
-The official Wren 0.4 `random` and `meta` optional modules are built in and do
-not require a host loader.
+The compatibility contract is deliberately narrow: run Wren 0.4.0 source with
+the documented language and core-library behavior, or embed that runtime in a
+MoonBit host through explicit loaders, foreign bindings, limits, and handles.
+MoonWren is not a drop-in replacement for Wren's C ABI, `wren_cli` operating-
+system modules, bytecode format, garbage collector, or performance profile.
+Those boundaries and the stability of optional tooling are specified in
+[`docs/project-boundary.md`](docs/project-boundary.md).
+
+The primary supported paths are:
+
+- one-shot evaluation through `run`, `run_with_loader`, and `run_modules`;
+- long-lived embedding through `Vm` with bounded resources and retained values;
+- source-file execution through the native command-line runner;
+- browser or Node.js evaluation through the generated JavaScript SDK.
+
+Everything outside those paths is classified as an optional or experimental
+surface instead of silently expanding the compatibility claim.
 
 ## Installation
 
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.8.0
+moon add wdgodghl/moonwren@0.9.2
 ```
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
@@ -62,6 +51,21 @@ calls and callbacks. The precise definition of done, exclusions, and official
 input/output comparison cases are recorded in
 [`docs/wren-0.4-conformance.md`](docs/wren-0.4-conformance.md).
 
+## Documentation map
+
+- [`docs/getting-started.md`](docs/getting-started.md): reproducible first run,
+  embedding example, expected output, and troubleshooting;
+- [`docs/project-boundary.md`](docs/project-boundary.md): supported contract,
+  stability levels, security boundary, and explicit non-goals;
+- [`docs/testing.md`](docs/testing.md): test layers, exact commands, expected
+  evidence, and what each gate does not prove;
+- [`docs/compatibility.md`](docs/compatibility.md): Wren language/core feature
+  matrix;
+- [`docs/architecture.md`](docs/architecture.md): implementation and package
+  boundaries;
+- [`docs/embedding.md`](docs/embedding.md): persistent VM, handles, foreign
+  bindings, cancellation, reload, and collection.
+
 ## Optional Wren modules
 
 `random` implements the Wren 0.4 `Random` API, including deterministic numeric
@@ -80,19 +84,21 @@ System.print(Meta.compileExpression("20 + 22").call())
 
 ## Development
 
-The project requires MoonBit `0.10.16` or newer. Release `0.9.1` is verified
+The project requires MoonBit `0.10.16` or newer. Release `0.9.2` is verified
 with MoonBit `0.10.18+6c83a7f62`.
 
 ```text
-moon check
-moon test
+moon fmt --check
+moon check --target all --deny-warn
+moon test --target all --deny-warn
 moon run cmd/main
-moon run cmd/runtime_tools_demo
-moon run cmd/benchmark --target native
-./tools/build-web-demo.ps1
-./tools/check-conformance.ps1
-./tools/check-official-suite.ps1 -WrenRoot /path/to/wren-0.4.0
+./tools/check-quality.ps1 -WrenRoot /path/to/wren-0.4.0
 ```
+
+The full command checks documentation links, release metadata, all MoonBit
+targets, the native CLI contract, the browser/Node SDK, performance smoke
+metrics, checked-in differential fixtures, and the official Wren 0.4.0 suite.
+See [`docs/testing.md`](docs/testing.md) for faster focused commands.
 
 Running the command without arguments executes the bundled summation example
 and prints `55`. Use `--eval` to execute a source string directly:

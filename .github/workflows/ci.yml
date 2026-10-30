@@ -24,12 +24,20 @@ jobs:
         run: moon update
       - name: Check formatting
         run: moon fmt --check
+      - name: Check documentation and release metadata
+        shell: pwsh
+        run: |
+          ./tools/check-doc-links.ps1
+          ./tools/check-release-metadata.ps1
       - name: Check packages
         run: moon check --target all --deny-warn
       - name: Build packages
         run: moon build
       - name: Build native CLI
         run: moon build --target native
+      - name: Run native CLI acceptance cases
+        shell: pwsh
+        run: ./tools/check-cli-acceptance.ps1
       - name: Build browser playground
         run: moon build --target js cmd/web_demo
       - name: Test browser and Node SDK
@@ -43,10 +51,17 @@ jobs:
         shell: pwsh
         run: ./tools/check-performance.ps1 -SmokeOnly
       - name: Run tests
-        run: moon test
+        run: moon test --target all --deny-warn
       - name: Compare Wren 0.4.0 fixtures
         shell: pwsh
         run: ./tools/check-conformance.ps1
       - name: Run official Wren 0.4.0 language and core suite
         shell: pwsh
-        run: ./tools/check-official-suite.ps1 -WrenRoot .official-wren
+        run: ./tools/check-official-suite.ps1 -WrenRoot .official-wren -ReportPath .tmp/official-wren-report.json
+      - name: Upload official Wren conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-wren-conformance
+          path: .tmp/official-wren-report.json
+          if-no-files-found: warn

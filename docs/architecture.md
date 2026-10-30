@@ -181,7 +181,7 @@ and `run_modules` provides a deterministic in-memory implementation. The CLI
 uses the official `moonbitlang/x` filesystem and path packages to resolve entry
 files and relative `.wren` imports.
 
-## Extension path
+## Maintenance boundary
 
 The persistent `Vm` keeps one runtime generation alive across host calls.
 Opaque `VmHandle` values form explicit strong roots and carry the runtime
@@ -190,7 +190,9 @@ Transactional reload evaluates a complete candidate module graph before
 swapping the active generation; only portable primitive globals cross that
 boundary.
 
-Future runtime work can compact non-instance registries after tracing and expose
-incremental collection policies. The current explicit pass preserves live
-identities, reuses retired instance slots, and prioritizes deterministic
-foreign-resource finalization.
+The current explicit collection pass preserves live identities, reuses retired
+instance slots, and prioritizes deterministic foreign-resource finalization.
+Maintenance work should improve this documented runtime or its verification.
+New subsystems belong only when they support a concrete use case inside the
+contract in [`project-boundary.md`](project-boundary.md); speculative extension
+points are not part of the architecture plan.
