@@ -21,8 +21,8 @@ pub(all) struct HostAccessPolicy {
   root : String
   allow_read : Bool
   allow_write : Bool
-  max_read_bytes : Int
-  max_write_bytes : Int
+  max_read_bytes : Int32
+  max_write_bytes : Int32
   environment : Array[HostEnvironmentValue]
 }
 
@@ -31,8 +31,8 @@ pub fn HostAccessPolicy::new(
   root : String,
   allow_read : Bool,
   allow_write : Bool,
-  max_read_bytes : Int,
-  max_write_bytes : Int,
+  max_read_bytes : Int32,
+  max_write_bytes : Int32,
   environment : Array[HostEnvironmentValue],
 ) -> HostAccessPolicy {
   {
@@ -114,7 +114,7 @@ fn resolve_host_path(root : String, requested : String) -> String? {
 }
 
 ///|
-fn utf8_byte_length(text : String) -> Int {
+fn utf8_byte_length(text : String) -> Int32 {
   let mut bytes = 0
   for character in text {
     let code = character.to_int()
@@ -135,7 +135,7 @@ fn utf8_byte_length(text : String) -> Int {
 ///|
 fn string_argument(
   arguments : Array[@moonwren.Value],
-  index : Int,
+  index : Int32,
   label : String,
 ) -> Result[String, String] {
   if index < 0 || index >= arguments.length() {

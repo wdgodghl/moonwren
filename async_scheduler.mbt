@@ -19,7 +19,7 @@ pub extend VmScheduledTaskStatus with Debug::{to_repr}
 ///|
 /// Result of adding a Fiber or zero-argument function to a scheduler.
 pub(all) enum VmSchedulerSpawnResult {
-  VmSchedulerSpawned(Int)
+  VmSchedulerSpawned(Int32)
   VmSchedulerSpawnFailed(Diagnostic)
 }
 
@@ -28,20 +28,20 @@ pub(all) enum VmSchedulerSpawnResult {
 /// are consumed internally; arbitrary yielded values are returned to the host.
 pub(all) enum VmSchedulerEvent {
   VmSchedulerIdle
-  VmSchedulerExternalRequest(Int, VmAsyncRequest, Array[String])
-  VmSchedulerTaskCompleted(Int, Value, Array[String])
-  VmSchedulerTaskFailed(Int, Array[Diagnostic], Array[String])
+  VmSchedulerExternalRequest(Int32, VmAsyncRequest, Array[String])
+  VmSchedulerTaskCompleted(Int32, Value, Array[String])
+  VmSchedulerTaskFailed(Int32, Array[Diagnostic], Array[String])
 }
 
 ///|
 pub struct ScheduledTaskEntry {
-  identifier : Int
+  identifier : Int32
   task : VmAsyncTask
   mut status : VmScheduledTaskStatus
   mut request : VmAsyncRequest?
   mut response : Value?
   mut wake_at : Double
-  mut joined : Array[Int]
+  mut joined : Array[Int32]
   mut race : Bool
   mut result : Value
   mut result_root : VmHandle?
@@ -57,7 +57,7 @@ pub struct VmScheduler {
   vm : Vm
   entries : Array[ScheduledTaskEntry]
   mut now_milliseconds : Double
-  max_tasks : Int
+  max_tasks : Int32
   mut closed : Bool
 }
 
@@ -65,7 +65,7 @@ pub struct VmScheduler {
 fn snapshot_scheduler_value(
   context : RuntimeContext,
   value : Value,
-  depth : Int,
+  depth : Int32,
 ) -> ForeignOwnedValue? {
   if depth > 64 {
     return None
@@ -166,7 +166,7 @@ fn scheduler_map_value(
 }
 
 ///|
-fn scheduler_task_ids(context : RuntimeContext, value : Value) -> Array[Int]? {
+fn scheduler_task_ids(context : RuntimeContext, value : Value) -> Array[Int32]? {
   match value {
     ListValue(identifier) =>
       if identifier < 0 ||
@@ -174,7 +174,7 @@ fn scheduler_task_ids(context : RuntimeContext, value : Value) -> Array[Int]? {
         !context.lists[identifier].alive {
         None
       } else {
-        let identifiers : Array[Int] = []
+        let identifiers : Array[Int32] = []
         for item in context.lists[identifier].items {
           match item {
             NumberValue(number) => identifiers.push(number.to_int())
@@ -208,7 +208,7 @@ fn Vm::new_scheduled_task(self : Vm, value : Value) -> VmAsyncTaskResult {
 
 ///|
 /// Create a scheduler with virtual time starting at zero.
-pub fn Vm::new_scheduler(self : Vm, max_tasks : Int) -> VmScheduler {
+pub fn Vm::new_scheduler(self : Vm, max_tasks : Int32) -> VmScheduler {
   {
     vm: self,
     entries: [],
@@ -292,7 +292,7 @@ pub fn VmScheduler::advance(self : VmScheduler, milliseconds : Double) -> Bool {
 ///|
 pub fn VmScheduler::status(
   self : VmScheduler,
-  task_identifier : Int,
+  task_identifier : Int32,
 ) -> VmScheduledTaskStatus? {
   if task_identifier < 0 || task_identifier >= self.entries.length() {
     None
@@ -564,7 +564,7 @@ pub fn VmScheduler::poll(self : VmScheduler) -> VmSchedulerEvent {
 /// Supply the result of an arbitrary host request yielded by a task.
 pub fn VmScheduler::deliver(
   self : VmScheduler,
-  task_identifier : Int,
+  task_identifier : Int32,
   response : Value,
 ) -> Bool {
   if self.closed ||
@@ -585,7 +585,7 @@ pub fn VmScheduler::deliver(
 /// deliver it to a suspended task.
 pub fn VmScheduler::deliver_owned(
   self : VmScheduler,
-  task_identifier : Int,
+  task_identifier : Int32,
   response : ForeignOwnedValue,
 ) -> Bool {
   if self.closed ||
@@ -605,7 +605,7 @@ pub fn VmScheduler::deliver_owned(
 }
 
 ///|
-pub fn VmScheduler::cancel(self : VmScheduler, task_identifier : Int) -> Bool {
+pub fn VmScheduler::cancel(self : VmScheduler, task_identifier : Int32) -> Bool {
   if self.closed ||
     task_identifier < 0 ||
     task_identifier >= self.entries.length() {

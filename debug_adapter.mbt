@@ -18,7 +18,7 @@ pub fn DebugAdapterSession::new() -> DebugAdapterSession {
 pub fn DebugAdapterSession::set_breakpoints(
   self : DebugAdapterSession,
   source_name : String,
-  lines : Array[Int],
+  lines : Array[Int32],
 ) -> Array[DebugBreakpoint] {
   let retained : Array[DebugBreakpoint] = []
   for breakpoint in self.breakpoints {

@@ -1,7 +1,7 @@
 ///|
 /// One operation executed by the optional stack-based bytecode backend.
 pub(all) enum BytecodeOp {
-  PushConstant(Int)
+  PushConstant(Int32)
   LoadName(String)
   DefineName(String)
   StoreName(String)
@@ -11,19 +11,19 @@ pub(all) enum BytecodeOp {
   ExitScope
   UnaryOp(UnaryOperator)
   BinaryOp(BinaryOperator)
-  BuildList(Int)
-  BuildMap(Int)
+  BuildList(Int32)
+  BuildMap(Int32)
   GetSubscript
   SetSubscript
   GetProperty(String)
   SetProperty(String)
-  InvokeMethod(String, Int)
+  InvokeMethod(String, Int32)
   EvaluateSemantic(Expr)
   ExecuteSemantic(Stmt)
-  Jump(Int)
-  JumpIfFalse(Int)
-  JumpIfFalseKeep(Int)
-  JumpIfTrueKeep(Int)
+  Jump(Int32)
+  JumpIfFalse(Int32)
+  JumpIfFalseKeep(Int32)
+  JumpIfTrueKeep(Int32)
   SetLast
   ReturnValue
   ReturnLast
@@ -65,30 +65,30 @@ pub(all) enum BytecodeCompileResult {
 
 ///|
 pub(all) enum BytecodeRunResult {
-  BytecodeCompleted(Value, Int)
-  BytecodeFailed(Diagnostic, Int)
+  BytecodeCompleted(Value, Int32)
+  BytecodeFailed(Diagnostic, Int32)
 }
 
 ///|
 /// Dynamic counters collected by the bytecode profiler.
 pub(all) struct BytecodeProfile {
   result : BytecodeRunResult
-  executed_instructions : Int
-  max_stack_depth : Int
-  loads : Int
-  stores : Int
-  branches : Int
-  arithmetic_operations : Int
-  calls : Int
-  semantic_fallbacks : Int
+  executed_instructions : Int32
+  max_stack_depth : Int32
+  loads : Int32
+  stores : Int32
+  branches : Int32
+  arithmetic_operations : Int32
+  calls : Int32
+  semantic_fallbacks : Int32
 }
 
 ///|
 /// One executed instruction captured for debugger frontends.
 pub(all) struct BytecodeTraceEvent {
-  instruction_pointer : Int
-  step : Int
-  stack_depth : Int
+  instruction_pointer : Int32
+  step : Int32
+  stack_depth : Int32
   instruction : BytecodeInstruction
 }
 
@@ -100,13 +100,13 @@ pub(all) struct BytecodeTrace {
 
 ///|
 priv struct BytecodeProfiler {
-  mut max_stack_depth : Int
-  mut loads : Int
-  mut stores : Int
-  mut branches : Int
-  mut arithmetic_operations : Int
-  mut calls : Int
-  mut semantic_fallbacks : Int
+  mut max_stack_depth : Int32
+  mut loads : Int32
+  mut stores : Int32
+  mut branches : Int32
+  mut arithmetic_operations : Int32
+  mut calls : Int32
+  mut semantic_fallbacks : Int32
   capture_trace : Bool
   events : Array[BytecodeTraceEvent]
 }
@@ -130,9 +130,9 @@ fn BytecodeProfiler::new(capture_trace : Bool) -> BytecodeProfiler {
 fn BytecodeProfiler::observe(
   self : BytecodeProfiler,
   operation : BytecodeOp,
-  stack_depth : Int,
-  instruction_pointer : Int,
-  step : Int,
+  stack_depth : Int32,
+  instruction_pointer : Int32,
+  step : Int32,
   instruction : BytecodeInstruction,
 ) -> Unit {
   if stack_depth > self.max_stack_depth {
@@ -175,14 +175,14 @@ fn BytecodeBuilder::emit(
   self : BytecodeBuilder,
   op : BytecodeOp,
   span : SourceSpan,
-) -> Int {
+) -> Int32 {
   let index = self.instructions.length()
   self.instructions.push({ op, span, })
   index
 }
 
 ///|
-fn BytecodeBuilder::constant(self : BytecodeBuilder, value : Value) -> Int {
+fn BytecodeBuilder::constant(self : BytecodeBuilder, value : Value) -> Int32 {
   let index = self.constants.length()
   self.constants.push(value)
   index
@@ -191,8 +191,8 @@ fn BytecodeBuilder::constant(self : BytecodeBuilder, value : Value) -> Int {
 ///|
 fn BytecodeBuilder::patch_jump(
   self : BytecodeBuilder,
-  index : Int,
-  target : Int,
+  index : Int32,
+  target : Int32,
 ) -> Unit {
   let instruction = self.instructions[index]
   let op = match instruction.op {
@@ -411,7 +411,7 @@ fn bytecode_failure(
   code : DiagnosticCode,
   message : String,
   span : SourceSpan,
-  steps : Int,
+  steps : Int32,
 ) -> BytecodeRunResult {
   BytecodeFailed(
     Diagnostic::new(Runtime, code, message, span).with_source("<bytecode>"),
@@ -423,7 +423,7 @@ fn bytecode_failure(
 fn pop_bytecode_value(
   stack : Array[Value],
   span : SourceSpan,
-  steps : Int,
+  steps : Int32,
 ) -> (Value?, BytecodeRunResult?) {
   match stack.pop() {
     Some(value) => (Some(value), None)
@@ -446,7 +446,7 @@ fn pop_bytecode_value(
 /// Execute compiled bytecode with a deterministic instruction budget.
 fn execute_bytecode(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
   profiler : BytecodeProfiler?,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
@@ -875,7 +875,7 @@ fn execute_bytecode(
 /// Execute compiled bytecode with a deterministic instruction budget.
 pub fn run_bytecode(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
 ) -> BytecodeRunResult {
   execute_bytecode(
     program,
@@ -893,7 +893,7 @@ pub fn run_bytecode(
 /// instructions while sharing the same environment, limits, and object heap.
 pub fn run_bytecode_with_bindings(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
   foreign_classes : Array[ForeignClassBinding],
@@ -911,7 +911,7 @@ pub fn run_bytecode_with_bindings(
 ///|
 pub fn run_bytecode_with_loader(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
   loader : (String, String) -> ModuleLoadResult,
 ) -> BytecodeRunResult {
   run_bytecode_with_bindings(program, max_steps, loader, [], [])
@@ -922,7 +922,7 @@ pub fn run_bytecode_with_loader(
 /// variable-access counters for profiling and regression analysis.
 pub fn profile_bytecode(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
 ) -> BytecodeProfile {
   let profiler = BytecodeProfiler::new(false)
   let result = execute_bytecode(
@@ -954,7 +954,7 @@ pub fn profile_bytecode(
 /// debugger UIs can filter events by `instruction.span.line()` for breakpoints.
 pub fn trace_bytecode(
   program : BytecodeProgram,
-  max_steps : Int,
+  max_steps : Int32,
 ) -> BytecodeTrace {
   let profiler = BytecodeProfiler::new(true)
   let result = execute_bytecode(
@@ -985,7 +985,7 @@ pub fn disassemble_bytecode(program : BytecodeProgram) -> Array[String] {
 
 ///|
 /// Compile and execute source through the optional bytecode backend.
-pub fn run_compiled(source : String, max_steps : Int) -> BytecodeRunResult {
+pub fn run_compiled(source : String, max_steps : Int32) -> BytecodeRunResult {
   match compile_bytecode(source) {
     BytecodeCompiled(program) => run_bytecode(program, max_steps)
     BytecodeCompileFailed(issues) => BytecodeFailed(issues[0], 0)

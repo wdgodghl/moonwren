@@ -75,7 +75,7 @@ fn standard_module_source(name : String) -> String? {
 ///|
 priv struct StandardJsonParser {
   characters : Array[Char]
-  mut cursor : Int
+  mut cursor : Int32
   mut failure : String?
 }
 
@@ -107,7 +107,10 @@ fn StandardJsonParser::fail(
 }
 
 ///|
-fn StandardJsonParser::take(self : StandardJsonParser, expected : Int) -> Bool {
+fn StandardJsonParser::take(
+  self : StandardJsonParser,
+  expected : Int32,
+) -> Bool {
   if self.cursor < self.characters.length() &&
     self.characters[self.cursor].to_int() == expected {
     self.cursor = self.cursor + 1
@@ -136,7 +139,7 @@ fn StandardJsonParser::literal(
 }
 
 ///|
-fn standard_hex_digit(code : Int) -> Int? {
+fn standard_hex_digit(code : Int32) -> Int32? {
   if code >= 48 && code <= 57 {
     Some(code - 48)
   } else if code >= 65 && code <= 70 {
@@ -149,7 +152,7 @@ fn standard_hex_digit(code : Int) -> Int? {
 }
 
 ///|
-fn StandardJsonParser::unicode_escape(self : StandardJsonParser) -> Int? {
+fn StandardJsonParser::unicode_escape(self : StandardJsonParser) -> Int32? {
   if self.cursor + 4 > self.characters.length() {
     return None
   }
@@ -171,7 +174,7 @@ fn StandardJsonParser::string(self : StandardJsonParser) -> String? {
   if !self.take(34) {
     return None
   }
-  let bytes : Array[Int] = []
+  let bytes : Array[Int32] = []
   while self.cursor < self.characters.length() {
     let code = self.characters[self.cursor].to_int()
     self.cursor = self.cursor + 1
@@ -416,7 +419,7 @@ fn parse_standard_json(text : String) -> Result[ForeignOwnedValue, String] {
 ///|
 fn standard_string_argument(
   call : ForeignCallContext,
-  index : Int,
+  index : Int32,
   label : String,
 ) -> Result[String, String] {
   match call.argument(index) {
@@ -431,7 +434,7 @@ fn standard_string_argument(
 }
 
 ///|
-fn url_unreserved(byte : Int) -> Bool {
+fn url_unreserved(byte : Int32) -> Bool {
   (byte >= 65 && byte <= 90) ||
   (byte >= 97 && byte <= 122) ||
   (byte >= 48 && byte <= 57) ||
@@ -556,7 +559,7 @@ fn append_standard_module_bindings(
         let bytes = @base64.decode(text) catch {
           _ => return ForeignContextAborted("invalid Base64 text")
         }
-        let raw : Array[Int] = []
+        let raw : Array[Int32] = []
         for byte in bytes {
           raw.push(byte.to_int())
         }

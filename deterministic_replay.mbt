@@ -1,8 +1,8 @@
 ///|
 pub(all) enum SchedulerReplayEvent {
   ReplayAdvance(Double)
-  ReplayDeliver(Int, ForeignOwnedValue)
-  ReplayCancel(Int)
+  ReplayDeliver(Int32, ForeignOwnedValue)
+  ReplayCancel(Int32)
   ReplayObserve(String)
 }
 
@@ -14,8 +14,8 @@ pub(all) struct SchedulerReplayLog {
 
 ///|
 pub(all) enum SchedulerReplayResult {
-  SchedulerReplayCompleted(Int)
-  SchedulerReplayDiverged(Int, String, String)
+  SchedulerReplayCompleted(Int32)
+  SchedulerReplayDiverged(Int32, String, String)
   SchedulerReplayInvalid(String)
 }
 
@@ -184,7 +184,7 @@ pub fn VmSchedulerRecorder::poll(
 ///|
 pub fn VmSchedulerRecorder::deliver(
   self : VmSchedulerRecorder,
-  task_identifier : Int,
+  task_identifier : Int32,
   response : ForeignOwnedValue,
 ) -> Bool {
   if encode_owned_value(response) is None {
@@ -201,7 +201,7 @@ pub fn VmSchedulerRecorder::deliver(
 ///|
 pub fn VmSchedulerRecorder::cancel(
   self : VmSchedulerRecorder,
-  task_identifier : Int,
+  task_identifier : Int32,
 ) -> Bool {
   if self.scheduler.cancel(task_identifier) {
     self.events.push(ReplayCancel(task_identifier))
@@ -289,11 +289,11 @@ pub fn encode_scheduler_replay_log(log : SchedulerReplayLog) -> String? {
 ///|
 priv struct ReplayReader {
   characters : Array[Char]
-  mut cursor : Int
+  mut cursor : Int32
 }
 
 ///|
-fn ReplayReader::number(self : ReplayReader) -> Int? {
+fn ReplayReader::number(self : ReplayReader) -> Int32? {
   let value = archive_read_number(self.characters, self.cursor)
   match value {
     Some((number, next)) => {
@@ -364,7 +364,7 @@ fn decode_owned_value(encoded : String) -> ForeignOwnedValue? {
         Some(value) => value
         None => return None
       }
-      let bytes : Array[Int] = []
+      let bytes : Array[Int32] = []
       for _index = 0; _index < count; _index = _index + 1 {
         let byte = match reader.number() {
           Some(value) => value

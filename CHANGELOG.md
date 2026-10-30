@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-30
+
+- raise the minimum supported MoonBit compiler to 0.10.16 and verify the
+  project and CI with MoonBit 0.10.18+6c83a7f62.
+
 ## 0.9.0 - 2026-10-29
 
 - add context-aware foreign bindings that safely materialize nested List, Map,

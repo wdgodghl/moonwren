@@ -80,7 +80,8 @@ System.print(Meta.compileExpression("20 + 22").call())
 
 ## Development
 
-The project requires MoonBit `0.10.14` or newer.
+The project requires MoonBit `0.10.16` or newer. Release `0.9.1` is verified
+with MoonBit `0.10.18+6c83a7f62`.
 
 ```text
 moon check

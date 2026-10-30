@@ -13,11 +13,11 @@ pub fn sha256_hex(text : String) -> String {
   for shift = 56; shift >= 0; shift = shift - 8 {
     bytes.push((bit_length >> shift).to_byte())
   }
-  let state : Array[UInt] = [
+  let state : Array[UInt32] = [
     0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU, 0x510e527fU, 0x9b05688cU,
     0x1f83d9abU, 0x5be0cd19U,
   ]
-  let constants : Array[UInt] = [
+  let constants : Array[UInt32] = [
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U,
     0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
     0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U, 0xe49b69c1U, 0xefbe4786U,
@@ -95,7 +95,7 @@ pub fn sha256_hex(text : String) -> String {
 }
 
 ///|
-fn rotate_right(value : UInt, count : Int) -> UInt {
+fn rotate_right(value : UInt32, count : Int32) -> UInt32 {
   (value >> count) | (value << (32 - count))
 }
 
@@ -106,8 +106,8 @@ fn rotate_right(value : UInt, count : Int) -> UInt {
 pub(all) struct CompiledModuleMetadata {
   name : String
   source_sha256 : String
-  instruction_count : Int
-  semantic_instruction_count : Int
+  instruction_count : Int32
+  semantic_instruction_count : Int32
 } derive(Eq, Debug)
 
 ///|
@@ -118,7 +118,7 @@ pub extend CompiledModuleMetadata with Debug::{to_repr}
 
 ///|
 pub(all) struct DeploymentManifest {
-  format_version : Int
+  format_version : Int32
   wren_version : String
   compiler_abi : String
   entry_module : String
@@ -144,8 +144,8 @@ pub(all) enum DeploymentBundleResult {
 ///|
 fn deployment_read_text(
   characters : Array[Char],
-  start : Int,
-) -> (String, Int)? {
+  start : Int32,
+) -> (String, Int32)? {
   let (length, after_length) = match archive_read_number(characters, start) {
     Some(value) => value
     None => return None

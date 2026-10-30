@@ -1,15 +1,15 @@
 ///|
 pub(all) struct VmPoolConfig {
-  size : Int
-  max_uses_per_vm : Int
-  max_leases_per_tenant : Int
+  size : Int32
+  max_uses_per_vm : Int32
+  max_leases_per_tenant : Int32
   reset_on_release : Bool
 }
 
 ///|
 pub fn VmPoolConfig::isolated(
-  size : Int,
-  max_leases_per_tenant : Int,
+  size : Int32,
+  max_leases_per_tenant : Int32,
 ) -> VmPoolConfig {
   {
     size: if size > 0 {
@@ -29,9 +29,9 @@ pub fn VmPoolConfig::isolated(
 
 ///|
 pub fn VmPoolConfig::new(
-  size : Int,
-  max_uses_per_vm : Int,
-  max_leases_per_tenant : Int,
+  size : Int32,
+  max_uses_per_vm : Int32,
+  max_leases_per_tenant : Int32,
   reset_on_release : Bool,
 ) -> VmPoolConfig {
   {
@@ -56,9 +56,9 @@ pub fn VmPoolConfig::new(
 
 ///|
 pub struct VmPoolLease {
-  pool_identity : Int
-  entry_index : Int
-  token : Int
+  pool_identity : Int32
+  entry_index : Int32
+  token : Int32
   tenant : String
 }
 
@@ -76,20 +76,20 @@ pub(all) enum VmPoolUseResult[T] {
 
 ///|
 pub(all) struct VmPoolStats {
-  capacity : Int
-  active : Int
-  created : Int
-  recycled : Int
-  acquisitions : Int
-  rejections : Int
+  capacity : Int32
+  active : Int32
+  created : Int32
+  recycled : Int32
+  acquisitions : Int32
+  rejections : Int32
 }
 
 ///|
 pub struct VmPoolEntry {
   mut vm : Vm
   mut busy : Bool
-  mut token : Int
-  mut uses : Int
+  mut token : Int32
+  mut uses : Int32
   mut tenant : String?
 }
 
@@ -101,16 +101,16 @@ let vm_pool_identities : Array[Unit] = []
 /// every release. The isolated configuration is the safe default for mutually
 /// untrusted tenants.
 pub struct VmPool {
-  identity : Int
+  identity : Int32
   config : VmPoolConfig
   factory : () -> Vm
   entries : Array[VmPoolEntry]
   mut closed : Bool
-  mut next_token : Int
-  mut created : Int
-  mut recycled : Int
-  mut acquisitions : Int
-  mut rejections : Int
+  mut next_token : Int32
+  mut created : Int32
+  mut recycled : Int32
+  mut acquisitions : Int32
+  mut rejections : Int32
 }
 
 ///|
@@ -142,7 +142,7 @@ pub fn VmPool::new(config : VmPoolConfig, factory : () -> Vm) -> VmPool {
 }
 
 ///|
-fn VmPool::active_for_tenant(self : VmPool, tenant : String) -> Int {
+fn VmPool::active_for_tenant(self : VmPool, tenant : String) -> Int32 {
   let mut active = 0
   for entry in self.entries {
     if entry.busy && entry.tenant == Some(tenant) {

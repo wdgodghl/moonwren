@@ -3,14 +3,14 @@
 pub(all) struct FileLoaderConfig {
   root : String
   extension : String
-  max_source_characters : Int
+  max_source_characters : Int32
 }
 
 ///|
 pub fn FileLoaderConfig::new(
   root : String,
   extension : String,
-  max_source_characters : Int,
+  max_source_characters : Int32,
 ) -> FileLoaderConfig {
   { root, extension, max_source_characters, }
 }

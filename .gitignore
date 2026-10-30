@@ -1,5 +1,6 @@
 .DS_Store
 _build/
+**/pkg.generated.mbti
 target/
 target
 .mooncakes/

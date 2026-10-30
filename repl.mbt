@@ -10,12 +10,12 @@ pub(all) enum ReplResult {
 /// submissions leave the session unchanged.
 pub struct ReplSession {
   mut history : String
-  mut prior_output_lines : Int
-  max_steps : Int
+  mut prior_output_lines : Int32
+  max_steps : Int32
 }
 
 ///|
-pub fn ReplSession::new(max_steps : Int) -> ReplSession {
+pub fn ReplSession::new(max_steps : Int32) -> ReplSession {
   { history: "", prior_output_lines: 0, max_steps, }
 }
 

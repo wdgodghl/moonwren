@@ -8,7 +8,7 @@ pub(all) enum VmStateSaveResult {
 ///|
 /// Result of atomically restoring globals from a portable state archive.
 pub(all) enum VmStateRestoreResult {
-  VmStateRestored(Int)
+  VmStateRestored(Int32)
   VmStateRestoreFailed(Diagnostic)
 }
 
@@ -18,16 +18,16 @@ priv enum StateNode {
   StateBool(Bool)
   StateNumber(String)
   StateString(String)
-  StateRawString(Array[Int])
+  StateRawString(Array[Int32])
   StateRange(String, String, Bool)
-  StateList(Array[Int])
-  StateMap(Array[(Int, Int)])
+  StateList(Array[Int32])
+  StateMap(Array[(Int32, Int32)])
 }
 
 ///|
 priv struct StateRoot {
   name : String
-  node : Int
+  node : Int32
 }
 
 ///|
@@ -41,15 +41,15 @@ priv struct StateDocument {
 priv struct StateBuilder {
   context : RuntimeContext
   nodes : Array[StateNode]
-  list_runtime_ids : Array[Int]
-  list_node_ids : Array[Int]
-  map_runtime_ids : Array[Int]
-  map_node_ids : Array[Int]
+  list_runtime_ids : Array[Int32]
+  list_node_ids : Array[Int32]
+  map_runtime_ids : Array[Int32]
+  map_node_ids : Array[Int32]
 }
 
 ///|
 priv enum StateNodeResult {
-  StateNodeEncoded(Int)
+  StateNodeEncoded(Int32)
   StateNodeFailed(String)
 }
 
@@ -67,10 +67,10 @@ fn state_field(text : String) -> String {
 
 ///|
 fn state_find_runtime(
-  runtime_ids : Array[Int],
-  node_ids : Array[Int],
-  identifier : Int,
-) -> Int? {
+  runtime_ids : Array[Int32],
+  node_ids : Array[Int32],
+  identifier : Int32,
+) -> Int32? {
   for index = 0; index < runtime_ids.length(); index = index + 1 {
     if runtime_ids[index] == identifier {
       return Some(node_ids[index])
@@ -80,7 +80,7 @@ fn state_find_runtime(
 }
 
 ///|
-fn state_bytes_text(bytes : Array[Int]) -> String {
+fn state_bytes_text(bytes : Array[Int32]) -> String {
   let digits = "0123456789abcdef"
   let mut text = ""
   for byte in bytes {
@@ -120,7 +120,7 @@ fn StateBuilder::encode_value(
       StateNodeEncoded(node)
     }
     RawStringValue(bytes) => {
-      let copied : Array[Int] = []
+      let copied : Array[Int32] = []
       for byte in bytes {
         copied.push(byte)
       }
@@ -152,7 +152,7 @@ fn StateBuilder::encode_value(
       self.nodes.push(StateNull)
       self.list_runtime_ids.push(identifier)
       self.list_node_ids.push(node)
-      let children : Array[Int] = []
+      let children : Array[Int32] = []
       let items = self.context.lists[identifier].items
       for index = 0; index < items.length(); index = index + 1 {
         match self.encode_value(items[index], "\{path}[\{index}]") {
@@ -178,7 +178,7 @@ fn StateBuilder::encode_value(
       self.nodes.push(StateNull)
       self.map_runtime_ids.push(identifier)
       self.map_node_ids.push(node)
-      let children : Array[(Int, Int)] = []
+      let children : Array[(Int32, Int32)] = []
       let entries = self.context.maps[identifier].entries
       for index = 0; index < entries.length(); index = index + 1 {
         let key = match
@@ -320,7 +320,7 @@ fn save_context_state(
 ///|
 priv struct StateReader {
   characters : Array[Char]
-  mut cursor : Int
+  mut cursor : Int32
 }
 
 ///|
@@ -340,7 +340,7 @@ fn StateReader::field(self : StateReader) -> String? {
 }
 
 ///|
-fn state_parse_nat(text : String) -> Int? {
+fn state_parse_nat(text : String) -> Int32? {
   if text.length() == 0 {
     return None
   }
@@ -356,7 +356,7 @@ fn state_parse_nat(text : String) -> Int? {
 }
 
 ///|
-fn StateReader::natural(self : StateReader) -> Int? {
+fn StateReader::natural(self : StateReader) -> Int32? {
   match self.field() {
     Some(text) => state_parse_nat(text)
     None => None
@@ -364,7 +364,7 @@ fn StateReader::natural(self : StateReader) -> Int? {
 }
 
 ///|
-fn state_hex_value(code : Int) -> Int? {
+fn state_hex_value(code : Int32) -> Int32? {
   if code >= 48 && code <= 57 {
     Some(code - 48)
   } else if code >= 97 && code <= 102 {
@@ -375,12 +375,12 @@ fn state_hex_value(code : Int) -> Int? {
 }
 
 ///|
-fn state_parse_bytes(text : String) -> Array[Int]? {
+fn state_parse_bytes(text : String) -> Array[Int32]? {
   let characters = text.to_array()
   if characters.length() % 2 != 0 {
     return None
   }
-  let bytes : Array[Int] = []
+  let bytes : Array[Int32] = []
   for index = 0; index < characters.length(); index = index + 2 {
     let high = match state_hex_value(characters[index].to_int()) {
       Some(value) => value
@@ -474,7 +474,7 @@ fn decode_state_node(record : String) -> StateNode? {
       if count > rest.length() {
         return None
       }
-      let children : Array[Int] = []
+      let children : Array[Int32] = []
       for child_index = 0; child_index < count; child_index = child_index + 1 {
         match reader.natural() {
           Some(child) => children.push(child)
@@ -491,7 +491,7 @@ fn decode_state_node(record : String) -> StateNode? {
       if count > rest.length() {
         return None
       }
-      let children : Array[(Int, Int)] = []
+      let children : Array[(Int32, Int32)] = []
       for child_index = 0; child_index < count; child_index = child_index + 1 {
         let key = match reader.natural() {
           Some(value) => value

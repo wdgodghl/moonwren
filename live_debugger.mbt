@@ -2,13 +2,13 @@
 /// A source breakpoint for the live tree-walking interpreter.
 pub(all) struct DebugBreakpoint {
   source_name : String
-  line : Int
+  line : Int32
 }
 
 ///|
 pub fn DebugBreakpoint::new(
   source_name : String,
-  line : Int,
+  line : Int32,
 ) -> DebugBreakpoint {
   { source_name, line, }
 }
@@ -25,7 +25,7 @@ pub(all) struct DebugVariable {
 pub(all) struct DebugSnapshot {
   source_name : String
   span : SourceSpan
-  call_depth : Int
+  call_depth : Int32
   variables : Array[DebugVariable]
 }
 
@@ -43,15 +43,15 @@ pub(all) enum DebugCommand {
 priv struct RuntimeDebugger {
   breakpoints : Array[DebugBreakpoint]
   hook : (DebugSnapshot) -> DebugCommand
-  mut mode : Int
-  mut target_depth : Int
+  mut mode : Int32
+  mut target_depth : Int32
 }
 
 ///|
 fn debug_breakpoint_matches(
   breakpoints : Array[DebugBreakpoint],
   source_name : String,
-  line : Int,
+  line : Int32,
 ) -> Bool {
   for breakpoint in breakpoints {
     if breakpoint.source_name == source_name && breakpoint.line == line {

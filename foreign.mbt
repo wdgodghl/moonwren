@@ -14,7 +14,7 @@ pub(all) enum ForeignOwnedValue {
   ForeignBool(Bool)
   ForeignNumber(Double)
   ForeignString(String)
-  ForeignBytes(Array[Int])
+  ForeignBytes(Array[Int32])
   ForeignRange(Double, Double, Bool)
   ForeignList(Array[ForeignOwnedValue])
   ForeignMap(Array[ForeignOwnedMapEntry])
@@ -49,14 +49,14 @@ pub fn ForeignCallContext::receiver(self : ForeignCallContext) -> Value {
 }
 
 ///|
-pub fn ForeignCallContext::argument_count(self : ForeignCallContext) -> Int {
+pub fn ForeignCallContext::argument_count(self : ForeignCallContext) -> Int32 {
   self.arguments.length()
 }
 
 ///|
 pub fn ForeignCallContext::argument(
   self : ForeignCallContext,
-  index : Int,
+  index : Int32,
 ) -> Value? {
   if index < 0 || index >= self.arguments.length() {
     None
@@ -80,7 +80,7 @@ pub(all) enum ForeignContextResult {
 /// Result returned while allocating the host-owned state of a foreign object.
 /// The integer is an opaque handle chosen and managed by the embedding host.
 pub(all) enum ForeignAllocationResult {
-  ForeignAllocationSucceeded(Int)
+  ForeignAllocationSucceeded(Int32)
   ForeignAllocationFailed(String)
 }
 
@@ -90,7 +90,7 @@ pub struct ForeignClassBinding {
   module_name : String
   class_name : String
   allocate : (Array[Value]) -> ForeignAllocationResult
-  finalize : (Int) -> Unit
+  finalize : (Int32) -> Unit
 }
 
 ///|
@@ -98,7 +98,7 @@ pub fn ForeignClassBinding::new(
   module_name : String,
   class_name : String,
   allocate : (Array[Value]) -> ForeignAllocationResult,
-  finalize : (Int) -> Unit,
+  finalize : (Int32) -> Unit,
 ) -> ForeignClassBinding {
   { module_name, class_name, allocate, finalize, }
 }
@@ -123,7 +123,7 @@ fn ForeignClassBinding::allocate(
 ///|
 fn ForeignClassBinding::finalize(
   self : ForeignClassBinding,
-  handle : Int,
+  handle : Int32,
 ) -> Unit {
   (self.finalize)(handle)
 }
@@ -136,9 +136,9 @@ pub struct ForeignMethodBinding {
   is_static : Bool
   signature : String
   callback : ((Value, Array[Value]) -> ForeignCallResult)?
-  handle_callback : ((Int, Array[Value]) -> ForeignCallResult)?
+  handle_callback : ((Int32, Array[Value]) -> ForeignCallResult)?
   context_callback : ((ForeignCallContext) -> ForeignContextResult)?
-  handle_context_callback : ((Int, ForeignCallContext) -> ForeignContextResult)?
+  handle_context_callback : ((Int32, ForeignCallContext) -> ForeignContextResult)?
 }
 
 ///|
@@ -168,7 +168,7 @@ pub fn ForeignMethodBinding::new_for_foreign_class(
   module_name : String,
   class_name : String,
   signature : String,
-  callback : (Int, Array[Value]) -> ForeignCallResult,
+  callback : (Int32, Array[Value]) -> ForeignCallResult,
 ) -> ForeignMethodBinding {
   {
     module_name,
@@ -211,7 +211,7 @@ pub fn ForeignMethodBinding::new_context_for_foreign_class(
   module_name : String,
   class_name : String,
   signature : String,
-  callback : (Int, ForeignCallContext) -> ForeignContextResult,
+  callback : (Int32, ForeignCallContext) -> ForeignContextResult,
 ) -> ForeignMethodBinding {
   {
     module_name,
@@ -254,7 +254,7 @@ fn ForeignMethodBinding::call(
 ///|
 fn ForeignMethodBinding::call_handle(
   self : ForeignMethodBinding,
-  handle : Int,
+  handle : Int32,
   arguments : Array[Value],
 ) -> ForeignCallResult {
   match self.handle_callback {
@@ -288,7 +288,7 @@ fn ForeignMethodBinding::call_context(
 ///|
 fn ForeignMethodBinding::call_handle_context(
   self : ForeignMethodBinding,
-  handle : Int,
+  handle : Int32,
   receiver : Value,
   arguments : Array[Value],
 ) -> ForeignContextResult {

@@ -7,12 +7,12 @@ pub(all) enum ProgramRunResult {
 ///|
 /// Per-operation resource limits for a persistent `Vm`.
 pub(all) struct VmLimits {
-  max_steps : Int
-  max_call_depth : Int
-  max_output_characters : Int
-  max_modules : Int
-  max_objects : Int
-  max_source_characters : Int
+  max_steps : Int32
+  max_call_depth : Int32
+  max_output_characters : Int32
+  max_modules : Int32
+  max_objects : Int32
+  max_source_characters : Int32
 }
 
 ///|
@@ -20,26 +20,26 @@ pub(all) struct VmLimits {
 /// never interrupts a running Wren call, so temporary host return values remain
 /// valid until the next VM operation unless retained with a handle.
 pub(all) struct VmGcPolicy {
-  minimum_objects : Int
-  growth_percent : Int
+  minimum_objects : Int32
+  growth_percent : Int32
 }
 
 ///|
 pub fn VmGcPolicy::new(
-  minimum_objects : Int,
-  growth_percent : Int,
+  minimum_objects : Int32,
+  growth_percent : Int32,
 ) -> VmGcPolicy {
   { minimum_objects, growth_percent, }
 }
 
 ///|
 pub fn VmLimits::new(
-  max_steps : Int,
-  max_call_depth : Int,
-  max_output_characters : Int,
-  max_modules : Int,
-  max_objects : Int,
-  max_source_characters : Int,
+  max_steps : Int32,
+  max_call_depth : Int32,
+  max_output_characters : Int32,
+  max_modules : Int32,
+  max_objects : Int32,
+  max_source_characters : Int32,
 ) -> VmLimits {
   {
     max_steps,
@@ -53,16 +53,16 @@ pub fn VmLimits::new(
 
 ///|
 /// Limits suitable for ordinary embedded scripts.
-pub fn VmLimits::standard(max_steps : Int) -> VmLimits {
+pub fn VmLimits::standard(max_steps : Int32) -> VmLimits {
   VmLimits::new(max_steps, 64, 1000000, 1024, 1000000, 10000000)
 }
 
 ///|
 /// An opaque strong root owned by a persistent VM.
 pub struct VmHandle {
-  vm_identity : Int
-  identifier : Int
-  generation : Int
+  vm_identity : Int32
+  identifier : Int32
+  generation : Int32
 }
 
 ///|
@@ -75,7 +75,7 @@ pub(all) enum VmHandleResult {
 /// Internal strong-root entry retained by a `Vm`.
 pub struct VmHandleEntry {
   value : Value
-  generation : Int
+  generation : Int32
   mut alive : Bool
 }
 
@@ -100,12 +100,12 @@ priv struct PreservedBinding {
 /// foreign objects remain alive across host calls until `close` or a successful
 /// transactional reload replaces the runtime generation.
 pub struct Vm {
-  identity : Int
-  context_identifier : Int
+  identity : Int32
+  context_identifier : Int32
   mut sources : Array[ModuleSource]
   roots : Array[String]
   handles : Array[VmHandleEntry]
-  mut generation : Int
+  mut generation : Int32
   mut closed : Bool
   limits : VmLimits
   fallback_loader : (String, String) -> ModuleLoadResult
@@ -113,9 +113,9 @@ pub struct Vm {
   foreign_classes : Array[ForeignClassBinding]
   should_cancel : () -> Bool
   mut automatic_gc : Bool
-  mut gc_minimum_objects : Int
-  mut gc_growth_percent : Int
-  mut next_gc_objects : Int
+  mut gc_minimum_objects : Int32
+  mut gc_growth_percent : Int32
+  mut next_gc_objects : Int32
   mut last_gc_stats : VmGcStats?
 }
 
@@ -168,7 +168,7 @@ fn copy_foreign_classes(
 }
 
 ///|
-fn find_source_index(sources : Array[ModuleSource], name : String) -> Int? {
+fn find_source_index(sources : Array[ModuleSource], name : String) -> Int32? {
   for index = 0; index < sources.length(); index = index + 1 {
     if sources[index].name == name {
       return Some(index)
@@ -851,7 +851,7 @@ fn invalid_execution_limit(source_name : String) -> ProgramRunResult {
 pub fn run_with_loader(
   source_name : String,
   source : String,
-  max_steps : Int,
+  max_steps : Int32,
   loader : (String, String) -> ModuleLoadResult,
 ) -> ProgramRunResult {
   run_with_foreign_bindings(source_name, source, max_steps, loader, [], [])
@@ -863,7 +863,7 @@ pub fn run_with_loader(
 pub fn run_with_foreign_methods(
   source_name : String,
   source : String,
-  max_steps : Int,
+  max_steps : Int32,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
 ) -> ProgramRunResult {
@@ -883,7 +883,7 @@ pub fn run_with_foreign_methods(
 pub fn run_with_foreign_bindings(
   source_name : String,
   source : String,
-  max_steps : Int,
+  max_steps : Int32,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
   foreign_classes : Array[ForeignClassBinding],
@@ -918,7 +918,7 @@ fn find_module_source(modules : Array[ModuleSource], name : String) -> String? {
 pub fn run_modules(
   entry_name : String,
   modules : Array[ModuleSource],
-  max_steps : Int,
+  max_steps : Int32,
 ) -> ProgramRunResult {
   let entry_source = match find_module_source(modules, entry_name) {
     Some(source) => source
@@ -946,7 +946,7 @@ pub fn run_modules(
 
 ///|
 /// Run a source file with a configurable guard against unbounded loops.
-pub fn run_with_limit(source : String, max_steps : Int) -> ProgramRunResult {
+pub fn run_with_limit(source : String, max_steps : Int32) -> ProgramRunResult {
   run_with_loader("<source>", source, max_steps, fn(_, name) {
     ModuleLoadFailed("module '\{name}' is not available")
   })

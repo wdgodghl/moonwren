@@ -60,7 +60,7 @@ fn file_loader(
 fn print_result(
   result : @moonwren.ProgramRunResult,
   fallback_source : String,
-) -> Int {
+) -> Int32 {
   match result {
     ProgramCompleted(_, output) => {
       for line in output {

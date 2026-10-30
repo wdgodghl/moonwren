@@ -15,12 +15,12 @@ priv struct Lexer {
   source : String
   tokens : Array[Token]
   diagnostics : Array[Diagnostic]
-  mut start : Int
-  mut current : Int
-  mut start_line : Int
-  mut start_column : Int
-  mut line : Int
-  mut column : Int
+  mut start : Int32
+  mut current : Int32
+  mut start_line : Int32
+  mut start_column : Int32
+  mut line : Int32
+  mut column : Int32
 }
 
 ///|
@@ -72,7 +72,7 @@ fn Lexer::lexeme(self : Lexer) -> String {
 }
 
 ///|
-fn Lexer::peek(self : Lexer) -> Int {
+fn Lexer::peek(self : Lexer) -> Int32 {
   if self.at_end() {
     -1
   } else {
@@ -81,7 +81,7 @@ fn Lexer::peek(self : Lexer) -> Int {
 }
 
 ///|
-fn Lexer::peek_next(self : Lexer) -> Int {
+fn Lexer::peek_next(self : Lexer) -> Int32 {
   if self.current + 1 >= self.source.length() {
     -1
   } else {
@@ -90,7 +90,7 @@ fn Lexer::peek_next(self : Lexer) -> Int {
 }
 
 ///|
-fn Lexer::advance(self : Lexer) -> Int {
+fn Lexer::advance(self : Lexer) -> Int32 {
   let code = self.source.unsafe_get(self.current).to_int()
   self.current = self.current + 1
   self.column = self.column + 1
@@ -105,7 +105,7 @@ fn Lexer::consume_newline(self : Lexer) -> Unit {
 }
 
 ///|
-fn Lexer::matches(self : Lexer, expected : Int) -> Bool {
+fn Lexer::matches(self : Lexer, expected : Int32) -> Bool {
   if self.peek() != expected {
     false
   } else {
@@ -125,17 +125,17 @@ fn Lexer::report(self : Lexer, code : DiagnosticCode, message : String) -> Unit 
 }
 
 ///|
-fn is_digit(code : Int) -> Bool {
+fn is_digit(code : Int32) -> Bool {
   code >= 48 && code <= 57
 }
 
 ///|
-fn is_hex_digit(code : Int) -> Bool {
+fn is_hex_digit(code : Int32) -> Bool {
   is_digit(code) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102)
 }
 
 ///|
-fn is_alpha(code : Int) -> Bool {
+fn is_alpha(code : Int32) -> Bool {
   (code >= 65 && code <= 90) ||
   (code >= 97 && code <= 122) ||
   code == 95 ||
@@ -143,7 +143,7 @@ fn is_alpha(code : Int) -> Bool {
 }
 
 ///|
-fn is_alpha_numeric(code : Int) -> Bool {
+fn is_alpha_numeric(code : Int32) -> Bool {
   is_alpha(code) || is_digit(code)
 }
 
@@ -192,7 +192,7 @@ fn Lexer::decimal_tail(self : Lexer) -> Unit {
 }
 
 ///|
-fn Lexer::number(self : Lexer, first : Int) -> Unit {
+fn Lexer::number(self : Lexer, first : Int32) -> Unit {
   if first == 48 && (self.peek() == 120 || self.peek() == 88) {
     ignore(self.advance())
     let digits_start = self.current
@@ -212,7 +212,7 @@ fn Lexer::number(self : Lexer, first : Int) -> Unit {
 }
 
 ///|
-fn valid_escape(code : Int) -> Bool {
+fn valid_escape(code : Int32) -> Bool {
   code == 34 ||
   code == 37 ||
   code == 48 ||

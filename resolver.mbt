@@ -5,13 +5,13 @@ priv struct Resolver {
   scopes : Array[Array[String]]
   globals : Array[String]
   forward_references : Array[String]
-  mut function_depth : Int
-  mut loop_depth : Int
-  mut class_depth : Int
+  mut function_depth : Int32
+  mut loop_depth : Int32
+  mut class_depth : Int32
   mut in_static_method : Bool
   mut in_constructor : Bool
   mut in_foreign_class : Bool
-  mut local_count : Int
+  mut local_count : Int32
 }
 
 ///|

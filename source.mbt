@@ -1,9 +1,9 @@
 ///|
 /// A one-based location in a source file.
 pub(all) struct SourcePosition {
-  offset : Int
-  line : Int
-  column : Int
+  offset : Int32
+  line : Int32
+  column : Int32
 } derive(Eq, Debug)
 
 ///|
@@ -42,16 +42,16 @@ pub fn SourceSpan::merge(first : SourceSpan, second : SourceSpan) -> SourceSpan 
 }
 
 ///|
-pub fn SourceSpan::line(self : SourceSpan) -> Int {
+pub fn SourceSpan::line(self : SourceSpan) -> Int32 {
   self.start.line
 }
 
 ///|
-pub fn SourceSpan::column(self : SourceSpan) -> Int {
+pub fn SourceSpan::column(self : SourceSpan) -> Int32 {
   self.start.column
 }
 
 ///|
-pub fn SourceSpan::length(self : SourceSpan) -> Int {
+pub fn SourceSpan::length(self : SourceSpan) -> Int32 {
   self.end.offset - self.start.offset
 }

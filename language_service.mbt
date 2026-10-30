@@ -77,7 +77,7 @@ pub(all) struct LanguageDocument {
 }
 
 ///|
-fn span_contains_offset(span : SourceSpan, offset : Int) -> Bool {
+fn span_contains_offset(span : SourceSpan, offset : Int32) -> Bool {
   offset >= span.start.offset && offset < span.end.offset
 }
 
@@ -357,7 +357,7 @@ pub fn LanguageDocument::new(
 ///|
 pub fn LanguageDocument::token_at(
   self : LanguageDocument,
-  offset : Int,
+  offset : Int32,
 ) -> Token? {
   for token in self.tokens {
     if span_contains_offset(token.span, offset) ||
@@ -402,7 +402,7 @@ pub fn LanguageDocument::completions(
 ///|
 pub fn LanguageDocument::hover(
   self : LanguageDocument,
-  offset : Int,
+  offset : Int32,
 ) -> LanguageHover? {
   let token = match self.token_at(offset) {
     Some(value) => value
@@ -431,7 +431,7 @@ pub fn LanguageDocument::hover(
 ///|
 pub fn LanguageDocument::definition(
   self : LanguageDocument,
-  offset : Int,
+  offset : Int32,
 ) -> LanguageLocation? {
   let token = match self.token_at(offset) {
     Some(value) => value
@@ -448,7 +448,7 @@ pub fn LanguageDocument::definition(
 ///|
 pub fn LanguageDocument::references(
   self : LanguageDocument,
-  offset : Int,
+  offset : Int32,
 ) -> Array[LanguageLocation] {
   let token = match self.token_at(offset) {
     Some(value) => value
@@ -480,7 +480,7 @@ fn valid_language_identifier(name : String) -> Bool {
 ///|
 pub fn LanguageDocument::rename(
   self : LanguageDocument,
-  offset : Int,
+  offset : Int32,
   new_name : String,
 ) -> Array[LanguageTextEdit]? {
   if !valid_language_identifier(new_name) {

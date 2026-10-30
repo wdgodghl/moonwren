@@ -214,7 +214,7 @@ test "foreign bindings use the canonical imported module name" {
 ///|
 test "foreign classes allocate host handles and expose them to methods" {
   let values : Array[Double] = []
-  let finalized : Array[Int] = []
+  let finalized : Array[Int32] = []
   let class_binding = @moonwren.ForeignClassBinding::new(
     "main",
     "Counter",

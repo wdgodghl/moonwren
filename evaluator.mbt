@@ -7,13 +7,13 @@ pub(all) enum EvaluationResult {
 ///|
 /// Summary returned by a persistent VM garbage-collection pass.
 pub(all) struct VmGcStats {
-  before_objects : Int
-  reachable_objects : Int
-  reclaimed_objects : Int
-  before_instances : Int
-  reachable_instances : Int
-  reclaimed_instances : Int
-  finalized_foreign_instances : Int
+  before_objects : Int32
+  reachable_objects : Int32
+  reclaimed_objects : Int32
+  before_instances : Int32
+  reachable_instances : Int32
+  reclaimed_instances : Int32
+  finalized_foreign_instances : Int32
 }
 
 ///|
@@ -28,11 +28,11 @@ priv struct Closure {
 ///|
 priv struct ClassDefinition {
   name : String
-  superclass : Int?
+  superclass : Int32?
   inherits_sequence : Bool
   methods : Array[MethodDecl]
   is_foreign : Bool
-  foreign_binding : Int?
+  foreign_binding : Int32?
   environment : Environment
   static_fields : Array[InstanceField]
   attributes : Value
@@ -43,21 +43,21 @@ priv struct ClassDefinition {
 ///|
 priv struct ResolvedMethod {
   declaration : MethodDecl
-  owner_identifier : Int
+  owner_identifier : Int32
 }
 
 ///|
 priv struct InstanceField {
-  owner_identifier : Int
+  owner_identifier : Int32
   name : String
   mut value : Value
 }
 
 ///|
 priv struct Instance {
-  class_identifier : Int
+  class_identifier : Int32
   fields : Array[InstanceField]
-  foreign_handle : Int?
+  foreign_handle : Int32?
   mut finalized : Bool
   mut alive : Bool
 }
@@ -93,10 +93,10 @@ priv enum RuntimeSequenceKind {
   SequenceMapView(Array[Value], String)
   SequenceStringBytes(Array[Value])
   SequenceStringCodePoints(Array[Value], Array[Value])
-  SequenceMap(Value, Int)
-  SequenceWhere(Value, Int)
-  SequenceSkip(Value, Int)
-  SequenceTake(Value, Int)
+  SequenceMap(Value, Int32)
+  SequenceWhere(Value, Int32)
+  SequenceSkip(Value, Int32)
+  SequenceTake(Value, Int32)
 }
 
 ///|
@@ -120,10 +120,10 @@ priv struct RuntimeSequence {
 
 ///|
 priv struct RuntimeIterator {
-  sequence_identifier : Int
+  sequence_identifier : Int32
   mut source_iterator : Value
   mut current : Value
-  mut yielded : Int
+  mut yielded : Int32
   mut started : Bool
   mut completed : Bool
   alive : Bool
@@ -131,14 +131,14 @@ priv struct RuntimeIterator {
 
 ///|
 priv struct RuntimeFiber {
-  function_identifier : Int
+  function_identifier : Int32
   arguments : Array[Value]
-  identity : Int
+  identity : Int32
   is_call_frame : Bool
   mut environment : Environment
   mut initialized : Bool
-  mut state : Int
-  mut next_statement : Int
+  mut state : Int32
+  mut next_statement : Int32
   mut pending : ((Value) -> FiberStatementStep)?
   mut last : Value
   mut error : Value
@@ -149,7 +149,7 @@ priv struct RuntimeFiber {
 priv struct RuntimeModule {
   name : String
   environment : Environment
-  mut state : Int
+  mut state : Int32
 }
 
 ///|
@@ -168,31 +168,31 @@ priv struct RuntimeContext {
   sequences : Array[RuntimeSequence]
   iterators : Array[RuntimeIterator]
   fibers : Array[RuntimeFiber]
-  free_instances : Array[Int]
-  free_lists : Array[Int]
-  free_maps : Array[Int]
-  free_map_entries : Array[Int]
-  free_sequences : Array[Int]
-  free_fibers : Array[Int]
+  free_instances : Array[Int32]
+  free_lists : Array[Int32]
+  free_maps : Array[Int32]
+  free_map_entries : Array[Int32]
+  free_sequences : Array[Int32]
+  free_fibers : Array[Int32]
   modules : Array[RuntimeModule]
   foreign_methods : Array[ForeignMethodBinding]
   foreign_classes : Array[ForeignClassBinding]
   loader : (String, String) -> ModuleLoadResult
   mut current_source : String
-  mut steps : Int
-  max_steps : Int
-  mut call_depth : Int
-  max_call_depth : Int
-  mut peak_call_depth : Int
-  mut foreign_calls : Int
-  mut output_characters : Int
-  max_output_characters : Int
-  max_modules : Int
-  max_objects : Int
-  max_source_characters : Int
+  mut steps : Int32
+  max_steps : Int32
+  mut call_depth : Int32
+  max_call_depth : Int32
+  mut peak_call_depth : Int32
+  mut foreign_calls : Int32
+  mut output_characters : Int32
+  max_output_characters : Int32
+  max_modules : Int32
+  max_objects : Int32
+  max_source_characters : Int32
   should_cancel : () -> Bool
-  mut current_fiber : Int
-  mut transfer_target : Int
+  mut current_fiber : Int32
+  mut transfer_target : Int32
   mut transferred_to_main : Bool
   mut terminate_main : Bool
   mut gc_requested : Bool
@@ -202,7 +202,7 @@ priv struct RuntimeContext {
 
 ///|
 fn RuntimeContext::new_with_loader(
-  max_steps : Int,
+  max_steps : Int32,
   source_name : String,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
@@ -225,12 +225,12 @@ fn RuntimeContext::new_with_loader(
 
 ///|
 fn RuntimeContext::new_with_limits(
-  max_steps : Int,
-  max_call_depth : Int,
-  max_output_characters : Int,
-  max_modules : Int,
-  max_objects : Int,
-  max_source_characters : Int,
+  max_steps : Int32,
+  max_call_depth : Int32,
+  max_output_characters : Int32,
+  max_modules : Int32,
+  max_objects : Int32,
+  max_source_characters : Int32,
   source_name : String,
   loader : (String, String) -> ModuleLoadResult,
   foreign_methods : Array[ForeignMethodBinding],
@@ -311,7 +311,7 @@ fn RuntimeContext::new_with_limits(
 }
 
 ///|
-fn RuntimeContext::new(max_steps : Int) -> RuntimeContext {
+fn RuntimeContext::new(max_steps : Int32) -> RuntimeContext {
   RuntimeContext::new_with_loader(
     max_steps,
     "<source>",
@@ -348,7 +348,7 @@ fn RuntimeContext::pop_call(self : RuntimeContext) -> Unit {
 }
 
 ///|
-fn RuntimeContext::allocated_objects(self : RuntimeContext) -> Int {
+fn RuntimeContext::allocated_objects(self : RuntimeContext) -> Int32 {
   let mut live = self.instances.length() -
     self.free_instances.length() +
     self.lists.length() -
@@ -382,9 +382,9 @@ fn RuntimeContext::allocated_objects(self : RuntimeContext) -> Int {
 ///|
 fn RuntimeContext::new_instance(
   self : RuntimeContext,
-  class_identifier : Int,
-  foreign_handle : Int?,
-) -> Int {
+  class_identifier : Int32,
+  foreign_handle : Int32?,
+) -> Int32 {
   match self.free_instances.pop() {
     Some(identifier) => {
       self.instances[identifier] = {
@@ -443,7 +443,7 @@ fn RuntimeContext::new_map(self : RuntimeContext) -> Value {
 ///|
 fn RuntimeContext::new_fiber(
   self : RuntimeContext,
-  function_identifier : Int,
+  function_identifier : Int32,
 ) -> Value {
   match self.free_fibers.pop() {
     Some(identifier) => {
@@ -486,10 +486,10 @@ fn RuntimeContext::new_fiber(
 ///|
 fn RuntimeContext::new_function_fiber(
   self : RuntimeContext,
-  function_identifier : Int,
+  function_identifier : Int32,
   arguments : Array[Value],
-  identity : Int,
-) -> Int {
+  identity : Int32,
+) -> Int32 {
   match self.free_fibers.pop() {
     Some(identifier) => {
       self.fibers[identifier] = {
@@ -611,7 +611,7 @@ fn bind_core_globals(environment : Environment) -> Unit {
 }
 
 ///|
-fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int? {
+fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int32? {
   for index = 0; index < entries.length(); index = index + 1 {
     if runtime_values_equal(entries[index].key, key) {
       return Some(index)
@@ -621,7 +621,7 @@ fn find_map_key(entries : Array[RuntimeMapEntry], key : Value) -> Int? {
 }
 
 ///|
-fn integer_arrays_equal(left : Array[Int], right : Array[Int]) -> Bool {
+fn integer_arrays_equal(left : Array[Int32], right : Array[Int32]) -> Bool {
   if left.length() != right.length() {
     return false
   }
@@ -669,7 +669,7 @@ fn invalid_map_key(value : Value, span : SourceSpan) -> EvaluationResult {
 ///|
 fn RuntimeContext::set_map_entry(
   self : RuntimeContext,
-  identifier : Int,
+  identifier : Int32,
   key : Value,
   value : Value,
 ) -> Bool {
@@ -688,7 +688,7 @@ fn RuntimeContext::set_map_entry(
 fn runtime_value_to_text(
   value : Value,
   context : RuntimeContext,
-  depth : Int,
+  depth : Int32,
 ) -> String {
   if depth >= 8 {
     return match value {
@@ -827,8 +827,8 @@ fn runtime_value_to_text(
 ///|
 fn RuntimeContext::get_instance_field(
   self : RuntimeContext,
-  identifier : Int,
-  owner_identifier : Int,
+  identifier : Int32,
+  owner_identifier : Int32,
   name : String,
 ) -> Value? {
   if identifier < 0 || identifier >= self.instances.length() {
@@ -845,8 +845,8 @@ fn RuntimeContext::get_instance_field(
 ///|
 fn RuntimeContext::set_instance_field(
   self : RuntimeContext,
-  identifier : Int,
-  owner_identifier : Int,
+  identifier : Int32,
+  owner_identifier : Int32,
   name : String,
   value : Value,
 ) -> Bool {
@@ -867,7 +867,7 @@ fn RuntimeContext::set_instance_field(
 ///|
 fn RuntimeContext::get_static_field(
   self : RuntimeContext,
-  class_identifier : Int,
+  class_identifier : Int32,
   name : String,
 ) -> Value? {
   if class_identifier < 0 || class_identifier >= self.classes.length() {
@@ -884,7 +884,7 @@ fn RuntimeContext::get_static_field(
 ///|
 fn RuntimeContext::set_static_field(
   self : RuntimeContext,
-  class_identifier : Int,
+  class_identifier : Int32,
   name : String,
   value : Value,
 ) -> Bool {
@@ -1044,7 +1044,7 @@ fn evaluate_unary(
 }
 
 ///|
-fn wren_u32(number : Double) -> UInt {
+fn wren_u32(number : Double) -> UInt32 {
   let mut normalized = number % 4294967296.0
   if normalized < 0.0 {
     normalized = normalized + 4294967296.0
@@ -1253,7 +1253,7 @@ fn evaluate_binary_values(
                 Some(bytes) => bytes
                 None => []
               }
-              let result : Array[Int] = []
+              let result : Array[Int32] = []
               for index = 0; index < count; index = index + 1 {
                 for byte in bytes {
                   result.push(byte)
@@ -1309,8 +1309,8 @@ fn evaluate_binary_values(
 ///|
 fn class_is_subclass(
   context : RuntimeContext,
-  candidate : Int,
-  target : Int,
+  candidate : Int32,
+  target : Int32,
 ) -> Bool {
   let mut current = Some(candidate)
   while true {
@@ -1493,7 +1493,7 @@ fn trace_call_failure(
 
 ///|
 fn invoke_function(
-  identifier : Int,
+  identifier : Int32,
   arguments : Array[Value],
   span : SourceSpan,
   context : RuntimeContext,
@@ -1561,9 +1561,9 @@ fn invoke_function(
 ///|
 fn find_method_in_class(
   context : RuntimeContext,
-  class_identifier : Int,
+  class_identifier : Int32,
   name : String,
-  arity : Int,
+  arity : Int32,
   is_constructor : Bool,
   is_getter : Bool,
   is_static : Bool,
@@ -1629,7 +1629,7 @@ fn attribute_method_signature(declaration : MethodDecl) -> String {
 fn build_attribute_map(
   attributes : Array[AttributeDecl],
   context : RuntimeContext,
-) -> Int {
+) -> Int32 {
   if attributes.is_empty() {
     return -1
   }
@@ -1719,7 +1719,7 @@ fn find_foreign_class_binding(
   context : RuntimeContext,
   module_name : String,
   class_name : String,
-) -> Int? {
+) -> Int32? {
   for index = 0; index < context.foreign_classes.length(); index = index + 1 {
     if context.foreign_classes[index].matches(module_name, class_name) {
       return Some(index)
@@ -2026,7 +2026,7 @@ fn invoke_foreign_method(
 
 ///|
 fn invoke_user_method(
-  instance_identifier : Int,
+  instance_identifier : Int32,
   resolved : ResolvedMethod,
   arguments : Array[Value],
   span : SourceSpan,
@@ -2156,7 +2156,7 @@ fn invoke_user_method(
 
 ///|
 fn invoke_static_method(
-  receiver_class : Int,
+  receiver_class : Int32,
   resolved : ResolvedMethod,
   arguments : Array[Value],
   span : SourceSpan,
@@ -2248,7 +2248,7 @@ fn invoke_static_method(
 
 ///|
 fn construct_instance(
-  class_identifier : Int,
+  class_identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -2319,8 +2319,8 @@ fn construct_instance(
 
 ///|
 fn invoke_super_constructor(
-  superclass : Int,
-  instance_identifier : Int,
+  superclass : Int32,
+  instance_identifier : Int32,
   method_name : String,
   is_constructor : Bool,
   arguments : Array[Value],
@@ -2357,7 +2357,7 @@ fn invoke_super_constructor(
 
 ///|
 fn invoke_instance_method(
-  instance_identifier : Int,
+  instance_identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -2408,20 +2408,20 @@ fn invoke_instance_method(
 
 ///|
 priv enum CollectionIndexResult {
-  CollectionIndexSucceeded(Int)
+  CollectionIndexSucceeded(Int32)
   CollectionIndexFailed(Diagnostic)
 }
 
 ///|
 priv enum CollectionRangeResult {
-  CollectionRangeSucceeded(Int, Int, Int)
+  CollectionRangeSucceeded(Int32, Int32, Int32)
   CollectionRangeFailed(Diagnostic)
 }
 
 ///|
 fn collection_index(
   value : Value,
-  length : Int,
+  length : Int32,
   allow_end : Bool,
   span : SourceSpan,
 ) -> CollectionIndexResult {
@@ -2466,7 +2466,7 @@ fn collection_index(
 
 ///|
 fn collection_range(
-  length : Int,
+  length : Int32,
   from : Double,
   to : Double,
   inclusive : Bool,
@@ -2540,7 +2540,7 @@ fn read_list_range(
 
 ///|
 fn read_string_range(
-  bytes : Array[Int],
+  bytes : Array[Int32],
   from : Double,
   to : Double,
   inclusive : Bool,
@@ -2552,7 +2552,7 @@ fn read_string_range(
     CollectionRangeFailed(issue) => return EvaluationFailed(issue)
   }
   let mut index = start
-  let result : Array[Int] = []
+  let result : Array[Int32] = []
   let mut remaining = count
   while remaining > 0 {
     match decode_utf8_at(bytes, index) {
@@ -2745,8 +2745,8 @@ fn write_subscript(
 fn invalid_collection_arity(
   owner : String,
   name : String,
-  expected : Int,
-  received : Int,
+  expected : Int32,
+  received : Int32,
   span : SourceSpan,
 ) -> EvaluationResult {
   evaluation_error(
@@ -2929,7 +2929,7 @@ fn indexed_string_view_iterator(
 }
 
 ///|
-fn code_point_width(code_point : Int) -> Int {
+fn code_point_width(code_point : Int32) -> Int32 {
   if code_point <= 0x7f {
     1
   } else if code_point <= 0x7ff {
@@ -2942,7 +2942,10 @@ fn code_point_width(code_point : Int) -> Int {
 }
 
 ///|
-fn code_point_index_is_continuation(items : Array[Value], index : Int) -> Bool {
+fn code_point_index_is_continuation(
+  items : Array[Value],
+  index : Int32,
+) -> Bool {
   for distance = 1; distance <= 3; distance = distance + 1 {
     let start = index - distance
     if start < 0 {
@@ -3023,7 +3026,7 @@ fn code_point_view_iterator(
 
 ///|
 fn string_iterator(
-  bytes : Array[Int],
+  bytes : Array[Int32],
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -3101,8 +3104,8 @@ fn string_iterator(
 }
 
 ///|
-fn utf8_bytes(text : String) -> Array[Int] {
-  let bytes : Array[Int] = []
+fn utf8_bytes(text : String) -> Array[Int32] {
+  let bytes : Array[Int32] = []
   for character in text.to_array() {
     let code = character.to_int()
     if code <= 0x7f {
@@ -3125,11 +3128,11 @@ fn utf8_bytes(text : String) -> Array[Int] {
 }
 
 ///|
-fn string_bytes_of(value : Value) -> Array[Int]? {
+fn string_bytes_of(value : Value) -> Array[Int32]? {
   match value {
     StringValue(text) => Some(utf8_bytes(text))
     RawStringValue(bytes) => {
-      let copied : Array[Int] = []
+      let copied : Array[Int32] = []
       for byte in bytes {
         copied.push(byte)
       }
@@ -3140,12 +3143,12 @@ fn string_bytes_of(value : Value) -> Array[Int]? {
 }
 
 ///|
-fn is_continuation_byte(byte : Int) -> Bool {
+fn is_continuation_byte(byte : Int32) -> Bool {
   byte >= 0x80 && byte <= 0xbf
 }
 
 ///|
-fn decode_utf8_at(bytes : Array[Int], index : Int) -> (Int, Int)? {
+fn decode_utf8_at(bytes : Array[Int32], index : Int32) -> (Int32, Int32)? {
   if index < 0 || index >= bytes.length() {
     return None
   }
@@ -3196,7 +3199,7 @@ fn decode_utf8_at(bytes : Array[Int], index : Int) -> (Int, Int)? {
 }
 
 ///|
-fn byte_is_valid_continuation_at(bytes : Array[Int], index : Int) -> Bool {
+fn byte_is_valid_continuation_at(bytes : Array[Int32], index : Int32) -> Bool {
   for distance = 1; distance <= 3; distance = distance + 1 {
     let start = index - distance
     if start < 0 {
@@ -3211,7 +3214,7 @@ fn byte_is_valid_continuation_at(bytes : Array[Int], index : Int) -> Bool {
 }
 
 ///|
-fn string_value_from_bytes(bytes : Array[Int]) -> Value {
+fn string_value_from_bytes(bytes : Array[Int32]) -> Value {
   let characters : Array[Char] = []
   let mut index = 0
   while index < bytes.length() {
@@ -3227,7 +3230,7 @@ fn string_value_from_bytes(bytes : Array[Int]) -> Value {
 }
 
 ///|
-fn string_display_from_bytes(bytes : Array[Int]) -> String {
+fn string_display_from_bytes(bytes : Array[Int32]) -> String {
   let characters : Array[Char] = []
   let mut index = 0
   while index < bytes.length() {
@@ -3247,7 +3250,7 @@ fn string_display_from_bytes(bytes : Array[Int]) -> String {
 
 ///|
 fn string_code_point_views_from_bytes(
-  bytes : Array[Int],
+  bytes : Array[Int32],
 ) -> (Array[Value], Array[Value]) {
   let indexed : Array[Value] = []
   let iterated : Array[Value] = []
@@ -3275,15 +3278,15 @@ fn string_code_point_views_from_bytes(
 
 ///|
 fn string_value_at_byte_from_bytes(
-  bytes : Array[Int],
-  byte_index : Int,
+  bytes : Array[Int32],
+  byte_index : Int32,
 ) -> Value? {
   if byte_index < 0 || byte_index >= bytes.length() {
     return None
   }
   match decode_utf8_at(bytes, byte_index) {
     Some((_, width)) => {
-      let selected : Array[Int] = []
+      let selected : Array[Int32] = []
       for offset = 0; offset < width; offset = offset + 1 {
         selected.push(bytes[byte_index + offset])
       }
@@ -3294,13 +3297,13 @@ fn string_value_at_byte_from_bytes(
 }
 
 ///|
-fn string_items_from_bytes(bytes : Array[Int]) -> Array[Value] {
+fn string_items_from_bytes(bytes : Array[Int32]) -> Array[Value] {
   let items : Array[Value] = []
   let mut index = 0
   while index < bytes.length() {
     match decode_utf8_at(bytes, index) {
       Some((_, width)) => {
-        let selected : Array[Int] = []
+        let selected : Array[Int32] = []
         for offset = 0; offset < width; offset = offset + 1 {
           selected.push(bytes[index + offset])
         }
@@ -3317,14 +3320,14 @@ fn string_items_from_bytes(bytes : Array[Int]) -> Array[Value] {
 }
 
 ///|
-fn string_count_from_bytes(bytes : Array[Int]) -> Int {
+fn string_count_from_bytes(bytes : Array[Int32]) -> Int32 {
   string_items_from_bytes(bytes).length()
 }
 
 ///|
 fn invalid_string_argument(
   name : String,
-  position : Int,
+  position : Int32,
   value : Value,
   span : SourceSpan,
 ) -> EvaluationResult {
@@ -3337,10 +3340,10 @@ fn invalid_string_argument(
 
 ///|
 fn string_index_of(
-  source : Array[Int],
-  search : Array[Int],
-  start : Int,
-) -> Int {
+  source : Array[Int32],
+  search : Array[Int32],
+  start : Int32,
+) -> Int32 {
   if search.length() == 0 {
     return start
   }
@@ -3361,7 +3364,7 @@ fn string_index_of(
 }
 
 ///|
-fn bytes_have_prefix(source : Array[Int], prefix : Array[Int]) -> Bool {
+fn bytes_have_prefix(source : Array[Int32], prefix : Array[Int32]) -> Bool {
   if prefix.length() > source.length() {
     return false
   }
@@ -3374,7 +3377,7 @@ fn bytes_have_prefix(source : Array[Int], prefix : Array[Int]) -> Bool {
 }
 
 ///|
-fn bytes_have_suffix(source : Array[Int], suffix : Array[Int]) -> Bool {
+fn bytes_have_suffix(source : Array[Int32], suffix : Array[Int32]) -> Bool {
   if suffix.length() > source.length() {
     return false
   }
@@ -3388,8 +3391,12 @@ fn bytes_have_suffix(source : Array[Int], suffix : Array[Int]) -> Bool {
 }
 
 ///|
-fn copy_byte_range(source : Array[Int], start : Int, end : Int) -> Array[Int] {
-  let result : Array[Int] = []
+fn copy_byte_range(
+  source : Array[Int32],
+  start : Int32,
+  end : Int32,
+) -> Array[Int32] {
+  let result : Array[Int32] = []
   for index = start; index < end; index = index + 1 {
     result.push(source[index])
   }
@@ -3397,7 +3404,7 @@ fn copy_byte_range(source : Array[Int], start : Int, end : Int) -> Array[Int] {
 }
 
 ///|
-fn byte_is_in(byte : Int, values : Array[Int]) -> Bool {
+fn byte_is_in(byte : Int32, values : Array[Int32]) -> Bool {
   for value in values {
     if value == byte {
       return true
@@ -3409,7 +3416,7 @@ fn byte_is_in(byte : Int, values : Array[Int]) -> Bool {
 ///|
 fn invoke_string_bytes_method(
   receiver : Value,
-  bytes : Array[Int],
+  bytes : Array[Int32],
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -3566,7 +3573,7 @@ fn invoke_string_bytes_method(
             span,
           )
         } else {
-          let result : Array[Int] = []
+          let result : Array[Int32] = []
           let mut start = 0
           while start < bytes.length() {
             let found = string_index_of(bytes, old, start)
@@ -3611,7 +3618,7 @@ fn invoke_string_method(
 
 ///|
 fn invoke_raw_string_method(
-  bytes : Array[Int],
+  bytes : Array[Int32],
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -3701,7 +3708,7 @@ fn advance_iterable(
 
 ///|
 fn advance_sequence_iterator(
-  iterator_identifier : Int,
+  iterator_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
@@ -3856,7 +3863,7 @@ fn collect_iterable_values(
 }
 
 ///|
-fn expect_function_identifier(value : Value) -> Int? {
+fn expect_function_identifier(value : Value) -> Int32? {
   match value {
     FunctionValue(identifier) => Some(identifier)
     _ => None
@@ -3864,7 +3871,7 @@ fn expect_function_identifier(value : Value) -> Int? {
 }
 
 ///|
-fn non_negative_count(value : Value) -> Int? {
+fn non_negative_count(value : Value) -> Int32? {
   match value {
     NumberValue(number) => {
       let count = number.to_int()
@@ -3911,7 +3918,7 @@ fn method_call_closure(
   receiver : Value,
   resolved : ResolvedMethod,
   context : RuntimeContext,
-) -> Int? {
+) -> Int32? {
   if resolved.owner_identifier < 0 ||
     resolved.owner_identifier >= context.classes.length() ||
     resolved.declaration.is_foreign {
@@ -3973,7 +3980,7 @@ fn method_call_closure(
 fn instance_has_method(
   receiver : Value,
   name : String,
-  arity : Int,
+  arity : Int32,
   context : RuntimeContext,
 ) -> Bool {
   match receiver {
@@ -4075,7 +4082,7 @@ fn binary_method_name(operator : BinaryOperator) -> String {
 fn finish_fiber_sequence_operation(
   name : String,
   aggregate : Value,
-  count : Int,
+  count : Int32,
   span : SourceSpan,
 ) -> FiberExpressionStep {
   FiberExpressionReady(
@@ -4094,14 +4101,14 @@ fn finish_fiber_sequence_operation(
 
 ///|
 fn resume_fiber_sequence_callback(
-  call_identifier : Int,
+  call_identifier : Int32,
   input : Value,
   iterable : Value,
   iterator : Value,
-  function_identifier : Int,
+  function_identifier : Int32,
   name : String,
   aggregate : Value,
-  count : Int,
+  count : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
@@ -4148,10 +4155,10 @@ fn resume_fiber_sequence_callback(
 fn execute_fiber_sequence_operation(
   iterable : Value,
   iterator : Value,
-  function_identifier : Int,
+  function_identifier : Int32,
   name : String,
   aggregate : Value,
-  count : Int,
+  count : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
@@ -4183,7 +4190,7 @@ fn execute_fiber_sequence_operation(
 
 ///|
 fn resume_fiber_expression_call(
-  identifier : Int,
+  identifier : Int32,
   input : Value,
   result_override : Value?,
   span : SourceSpan,
@@ -4214,7 +4221,7 @@ fn resume_fiber_expression_call(
 
 ///|
 fn start_fiber_expression_call(
-  function_identifier : Int,
+  function_identifier : Int32,
   arguments : Array[Value],
   result_override : Value?,
   span : SourceSpan,
@@ -5056,11 +5063,11 @@ fn prepare_fiber_expression(
 
 ///|
 fn resume_fiber_each_callback(
-  call_identifier : Int,
+  call_identifier : Int32,
   input : Value,
   iterable : Value,
   iterator : Value,
-  function_identifier : Int,
+  function_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberStatementStep {
@@ -5088,7 +5095,7 @@ fn resume_fiber_each_callback(
 fn execute_fiber_each(
   iterable : Value,
   iterator : Value,
-  function_identifier : Int,
+  function_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberStatementStep {
@@ -5185,7 +5192,7 @@ fn bind_imported_values(
 ///|
 fn continue_fiber_module(
   step : FiberStatementStep,
-  module_index : Int,
+  module_index : Int32,
   module_name : String,
   importer : String,
   specifier : String,
@@ -5485,7 +5492,7 @@ fn prepare_fiber_statement(
 fn continue_fiber_sequence(
   step : FiberStatementStep,
   statements : Array[Stmt],
-  next : Int,
+  next : Int32,
   last : Value,
   environment : Environment,
   context : RuntimeContext,
@@ -5519,7 +5526,7 @@ fn continue_fiber_sequence(
 ///|
 fn execute_fiber_sequence(
   statements : Array[Stmt],
-  next : Int,
+  next : Int32,
   last : Value,
   environment : Environment,
   context : RuntimeContext,
@@ -5838,7 +5845,7 @@ fn execute_fiber_statement(
 ///|
 fn restore_fiber_caller(
   context : RuntimeContext,
-  previous_fiber : Int,
+  previous_fiber : Int32,
   previous_source : String,
 ) -> Unit {
   context.current_fiber = previous_fiber
@@ -5848,9 +5855,9 @@ fn restore_fiber_caller(
 
 ///|
 fn abort_runtime_fiber(
-  identifier : Int,
+  identifier : Int32,
   issue : Diagnostic,
-  previous_fiber : Int,
+  previous_fiber : Int32,
   previous_source : String,
   context : RuntimeContext,
 ) -> EvaluationResult {
@@ -5864,7 +5871,7 @@ fn abort_runtime_fiber(
 
 ///|
 fn resume_runtime_fiber(
-  identifier : Int,
+  identifier : Int32,
   input : Value,
   span : SourceSpan,
   context : RuntimeContext,
@@ -6020,7 +6027,7 @@ fn resume_runtime_fiber(
 
 ///|
 fn invoke_fiber_method(
-  identifier : Int,
+  identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -6134,7 +6141,7 @@ fn invoke_fiber_method(
 
 ///|
 fn resume_fiber_transfer_chain(
-  identifier : Int,
+  identifier : Int32,
   input : Value,
   span : SourceSpan,
   context : RuntimeContext,
@@ -6401,7 +6408,7 @@ fn invoke_sequence_operation(
 
 ///|
 fn invoke_sequence_method(
-  identifier : Int,
+  identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -6507,7 +6514,7 @@ fn invoke_sequence_method(
 
 ///|
 fn invoke_list_method(
-  identifier : Int,
+  identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -6720,7 +6727,7 @@ fn invoke_list_method(
 
 ///|
 fn invoke_map_method(
-  identifier : Int,
+  identifier : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,
@@ -8506,7 +8513,7 @@ priv enum ModuleExecutionResult {
 }
 
 ///|
-fn find_runtime_module(context : RuntimeContext, name : String) -> Int? {
+fn find_runtime_module(context : RuntimeContext, name : String) -> Int32? {
   for index = 0; index < context.modules.length(); index = index + 1 {
     if context.modules[index].name == name {
       return Some(index)
@@ -8969,7 +8976,7 @@ priv struct ReachabilityMarks {
 }
 
 ///|
-fn bool_marks(length : Int) -> Array[Bool] {
+fn bool_marks(length : Int32) -> Array[Bool] {
   let marks : Array[Bool] = []
   for index = 0; index < length; index = index + 1 {
     marks.push(false)
@@ -9006,7 +9013,7 @@ fn mark_environment(
 
 ///|
 fn mark_closure(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9022,7 +9029,7 @@ fn mark_closure(
 
 ///|
 fn mark_class(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9047,7 +9054,7 @@ fn mark_class(
 
 ///|
 fn mark_instance(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9067,7 +9074,7 @@ fn mark_instance(
 
 ///|
 fn mark_list(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9085,7 +9092,7 @@ fn mark_list(
 
 ///|
 fn mark_map(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9104,7 +9111,7 @@ fn mark_map(
 
 ///|
 fn mark_map_entry(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9122,7 +9129,7 @@ fn mark_map_entry(
 
 ///|
 fn mark_sequence(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9160,7 +9167,7 @@ fn mark_sequence(
 
 ///|
 fn mark_iterator(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9179,7 +9186,7 @@ fn mark_iterator(
 
 ///|
 fn mark_fiber(
-  identifier : Int,
+  identifier : Int32,
   context : RuntimeContext,
   marks : ReachabilityMarks,
 ) -> Unit {
@@ -9238,7 +9245,7 @@ fn mark_runtime_value(
 }
 
 ///|
-fn finalize_instance(context : RuntimeContext, identifier : Int) -> Bool {
+fn finalize_instance(context : RuntimeContext, identifier : Int32) -> Bool {
   let instance = context.instances[identifier]
   if instance.finalized {
     return false

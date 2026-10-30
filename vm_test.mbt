@@ -221,7 +221,7 @@ test "host cancellation stops a VM operation" {
 
 ///|
 test "reachability collection finalizes unreachable foreign instances" {
-  let finalized : Array[Int] = []
+  let finalized : Array[Int32] = []
   let binding = @moonwren.ForeignClassBinding::new(
     "main",
     "Box",
@@ -252,7 +252,7 @@ test "reachability collection finalizes unreachable foreign instances" {
 
 ///|
 test "retained host values remain reachable until their handle is released" {
-  let finalized : Array[Int] = []
+  let finalized : Array[Int32] = []
   let binding = @moonwren.ForeignClassBinding::new(
     "main",
     "Box",

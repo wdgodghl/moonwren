@@ -1,33 +1,33 @@
 ///|
 pub(all) struct VmTelemetry {
-  operation_id : Int
+  operation_id : Int32
   operation : String
   source_name : String
   succeeded : Bool
-  diagnostic_count : Int
-  steps : Int
+  diagnostic_count : Int32
+  steps : Int32
   duration_milliseconds : Double
-  output_lines : Int
-  output_characters : Int
-  loaded_modules : Int
-  allocated_objects : Int
-  live_fibers : Int
-  foreign_calls : Int
-  peak_call_depth : Int
-  last_gc_reclaimed_objects : Int
+  output_lines : Int32
+  output_characters : Int32
+  loaded_modules : Int32
+  allocated_objects : Int32
+  live_fibers : Int32
+  foreign_calls : Int32
+  peak_call_depth : Int32
+  last_gc_reclaimed_objects : Int32
 }
 
 ///|
 pub struct ObservedVm {
   vm : Vm
-  history_limit : Int
+  history_limit : Int32
   history : Array[VmTelemetry]
   observers : Array[(VmTelemetry) -> Unit]
-  mut next_operation_id : Int
+  mut next_operation_id : Int32
 }
 
 ///|
-pub fn ObservedVm::new(vm : Vm, history_limit : Int) -> ObservedVm {
+pub fn ObservedVm::new(vm : Vm, history_limit : Int32) -> ObservedVm {
   {
     vm,
     history_limit: if history_limit > 0 {

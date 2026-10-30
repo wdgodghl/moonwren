@@ -11,25 +11,27 @@ pub(all) enum BytecodeDebugResult {
 /// or continue between source-line breakpoints without changing program state.
 pub struct BytecodeTraceDebugger {
   trace : BytecodeTrace
-  breakpoints : Array[Int]
-  mut cursor : Int
+  breakpoints : Array[Int32]
+  mut cursor : Int32
 }
 
 ///|
 pub fn BytecodeTraceDebugger::new(
   trace : BytecodeTrace,
-  breakpoints : Array[Int],
+  breakpoints : Array[Int32],
 ) -> BytecodeTraceDebugger {
   { trace, breakpoints, cursor: 0, }
 }
 
 ///|
-pub fn BytecodeTraceDebugger::position(self : BytecodeTraceDebugger) -> Int {
+pub fn BytecodeTraceDebugger::position(self : BytecodeTraceDebugger) -> Int32 {
   self.cursor
 }
 
 ///|
-pub fn BytecodeTraceDebugger::event_count(self : BytecodeTraceDebugger) -> Int {
+pub fn BytecodeTraceDebugger::event_count(
+  self : BytecodeTraceDebugger,
+) -> Int32 {
   self.trace.events.length()
 }
 
@@ -53,7 +55,7 @@ pub fn BytecodeTraceDebugger::step(
 ///|
 fn BytecodeTraceDebugger::is_breakpoint(
   self : BytecodeTraceDebugger,
-  line : Int,
+  line : Int32,
 ) -> Bool {
   for breakpoint in self.breakpoints {
     if breakpoint == line {

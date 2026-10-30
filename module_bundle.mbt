@@ -125,12 +125,15 @@ pub(all) enum ModuleArchiveResult {
 }
 
 ///|
-fn archive_character_length(value : String) -> Int {
+fn archive_character_length(value : String) -> Int32 {
   value.to_array().length()
 }
 
 ///|
-fn archive_read_number(characters : Array[Char], start : Int) -> (Int, Int)? {
+fn archive_read_number(
+  characters : Array[Char],
+  start : Int32,
+) -> (Int32, Int32)? {
   if start < 0 || start >= characters.length() {
     return None
   }
@@ -156,9 +159,9 @@ fn archive_read_number(characters : Array[Char], start : Int) -> (Int, Int)? {
 ///|
 fn archive_take_text(
   characters : Array[Char],
-  start : Int,
-  count : Int,
-) -> (String, Int)? {
+  start : Int32,
+  count : Int32,
+) -> (String, Int32)? {
   if count < 0 || start < 0 || start + count > characters.length() {
     return None
   }

@@ -18,8 +18,8 @@ jobs:
           path: .official-wren
       - uses: hustcer/setup-moonbit@v1
         with:
-          version: 0.10.14+7d59c7ec9
-          core-version: 0.10.14+7d59c7ec9
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
       - name: Resolve dependencies
         run: moon update
       - name: Check formatting

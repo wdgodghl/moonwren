@@ -2,10 +2,10 @@
 /// A host-owned, resumable Wren Fiber. The task retains the Fiber while it is
 /// suspended, so unrelated VM operations and garbage collections are safe.
 pub struct VmAsyncTask {
-  vm_identity : Int
-  generation : Int
+  vm_identity : Int32
+  generation : Int32
   fiber : VmHandle
-  mut sequence : Int
+  mut sequence : Int32
   mut started : Bool
   mut waiting : Bool
   mut finished : Bool
@@ -17,10 +17,10 @@ pub struct VmAsyncTask {
 /// A single yielded host request. Requests are one-shot: only the matching
 /// task and sequence can consume them.
 pub struct VmAsyncRequest {
-  vm_identity : Int
-  generation : Int
-  task_handle : Int
-  sequence : Int
+  vm_identity : Int32
+  generation : Int32
+  task_handle : Int32
+  sequence : Int32
   value : Value
 }
 
@@ -43,7 +43,7 @@ pub fn VmAsyncRequest::value(self : VmAsyncRequest) -> Value {
 }
 
 ///|
-pub fn VmAsyncRequest::sequence(self : VmAsyncRequest) -> Int {
+pub fn VmAsyncRequest::sequence(self : VmAsyncRequest) -> Int32 {
   self.sequence
 }
 

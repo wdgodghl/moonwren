@@ -14,7 +14,7 @@ pub(all) enum ProgramParseResult {
 priv struct Parser {
   tokens : Array[Token]
   diagnostics : Array[Diagnostic]
-  mut current : Int
+  mut current : Int32
   mut current_method_name : String
   mut current_method_is_constructor : Bool
 }
@@ -97,7 +97,7 @@ fn clean_number(text : String) -> String {
 }
 
 ///|
-fn hex_value(code : Int) -> Int {
+fn hex_value(code : Int32) -> Int32 {
   if code >= 48 && code <= 57 {
     code - 48
   } else if code >= 65 && code <= 70 {
@@ -185,7 +185,7 @@ fn parse_number_value(text : String) -> Double {
 }
 
 ///|
-fn append_utf8_bytes(bytes : Array[Int], code_point : Int) -> Unit {
+fn append_utf8_bytes(bytes : Array[Int32], code_point : Int32) -> Unit {
   if code_point <= 0x7f {
     bytes.push(code_point)
   } else if code_point <= 0x7ff {
@@ -205,7 +205,7 @@ fn append_utf8_bytes(bytes : Array[Int], code_point : Int) -> Unit {
 
 ///|
 fn decode_string_value(text : String) -> Value {
-  let bytes : Array[Int] = []
+  let bytes : Array[Int32] = []
   let characters = text[1:text.length() - 1].to_owned().to_array()
   let mut index = 0
   while index < characters.length() {

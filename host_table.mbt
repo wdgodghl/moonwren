@@ -2,8 +2,8 @@
 /// A generation-checked handle for host-owned objects referenced by foreign
 /// Wren instances. It prevents stale identifiers from observing reused slots.
 pub(all) struct HostObjectHandle {
-  slot : Int
-  generation : Int
+  slot : Int32
+  generation : Int32
 } derive(Eq, Debug)
 
 ///|
@@ -15,7 +15,7 @@ pub extend HostObjectHandle with Debug::{to_repr}
 ///|
 pub struct HostObjectSlot[T] {
   mut value : T?
-  mut generation : Int
+  mut generation : Int32
 }
 
 ///|
@@ -80,7 +80,7 @@ pub fn[T] HostObjectTable::release(
 }
 
 ///|
-pub fn[T] HostObjectTable::live_count(self : HostObjectTable[T]) -> Int {
+pub fn[T] HostObjectTable::live_count(self : HostObjectTable[T]) -> Int32 {
   let mut count = 0
   for slot in self.slots {
     if slot.value is Some(_) {

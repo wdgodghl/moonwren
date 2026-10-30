@@ -142,15 +142,15 @@ fn optional_module_source(name : String) -> String? {
 
 ///|
 priv struct BuiltinRandomState {
-  state : Array[UInt]
-  mut index : Int
+  state : Array[UInt32]
+  mut index : Int32
   mut alive : Bool
 }
 
 ///|
 fn random_state_for_handle(
   states : Array[BuiltinRandomState],
-  handle : Int,
+  handle : Int32,
 ) -> BuiltinRandomState? {
   if handle < 0 || handle >= states.length() || !states[handle].alive {
     None
@@ -188,7 +188,7 @@ fn seed_random_values(
 }
 
 ///|
-fn advance_random(state : BuiltinRandomState) -> UInt {
+fn advance_random(state : BuiltinRandomState) -> UInt32 {
   let a = state.state[state.index]
   let mut c = state.state[(state.index + 13) & 15]
   let b = a ^ c ^ (a << 16) ^ (c << 15)
@@ -212,7 +212,7 @@ fn builtin_random_float(state : BuiltinRandomState) -> Double {
 
 ///|
 fn invoke_builtin_random_collection_method(
-  receiver : Int,
+  receiver : Int32,
   name : String,
   arguments : Array[Value],
   span : SourceSpan,

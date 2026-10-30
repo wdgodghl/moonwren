@@ -44,7 +44,7 @@ test "live debugger supports stepping and termination" {
     [],
     [],
   )
-  let lines : Array[Int] = []
+  let lines : Array[Int32] = []
   ignore(
     vm.attach_debugger([], true, fn(snapshot) {
       lines.push(snapshot.span.line())

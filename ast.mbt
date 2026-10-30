@@ -62,17 +62,17 @@ pub(all) enum Expr {
   SuperConstructorCall(Array[Expr], SourceSpan)
   FunctionLiteral(Array[String], Array[Stmt], SourceSpan)
   // Internal continuation node used only while a Fiber is suspended in a call.
-  FiberCallResume(Int, Value, Value?, SourceSpan)
+  FiberCallResume(Int32, Value, Value?, SourceSpan)
   // Internal continuation for callback-driven Sequence operations.
   FiberSequenceResume(
-    Int,
+    Int32,
     Value,
     Value,
     Value,
-    Int,
+    Int32,
     String,
     Value,
-    Int,
+    Int32,
     SourceSpan
   )
   Unary(UnaryOperator, Expr, SourceSpan)

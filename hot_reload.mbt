@@ -28,7 +28,7 @@ fn reload_visit_dependency(
   name : String,
   names : Array[String],
   sources : Array[ModuleSource],
-  states : Array[Int],
+  states : Array[Int32],
   ordered : Array[String],
 ) -> String? {
   let mut index = -1

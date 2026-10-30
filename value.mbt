@@ -55,22 +55,22 @@ pub(all) enum Value {
   BoolValue(Bool)
   NumberValue(Double)
   StringValue(String)
-  RawStringValue(Array[Int])
+  RawStringValue(Array[Int32])
   RangeValue(Double, Double, Bool)
-  ListValue(Int)
-  MapValue(Int)
-  SequenceValue(Int)
-  FunctionValue(Int)
-  FiberValue(Int)
-  ClassValue(Int)
+  ListValue(Int32)
+  MapValue(Int32)
+  SequenceValue(Int32)
+  FunctionValue(Int32)
+  FiberValue(Int32)
+  ClassValue(Int32)
   MetaClassValue(String)
-  ClassAttributesValue(Int, Int)
-  InstanceValue(Int)
-  SuperValue(Int, Int, String, Bool)
-  SuperClassValue(Int, Int)
+  ClassAttributesValue(Int32, Int32)
+  InstanceValue(Int32)
+  SuperValue(Int32, Int32, String, Bool)
+  SuperClassValue(Int32, Int32)
   CoreClassValue(CoreClass)
-  IteratorValue(Int)
-  MapEntryValue(Int)
+  IteratorValue(Int32)
+  MapEntryValue(Int32)
   SystemValue
 } derive(Eq, Debug)
 
@@ -110,7 +110,7 @@ pub fn Value::string(value : String) -> Value {
 ///|
 /// Construct a String from bytes that are not required to be valid UTF-8.
 /// This is used by Wren's byte-oriented String primitives.
-fn Value::raw_string(bytes : Array[Int]) -> Value {
+fn Value::raw_string(bytes : Array[Int32]) -> Value {
   RawStringValue(bytes)
 }
 
@@ -155,32 +155,32 @@ pub fn Value::as_range(
 }
 
 ///|
-fn Value::list(identifier : Int) -> Value {
+fn Value::list(identifier : Int32) -> Value {
   ListValue(identifier)
 }
 
 ///|
-fn Value::map(identifier : Int) -> Value {
+fn Value::map(identifier : Int32) -> Value {
   MapValue(identifier)
 }
 
 ///|
-fn Value::sequence(identifier : Int) -> Value {
+fn Value::sequence(identifier : Int32) -> Value {
   SequenceValue(identifier)
 }
 
 ///|
-fn Value::function(identifier : Int) -> Value {
+fn Value::function(identifier : Int32) -> Value {
   FunctionValue(identifier)
 }
 
 ///|
-fn Value::fiber(identifier : Int) -> Value {
+fn Value::fiber(identifier : Int32) -> Value {
   FiberValue(identifier)
 }
 
 ///|
-fn Value::class_value(identifier : Int) -> Value {
+fn Value::class_value(identifier : Int32) -> Value {
   ClassValue(identifier)
 }
 
@@ -190,7 +190,7 @@ fn Value::meta_class(name : String) -> Value {
 }
 
 ///|
-fn Value::instance(identifier : Int) -> Value {
+fn Value::instance(identifier : Int32) -> Value {
   InstanceValue(identifier)
 }
 
@@ -205,12 +205,12 @@ fn Value::core_class(value : CoreClass) -> Value {
 }
 
 ///|
-fn Value::iterator(identifier : Int) -> Value {
+fn Value::iterator(identifier : Int32) -> Value {
   IteratorValue(identifier)
 }
 
 ///|
-fn Value::map_entry(identifier : Int) -> Value {
+fn Value::map_entry(identifier : Int32) -> Value {
   MapEntryValue(identifier)
 }
 
@@ -244,7 +244,7 @@ fn wren_number_to_text(number : Double) -> String {
     negative = true
     index = 1
   }
-  let digits : Array[Int] = []
+  let digits : Array[Int32] = []
   let mut decimal_position = -1
   let mut exponent_sign = 1
   let mut exponent_value = 0
@@ -288,7 +288,7 @@ fn wren_number_to_text(number : Double) -> String {
     }
   }
   decimal_position = decimal_position - leading
-  let significant : Array[Int] = []
+  let significant : Array[Int32] = []
   for digit_index = leading
       digit_index < digits.length() && significant.length() < 14
       digit_index = digit_index + 1 {
@@ -322,7 +322,7 @@ fn wren_number_to_text(number : Double) -> String {
     ignore(significant.pop())
   }
   let mut text = if negative { "-" } else { "" }
-  let digit_text = fn(digit : Int) -> String {
+  let digit_text = fn(digit : Int32) -> String {
     (digit + 48).unsafe_to_char().to_string()
   }
   if scientific_exponent < -4 || scientific_exponent >= 14 {

@@ -14,11 +14,11 @@ pub(all) struct VmMapEntry {
 ///|
 /// Cached receiver, method name, and arity for repeated host calls.
 pub struct VmMethodHandle {
-  vm_identity : Int
-  generation : Int
+  vm_identity : Int32
+  generation : Int32
   receiver : VmHandle
   method_name : String
-  arity : Int
+  arity : Int32
 }
 
 ///|
@@ -60,7 +60,7 @@ pub fn Vm::bind_method(
   self : Vm,
   receiver : VmHandle,
   method_name : String,
-  arity : Int,
+  arity : Int32,
 ) -> VmMethodHandleResult {
   if self.closed {
     return VmMethodHandleFailed(host_access_error("VM is closed"))
@@ -154,7 +154,7 @@ pub fn Vm::list_snapshot(
 pub fn Vm::list_set(
   self : Vm,
   handle : VmHandle,
-  index : Int,
+  index : Int32,
   value : Value,
 ) -> VmHostResult[Unit] {
   match self.resolved_collection(handle) {

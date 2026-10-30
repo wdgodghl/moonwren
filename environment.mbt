@@ -21,7 +21,7 @@ pub fn Environment::new() -> Environment {
 }
 
 ///|
-pub fn Environment::depth(self : Environment) -> Int {
+pub fn Environment::depth(self : Environment) -> Int32 {
   self.scopes.length()
 }
 

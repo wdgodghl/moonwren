@@ -1,13 +1,13 @@
 ///|
 #cfg(target="js")
 extern "js" fn install_web_sdk(
-  run_source : (String, Int) -> String,
-  evaluate_source : (String, Int) -> String,
+  run_source : (String, Int32) -> String,
+  evaluate_source : (String, Int32) -> String,
 ) -> Unit =
   #| (runSource, evaluateSource) => {
   #|   const normalizeLimit = (value) => Number.isSafeInteger(value) && value > 0 ? value : 1000000;
   #|   globalThis.MoonWrenCore = Object.freeze({
-  #|     version: "0.9.0",
+  #|     version: "0.9.1",
   #|     runText(source, options = {}) {
   #|       return runSource(String(source), normalizeLimit(options.maxSteps));
   #|     },
@@ -50,7 +50,7 @@ extern "js" fn install_web_sdk(
 
 ///|
 #cfg(target="js")
-fn render(source : String, max_steps : Int) -> String {
+fn render(source : String, max_steps : Int32) -> String {
   match @moonwren.run_with_limit(source, max_steps) {
     @moonwren.ProgramCompleted(value, output) => {
       let lines : Array[String] = []
@@ -75,7 +75,7 @@ fn render(source : String, max_steps : Int) -> String {
 
 ///|
 #cfg(target="js")
-fn evaluate_json(source : String, max_steps : Int) -> String {
+fn evaluate_json(source : String, max_steps : Int32) -> String {
   let document : Map[String, Json] = Map([])
   match @moonwren.run_with_limit(source, max_steps) {
     @moonwren.ProgramCompleted(value, output) => {
