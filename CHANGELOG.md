@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- make differential fuzzing build the Wren 0.4.0 reference on current Linux,
+  separate the latest harness from the tagged candidate checkout, and retain
+  preflight failure summaries;
+- restrict generated class and Map programs to official Wren semantics and
+  compare failed executions by exit category and source line instead of
+  implementation-specific diagnostic prose;
+
 ## 0.9.4 - 2026-10-31
 
 - add a machine-checked 22-area compatibility contract with explicit
