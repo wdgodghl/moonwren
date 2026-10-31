@@ -30,8 +30,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout tested MoonWren source
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.sha }}
+          path: .candidate
       - name: Checkout official Wren CLI 0.4.0
         uses: actions/checkout@v4
         with:
@@ -43,8 +46,12 @@ jobs:
         with:
           version: 0.10.18+6c83a7f62
           core-version: 0.10.18+6c83a7f62
-      - run: moon update
-      - run: moon build --target native cmd/main
+      - name: Resolve tested MoonWren dependencies
+        working-directory: .candidate
+        run: moon update
+      - name: Build tested MoonWren CLI
+        working-directory: .candidate
+        run: moon build --target native cmd/main
       - name: Apply upstream writeFn portability rename
         shell: pwsh
         run: |
@@ -67,10 +74,11 @@ jobs:
         run: >-
           ./tools/fuzz-differential.ps1
           -OfficialWren .official-wren-cli/bin/wren_cli
+          -MoonWren .candidate/_build/native/debug/build/cmd/main/main
           -Cases ${{ inputs.cases || 1000 }}
           -Seed ${{ matrix.seed }}
           -MaxSeconds 900
-          -CorpusDirectory conformance/wren-0.4.0
+          -CorpusDirectory .candidate/conformance/wren-0.4.0
       - name: Upload minimized mismatch
         if: failure()
         uses: actions/upload-artifact@v4

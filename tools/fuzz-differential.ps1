@@ -73,7 +73,7 @@ function New-GeneratedProgram {
     3 { return "var worker = Fiber.new {`n  Fiber.yield($a)`n  return $b`n}`nSystem.print(worker.call())`nSystem.print(worker.call())`n" }
     4 { return "var text = `"你好-MoonWren-$limit`"`nSystem.print(text.count)`nSystem.print(text.bytes.count)`nSystem.print(text.contains(`"Moon`"))`n" }
     5 { return "var base = $a`nvar make = Fn.new { |offset| Fn.new { |value| base + offset + value } }`nvar add = make.call($b)`nSystem.print(add.call($limit))`n" }
-    6 { return "class Base { construct new(value) { _value = value } value { _value } }`nclass Child is Base { construct new(value) { super(value) } doubled { super.value * 2 } }`nvar item = Child.new($limit)`nSystem.print(item.value)`nSystem.print(item.doubled)`n" }
+    6 { return "class Base {`n  construct new(value) { _value = value }`n  value { _value }`n}`nclass Child is Base {`n  construct new(value) { super(value) }`n  doubled { super.value * 2 }`n}`nvar item = Child.new($limit)`nSystem.print(item.value)`nSystem.print(item.doubled)`n" }
     7 { return "var values = (1..$limit).map { |value| value * 2 }.where { |value| value % 3 == 0 }.toList`nSystem.print(values.count)`nSystem.print(values.reduce(0) { |sum, value| sum + value })`n" }
     8 { return "var text = String.fromByte($($limit + 127)) + `"abc`"`nSystem.print(text.bytes.count)`nSystem.print(text.bytes[0])`nSystem.print(text[1..-1])`n" }
     default { return "var values = {`"a`": $a, `"b`": $b, `"limit`": $limit}`nvar total = 0`nfor (entry in values) total = total + entry.value`nSystem.print(total)`nSystem.print(values.keys.toList.join(`",`"))`n" }
