@@ -66,7 +66,8 @@ change, not routine dependency maintenance.
 
 - working tree contains only intended changes;
 - compiler is at least 0.10.16 and matches the CI pin used for verification;
-- CI verifies both the 0.10.16 floor and the current pinned toolchain;
+- CI rejects a declared or installed compiler below 0.10.16 and runs the full
+  suite with the reproducibly pinned release toolchain;
 - the full local gate and GitHub CI pass;
 - package version, SDK version, README install command, and changelog agree;
 - compatibility counts and explicit exclusions remain accurate;

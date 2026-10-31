@@ -59,6 +59,8 @@ jobs:
         working-directory: web
         run: npm run test:browser -- --project=chromium
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .tmp/pages

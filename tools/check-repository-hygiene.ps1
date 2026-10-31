@@ -26,7 +26,9 @@ try {
   foreach ($path in $repositoryFiles) {
     if ($path -eq "tools/check-repository-hygiene.ps1") { continue }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-    $item = Get-Item -LiteralPath $path
+    # Get-Item treats dotfiles inconsistently on some PowerShell/Linux builds.
+    # FileInfo gives the same byte-level view on Windows, macOS, and Linux.
+    $item = [IO.FileInfo]::new((Join-Path $projectRoot $path))
     if ($item.Length -gt 2MB) { continue }
     $text = [IO.File]::ReadAllText($item.FullName)
     foreach ($pattern in $patterns) {

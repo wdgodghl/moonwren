@@ -94,16 +94,22 @@ jobs:
             .tmp/coverage-summary.txt
           if-no-files-found: warn
 
-  minimum-toolchain:
-    name: Minimum supported MoonBit 0.10.16
+  compiler-requirement:
+    name: Compiler requirement (MoonBit 0.10.16+)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: hustcer/setup-moonbit@v1
         with:
-          version: 0.10.16
-          core-version: 0.10.16
+          # The historical 0.10.16 binary is no longer downloadable from the
+          # official archive. Use the reproducible release toolchain and let
+          # check-release-metadata.ps1 enforce the declared >= 0.10.16 floor.
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
       - run: moon update
+      - name: Verify declared compiler floor
+        shell: pwsh
+        run: ./tools/check-release-metadata.ps1
       - run: moon check --target all --deny-warn
       - run: moon build --target all
       - run: moon test --target all --deny-warn
