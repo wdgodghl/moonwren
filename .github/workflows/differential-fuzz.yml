@@ -9,15 +9,20 @@ on:
         default: "1000"
         type: string
   schedule:
-    - cron: "17 3 * * 1"
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: differential-fuzz
+  cancel-in-progress: false
 
 jobs:
   compare:
     strategy:
       fail-fast: false
       matrix:
-        seed: [20261025, 20261031]
+        seed: [20261025, 20261031, 20261101]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Checkout official Wren CLI 0.4.0
@@ -45,6 +50,7 @@ jobs:
           -OfficialWren .official-wren-cli/bin/wren_cli
           -Cases ${{ inputs.cases || 1000 }}
           -Seed ${{ matrix.seed }}
+          -MaxSeconds 900
           -CorpusDirectory conformance/wren-0.4.0
       - name: Upload minimized mismatch
         if: failure()
@@ -53,4 +59,12 @@ jobs:
           name: differential-failure-${{ matrix.seed }}
           path: .tmp/fuzz-failures
           if-no-files-found: warn
+          retention-days: 90
+      - name: Upload deterministic run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-summary-${{ matrix.seed }}
+          path: .tmp/fuzz-results
+          if-no-files-found: error
           retention-days: 30
