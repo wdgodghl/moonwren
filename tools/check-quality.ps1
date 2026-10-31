@@ -27,6 +27,7 @@ Push-Location $root
 try {
   Invoke-Gate "Release metadata" { & "$PSScriptRoot/check-release-metadata.ps1" }
   Invoke-Gate "Documentation links" { & "$PSScriptRoot/check-doc-links.ps1" }
+  Invoke-Gate "Compatibility contract" { & "$PSScriptRoot/check-compatibility-contract.ps1" }
   Invoke-Gate "Repository hygiene" { & "$PSScriptRoot/check-repository-hygiene.ps1" }
   Invoke-Gate "Public API snapshot" { & "$PSScriptRoot/check-public-api.ps1" }
   Invoke-Gate "Formatting" { moon fmt --check }
@@ -61,6 +62,7 @@ try {
     moon build --target native --release cmd/benchmark
   }
   Invoke-Gate "Performance smoke" { & "$PSScriptRoot/check-performance.ps1" -SmokeOnly }
+  Invoke-Gate "Persistent VM resource smoke" { & "$PSScriptRoot/check-vm-soak.ps1" -Quick }
   Invoke-Gate "Checked-in Wren comparison" { & "$PSScriptRoot/check-conformance.ps1" }
 
   if ($WrenRoot) {

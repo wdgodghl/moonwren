@@ -1,0 +1,25 @@
+name: Persistent VM Soak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 2 * * *"
+
+concurrency:
+  group: persistent-vm-soak
+  cancel-in-progress: false
+
+jobs:
+  native-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
+      - run: moon update
+      - name: Run 10,000-operation persistent VM soak
+        shell: pwsh
+        run: ./tools/check-vm-soak.ps1

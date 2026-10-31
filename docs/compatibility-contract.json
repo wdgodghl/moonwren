@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "target": {
+    "language": "Wren",
+    "version": "0.4.0",
+    "commit": "4a18fc489f9ea3d253b20dd40f4cdad0d6bb40eb",
+    "reference_path": "tree-walking interpreter"
+  },
+  "areas": [
+    {"id":"source-diagnostics","level":"supported","evidence":["source_test.mbt","interpreter_test.mbt"]},
+    {"id":"lexer","level":"supported","evidence":["lexer_test.mbt"]},
+    {"id":"parser","level":"supported","evidence":["parser_test.mbt","program_parser_test.mbt"]},
+    {"id":"resolver","level":"supported","evidence":["interpreter_test.mbt","resolver.mbt"]},
+    {"id":"expressions-control-flow","level":"supported","evidence":["evaluator_test.mbt","interpreter_test.mbt"]},
+    {"id":"core-library","level":"supported","evidence":["core_library_test.mbt","value_test.mbt"]},
+    {"id":"functions-classes","level":"supported","evidence":["interpreter_test.mbt"]},
+    {"id":"fibers","level":"supported","evidence":["fiber_test.mbt","async_task_test.mbt","vm_resilience_test.mbt"]},
+    {"id":"modules","level":"supported","evidence":["interpreter_test.mbt","conformance/wren-0.4.0"]},
+    {"id":"foreign-bindings","level":"supported","evidence":["foreign_test.mbt","vm_resilience_test.mbt"]},
+    {"id":"persistent-vm","level":"supported","evidence":["vm_test.mbt","embedding_api_test.mbt","vm_resilience_test.mbt"]},
+    {"id":"resource-limits","level":"supported","evidence":["vm_test.mbt","vm_resilience_test.mbt","tools/check-vm-soak.ps1"]},
+    {"id":"native-cli","level":"supported","evidence":["tools/check-cli-acceptance.ps1"]},
+    {"id":"javascript-sdk","level":"supported","evidence":["web/sdk.test.mjs","web/tests/playground.spec.mjs"]},
+    {"id":"optional-modules","level":"optional","evidence":["optional_modules_test.mbt","standard_modules_test.mbt"]},
+    {"id":"hot-reload-snapshots","level":"experimental","evidence":["hot_reload_test.mbt","state_snapshot_test.mbt","vm_resilience_test.mbt"]},
+    {"id":"bytecode-tooling","level":"experimental","evidence":["bytecode_test.mbt","bytecode_debugger.mbt"]},
+    {"id":"scheduler-replay","level":"experimental","evidence":["async_scheduler_test.mbt","deterministic_replay_test.mbt"]},
+    {"id":"editor-tooling","level":"experimental","evidence":["language_service_test.mbt","live_debugger_test.mbt"]},
+    {"id":"official-c-api-abi","level":"excluded","evidence":["docs/project-boundary.md"]},
+    {"id":"host-os-sandbox","level":"excluded","evidence":["SECURITY.md","docs/project-boundary.md"]},
+    {"id":"runtime-identity-serialization","level":"excluded","evidence":["docs/project-boundary.md","docs/hot-reload.md"]}
+  ]
+}

@@ -28,6 +28,7 @@ jobs:
         shell: pwsh
         run: |
           ./tools/check-doc-links.ps1
+          ./tools/check-compatibility-contract.ps1
           ./tools/check-release-metadata.ps1
           ./tools/check-repository-hygiene.ps1
           ./tools/check-public-api.ps1
@@ -65,6 +66,9 @@ jobs:
       - name: Run performance smoke gate
         shell: pwsh
         run: ./tools/check-performance.ps1 -SmokeOnly
+      - name: Run persistent VM resource smoke
+        shell: pwsh
+        run: ./tools/check-vm-soak.ps1 -Quick
       - name: Run tests
         run: moon test --target all --deny-warn
       - name: Measure supported-path coverage
