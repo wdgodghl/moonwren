@@ -20,7 +20,20 @@ if (-not $FailureDirectory) { $FailureDirectory = Join-Path $projectRoot ".tmp/f
 $resultDirectory = Join-Path $projectRoot ".tmp/fuzz-results"
 New-Item -ItemType Directory -Path $resultDirectory -Force | Out-Null
 foreach ($executable in @($OfficialWren, $MoonWren)) {
-  if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Executable not found: $executable" }
+  if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+    $failureSummary = [ordered]@{
+      seed = $Seed
+      status = "failed"
+      message = "Executable not found: $executable"
+    }
+    $summaryPath = Join-Path $resultDirectory ("seed-{0}.json" -f $Seed)
+    [System.IO.File]::WriteAllText(
+      $summaryPath,
+      ($failureSummary | ConvertTo-Json),
+      [Text.UTF8Encoding]::new($false)
+    )
+    throw "Executable not found: $executable"
+  }
 }
 
 $random = [System.Random]::new($Seed)

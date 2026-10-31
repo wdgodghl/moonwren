@@ -74,7 +74,7 @@ jobs:
         run: >-
           ./tools/fuzz-differential.ps1
           -OfficialWren .official-wren-cli/bin/wren_cli
-          -MoonWren .candidate/_build/native/debug/build/cmd/main/main
+          -MoonWren .candidate/_build/native/debug/build/cmd/main/main.exe
           -Cases ${{ inputs.cases || 1000 }}
           -Seed ${{ matrix.seed }}
           -MaxSeconds 900
