@@ -3,6 +3,11 @@ name: Differential Fuzzing
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: MoonWren branch, tag, or commit to test
+        required: true
+        default: "main"
+        type: string
       cases:
         description: Generated cases per deterministic seed
         required: true
@@ -25,6 +30,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - name: Checkout official Wren CLI 0.4.0
         uses: actions/checkout@v4
         with:
@@ -38,6 +45,18 @@ jobs:
           core-version: 0.10.18+6c83a7f62
       - run: moon update
       - run: moon build --target native cmd/main
+      - name: Apply upstream writeFn portability rename
+        shell: pwsh
+        run: |
+          $path = ".official-wren-cli/src/cli/vm.c"
+          $source = [IO.File]::ReadAllText($path)
+          $source = $source.Replace("static void write(", "static void writeFn(")
+          $source = $source.Replace("config.writeFn = write;", "config.writeFn = writeFn;")
+          if (-not $source.Contains("static void writeFn(") -or
+              -not $source.Contains("config.writeFn = writeFn;")) {
+            throw "Could not apply the upstream writeFn portability rename."
+          }
+          [IO.File]::WriteAllText($path, $source, [Text.UTF8Encoding]::new($false))
       - name: Build official Wren CLI
         run: make -C .official-wren-cli/projects/make
       - name: Verify the reference executable
