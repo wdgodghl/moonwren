@@ -5,7 +5,7 @@ MoonWren 是使用 MoonBit 实现、面向嵌入场景的 Wren 0.4.0 兼容解�
 ## 安装与最小使用
 
 ```text
-moon add wdgodghl/moonwren@0.9.3
+moon add wdgodghl/moonwren@0.9.4
 ```
 
 在使用方 `moon.pkg` 中导入 `wdgodghl/moonwren` 后：

@@ -1,7 +1,7 @@
 # Getting started
 
 This guide proves the shortest supported path from a clean MoonBit project to
-a running Wren program. MoonBit 0.10.16 or newer is required; release 0.9.3 is
+a running Wren program. MoonBit 0.10.16 or newer is required; release 0.9.4 is
 verified with `moonc 0.10.18+6c83a7f62`.
 
 ## Use MoonWren as a library
@@ -11,10 +11,10 @@ Create a MoonBit project and add the published package:
 ```text
 moon new moonwren-demo
 cd moonwren-demo
-moon add wdgodghl/moonwren@0.9.3
+moon add wdgodghl/moonwren@0.9.4
 ```
 
-`tools/check-published-package.ps1 -Version 0.9.3` reproduces this path from an
+`tools/check-published-package.ps1 -Version 0.9.4` reproduces this path from an
 unrelated temporary project and verifies that the dependency came from the
 registry rather than the repository checkout.
 
@@ -73,7 +73,7 @@ codes.
 To install the same CLI from Mooncakes without cloning this repository:
 
 ```text
-moon install wdgodghl/moonwren/cmd/main@0.9.3
+moon install wdgodghl/moonwren/cmd/main@0.9.4
 main --eval "System.print(6 * 7)"
 ```
 

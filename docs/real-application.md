@@ -2,7 +2,7 @@
 
 `moonwren-json-pipeline` is a separate MoonBit project, not a package inside
 the MoonWren source tree. Its `moon.mod` resolves
-`wdgodghl/moonwren@0.9.3` from Mooncakes, which makes it evidence about the
+`wdgodghl/moonwren@0.9.4` from Mooncakes, which makes it evidence about the
 published consumer experience rather than an internal example.
 
 The application reads JSONL events, validates their primitive fields, and

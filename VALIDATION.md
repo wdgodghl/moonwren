@@ -13,7 +13,7 @@ experimental surfaces, non-goals, and the security boundary.
 
 ```text
 moon view wdgodghl/moonwren
-./tools/check-published-package.ps1 -Version 0.9.3
+./tools/check-published-package.ps1 -Version 0.9.4
 ```
 
 The second command creates an unrelated project under the operating system's
@@ -40,7 +40,7 @@ with retained seed summaries and minimized mismatch artifacts.
 ## 4. Confirm a real embedding application
 
 The separate `moonwren-json-pipeline` project depends on
-`wdgodghl/moonwren@0.9.3` through Mooncakes and has no source-tree dependency.
+`wdgodghl/moonwren@0.9.4` through Mooncakes and has no source-tree dependency.
 From that checkout run:
 
 ```text

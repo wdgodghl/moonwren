@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.4 - 2026-10-31
+
 - add a machine-checked 22-area compatibility contract with explicit
   supported, optional, experimental, and excluded levels;
 - add persistent-VM combination tests for resource failure recovery, Fiber

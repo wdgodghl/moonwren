@@ -97,7 +97,7 @@ After an immutable Mooncakes version is published, verify it from outside the
 checkout:
 
 ```text
-./tools/check-published-package.ps1 -Version 0.9.3
+./tools/check-published-package.ps1 -Version 0.9.4
 ```
 
 This check creates a temporary consumer, resolves the registry dependency,

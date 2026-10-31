@@ -31,13 +31,13 @@ surface instead of silently expanding the compatibility claim.
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.9.3
+moon add wdgodghl/moonwren@0.9.4
 ```
 
 Install the supported native command-line runner directly from Mooncakes:
 
 ```text
-moon install wdgodghl/moonwren/cmd/main@0.9.3
+moon install wdgodghl/moonwren/cmd/main@0.9.4
 ```
 
 The installed executable is currently named `main`; its process contract and
@@ -102,7 +102,7 @@ System.print(Meta.compileExpression("20 + 22").call())
 
 ## Development
 
-The project requires MoonBit `0.10.16` or newer. Release `0.9.3` is verified
+The project requires MoonBit `0.10.16` or newer. Release `0.9.4` is verified
 with MoonBit `0.10.18+6c83a7f62`.
 
 ```text
