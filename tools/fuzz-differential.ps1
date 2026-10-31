@@ -46,12 +46,31 @@ function Invoke-WrenProgram {
   [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = (($output | ForEach-Object { $_.ToString() }) -join "`n").TrimEnd() }
 }
 
+function Get-DiagnosticLine {
+  param([string]$Output)
+  $official = [regex]::Match($Output, '(?m)\bline (?<line>\d+)\]')
+  if ($official.Success) { return [int]$official.Groups['line'].Value }
+  $candidate = [regex]::Match($Output, '(?m):(?<line>\d+):\d+:')
+  if ($candidate.Success) { return [int]$candidate.Groups['line'].Value }
+  return $null
+}
+
 function Test-DifferentialMismatch {
   param([string]$Source, [string]$CasePath)
   [System.IO.File]::WriteAllText($CasePath, $Source)
   $official = Invoke-WrenProgram -Executable $OfficialWren -Path $CasePath
   $candidate = Invoke-WrenProgram -Executable $MoonWren -Path $CasePath
-  [pscustomobject]@{ Mismatch = $official.ExitCode -ne $candidate.ExitCode -or $official.Output -ne $candidate.Output; Official = $official; Candidate = $candidate }
+  $mismatch = $official.ExitCode -ne $candidate.ExitCode
+  if (-not $mismatch -and $official.ExitCode -eq 0) {
+    $mismatch = $official.Output -ne $candidate.Output
+  } elseif (-not $mismatch) {
+    $officialLine = Get-DiagnosticLine -Output $official.Output
+    $candidateLine = Get-DiagnosticLine -Output $candidate.Output
+    if ($null -ne $officialLine -and $null -ne $candidateLine) {
+      $mismatch = $officialLine -ne $candidateLine
+    }
+  }
+  [pscustomobject]@{ Mismatch = $mismatch; Official = $official; Candidate = $candidate }
 }
 
 function Reduce-FailingProgram {
@@ -162,3 +181,4 @@ catch {
 finally {
   if (Test-Path -LiteralPath $temporaryRoot) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force }
 }
+exit 0

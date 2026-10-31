@@ -38,8 +38,11 @@ then run:
 ```
 
 The generator covers arithmetic/control flow, Lists, Maps, Fibers, closures,
-classes, lazy sequences, and UTF-8/byte String behavior, then compares exit
-status and output. `-CorpusDirectory` adds
+classes, lazy sequences, and UTF-8/byte String behavior. Successful programs
+require byte-for-byte output equality. Failed programs require the same exit
+category and, when both CLIs report one, the same source line; diagnostic prose
+and temporary path formatting are intentionally not compared because the
+official suite separately gates diagnostic locations. `-CorpusDirectory` adds
 sorted `.wren` regression seeds. On mismatch the tool removes lines while the
 failure remains reproducible and saves the minimized source plus both outputs
 under `.tmp/fuzz-failures` (or `-FailureDirectory`). Every run also writes a
