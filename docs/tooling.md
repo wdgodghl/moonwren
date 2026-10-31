@@ -37,15 +37,19 @@ then run:
 ./tools/fuzz-differential.ps1 -OfficialWren C:/path/to/wren_cli.exe -Cases 1000 -Seed 20261025
 ```
 
-The generator covers arithmetic/control flow, Lists, Maps, Fibers, and UTF-8
-String behavior, then compares exit status and output. `-CorpusDirectory` adds
+The generator covers arithmetic/control flow, Lists, Maps, Fibers, closures,
+classes, lazy sequences, and UTF-8/byte String behavior, then compares exit
+status and output. `-CorpusDirectory` adds
 sorted `.wren` regression seeds. On mismatch the tool removes lines while the
 failure remains reproducible and saves the minimized source plus both outputs
-under `.tmp/fuzz-failures` (or `-FailureDirectory`).
+under `.tmp/fuzz-failures` (or `-FailureDirectory`). Every run also writes a
+JSON seed, execution-count, matched-success/failure, elapsed-time, and timeout
+summary under `.tmp/fuzz-results`.
 
-The `Differential Fuzzing` workflow runs two fixed seeds every week and on
-demand. Fixed seeds make every failure reproducible; a minimized failure must
-be promoted into the checked-in corpus before the underlying bug is closed.
+The `Differential Fuzzing` workflow runs three fixed seeds every day and on
+demand. Fixed seeds make every failure reproducible. CI retains summaries and
+keeps minimized mismatches for 90 days; a confirmed mismatch must be promoted
+into the checked-in corpus before the underlying bug is closed.
 
 ## Performance regression checks
 

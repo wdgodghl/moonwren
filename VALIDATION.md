@@ -28,11 +28,33 @@ compares exact output. It does not use this checkout as a dependency.
 ```
 
 The command verifies formatting, static checks, public API stability, repository
-hygiene, 322 MoonBit tests on four targets, native process behavior, real
+hygiene, 331 MoonBit tests on four targets, native process behavior, real
 browsers, coverage, performance smoke tests, differential fixtures, and the
 official Wren suite.
 
-## 4. Inspect compatibility evidence
+The same gate checks the machine-readable compatibility contract and runs the
+short persistent-VM resource soak. The scheduled `Persistent VM Soak` workflow
+runs the 10,000-operation profile, while `Differential Fuzzing` runs every day
+with retained seed summaries and minimized mismatch artifacts.
+
+## 4. Confirm a real embedding application
+
+The separate `moonwren-json-pipeline` project depends on
+`wdgodghl/moonwren@0.9.3` through Mooncakes and has no source-tree dependency.
+From that checkout run:
+
+```text
+./tools/check.ps1
+```
+
+It checks all MoonBit targets and executes a JSONL rules pipeline through a
+persistent VM, cached method binding, host audit callback, GC policy, and
+resource-limit failure case. The behavior and proof obligations are documented
+in [`docs/real-application.md`](docs/real-application.md).
+From the MoonWren checkout, the equivalent command is
+`./tools/check-real-application.ps1` when both projects are adjacent.
+
+## 5. Inspect compatibility evidence
 
 - [`docs/wren-0.4-conformance.md`](docs/wren-0.4-conformance.md) defines done.
 - [`docs/compatibility.md`](docs/compatibility.md) records the implemented matrix.
@@ -42,14 +64,14 @@ official Wren suite.
 The expected official-suite result is 779 passed, 0 failed, and 22 files marked
 `skip` or `nontest` by upstream.
 
-## 5. Exercise the browser path
+## 6. Exercise the browser path
 
 After GitHub Pages is enabled, the `Playground Pages` workflow deploys the
 static playground and tests the public URL with Chromium. The main CI also runs
 the complete local playground and Worker contract in Chromium, Firefox, and
 WebKit.
 
-## 6. Check release identity
+## 7. Check release identity
 
 The version in Mooncakes, `moon.mod`, the JavaScript SDK, README installation
 commands, CHANGELOG, Git tag, and GitHub Release must agree. The release process

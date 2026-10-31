@@ -4,6 +4,21 @@ MoonWren has one primary job: execute Wren 0.4.0 source inside MoonBit
 applications with predictable language behavior and explicit host boundaries.
 This document is the scope contract for releases and reviews.
 
+The machine-readable companion
+[`compatibility-contract.json`](compatibility-contract.json) assigns every
+claimed area to one of four levels and names its executable evidence. CI rejects
+missing evidence, duplicate areas, an unknown level, or an accidental change to
+the Wren reference version and commit.
+
+## Contract levels
+
+| Level | Meaning |
+| --- | --- |
+| Supported | Release-gated behavior that embedders may rely on within the documented limits. |
+| Optional | Wren 0.4.0 optional modules or opt-in host facilities with explicit activation. |
+| Experimental | Tested MoonWren tooling whose API may change before 1.0 and does not widen the Wren compatibility claim. |
+| Excluded | A deliberate non-goal; applications must not infer support from adjacent functionality. |
+
 ## Normative compatibility target
 
 The source-language target is `wren-lang/wren` tag `0.4.0`, commit
@@ -32,6 +47,22 @@ The public behavior is the observable result, diagnostic category/location,
 exit code, resource-limit failure, and documented host callback contract. The
 internal object layout, registry indexes, and implementation strategy are not
 part of the contract.
+
+## Persistent VM lifecycle contract
+
+| Situation | Required behavior |
+| --- | --- |
+| Successful host call | Module state, closures, instances, and live Fibers remain available to later calls. |
+| Script, resource-limit, or foreign-callback failure | The operation returns structured diagnostics; a later independent call may continue unless the VM was explicitly closed or successfully reloaded. |
+| Explicit or automatic collection | Strong module roots, live handles, and suspended async tasks remain reachable; unreachable foreign instances are finalized exactly once. |
+| Failed hot reload | The current generation, handles, suspended tasks, sources, and migrated state remain unchanged. |
+| Successful hot reload | The replacement commits atomically, starts a new generation, and rejects all handles and suspended tasks from the previous generation. |
+| VM close | Remaining foreign instances are finalized exactly once and all subsequent operations fail safely. |
+
+Foreign callbacks execute while the interpreter is suspended and cannot
+re-enter the same VM. Resource limits reset for each host operation. The short
+combination suite and scheduled 10,000-operation soak exercise these lifecycle
+rules together rather than only testing each component in isolation.
 
 ## Optional and experimental surfaces
 

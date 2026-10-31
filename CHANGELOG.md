@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- add a machine-checked 22-area compatibility contract with explicit
+  supported, optional, experimental, and excluded levels;
+- add persistent-VM combination tests for resource failure recovery, Fiber
+  suspension, garbage collection, hot-reload generation changes, foreign
+  callback failures, and invalid host handles;
+- add a daily 10,000-operation VM soak with bounded reachability and exact
+  foreign-finalizer accounting;
+- raise the coverage gates to 70% repository-wide and 74% for the core
+  lexer/parser/resolver/evaluator/interpreter/embedding execution paths;
+- expand daily official-Wren differential fuzzing with three deterministic
+  seeds, closures, classes, sequences, byte strings, time budgets, retained
+  summaries, mismatch metadata, and 90-day minimized reproducers;
+- add the independent `moonwren-json-pipeline` Mooncakes consumer application
+  with JSONL input, persistent rules, host audit callbacks, resource limits,
+  five cross-target tests, and exact CLI output acceptance.
+
 ## 0.9.3 - 2026-10-31
 
 - add repository-external Mooncakes library and CLI acceptance;

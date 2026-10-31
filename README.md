@@ -557,6 +557,12 @@ static-method, and import frames while unwinding.
 The implementation pipeline and package boundaries are documented in
 [`docs/architecture.md`](docs/architecture.md).
 
+The independent `moonwren-json-pipeline` companion resolves the immutable
+Mooncakes package instead of this source tree and exercises a persistent VM,
+cached host call, audit callback, JSONL batch, garbage collection, and resource
+failure in a complete small application. Its proof obligations are documented
+in [`docs/real-application.md`](docs/real-application.md).
+
 ## License and references
 
 MoonWren is licensed under Apache-2.0. The implementation uses the public Wren
