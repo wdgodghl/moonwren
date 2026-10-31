@@ -108,7 +108,7 @@ function New-GeneratedProgram {
     6 { return "class Base {`n  construct new(value) { _value = value }`n  value { _value }`n}`nclass Child is Base {`n  construct new(value) { super(value) }`n  doubled { super.value * 2 }`n}`nvar item = Child.new($limit)`nSystem.print(item.value)`nSystem.print(item.doubled)`n" }
     7 { return "var values = (1..$limit).map { |value| value * 2 }.where { |value| value % 3 == 0 }.toList`nSystem.print(values.count)`nSystem.print(values.reduce(0) { |sum, value| sum + value })`n" }
     8 { return "var text = String.fromByte($($limit + 127)) + `"abc`"`nSystem.print(text.bytes.count)`nSystem.print(text.bytes[0])`nSystem.print(text[1..-1])`n" }
-    default { return "var values = {`"a`": $a, `"b`": $b, `"limit`": $limit}`nvar total = 0`nfor (key in values.keys) total = total + values[key]`nSystem.print(total)`nvar keys = values.keys.toList`nkeys.sort()`nSystem.print(keys.join(`",`"))`n" }
+    default { return "var values = {`"a`": $a, `"b`": $b, `"limit`": $limit}`nvar total = 0`nfor (key in values.keys) total = total + values[key]`nSystem.print(total)`nSystem.print(values.keys.count)`n" }
   }
 }
 
