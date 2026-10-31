@@ -1,0 +1,22 @@
+name: Published Package Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable Mooncakes version to verify
+        required: true
+        type: string
+
+jobs:
+  clean-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
+      - name: Install and run the published library and CLI
+        shell: pwsh
+        run: ./tools/check-published-package.ps1 -Version '${{ inputs.version }}'

@@ -2,6 +2,15 @@ name: Playground Pages
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "cmd/web_demo/**"
+      - "*.mbt"
+      - "moon.mod"
+      - "moon.pkg"
+      - ".github/workflows/pages.yml"
 
 permissions:
   contents: read
@@ -25,6 +34,16 @@ jobs:
           version: 0.10.18+6c83a7f62
           core-version: 0.10.18+6c83a7f62
       - run: moon update
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Chromium acceptance dependency
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - run: moon build --target js --release cmd/web_demo
       - name: Assemble static playground
         shell: pwsh
@@ -32,10 +51,22 @@ jobs:
           $artifact = Get-ChildItem -LiteralPath _build/js -Recurse -File -Filter web_demo.js | Select-Object -First 1
           if (-not $artifact) { throw "MoonBit did not produce web_demo.js" }
           Copy-Item -LiteralPath $artifact.FullName -Destination web/moonwren.js -Force
+          New-Item -ItemType Directory -Force -Path .tmp/pages | Out-Null
+          @('index.html', 'style.css', 'moonwren.js', 'sdk.mjs', 'sdk.d.ts', 'worker.mjs') | ForEach-Object {
+            Copy-Item -LiteralPath (Join-Path web $_) -Destination .tmp/pages -Force
+          }
+      - name: Test the assembled playground before deployment
+        working-directory: web
+        run: npm run test:browser -- --project=chromium
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: .tmp/pages
       - name: Deploy playground
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Smoke-test the deployed public URL
+        working-directory: web
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: npm run test:browser:deployed -- --project=chromium

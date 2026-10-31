@@ -1,0 +1,56 @@
+name: Differential Fuzzing
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Generated cases per deterministic seed
+        required: true
+        default: "1000"
+        type: string
+  schedule:
+    - cron: "17 3 * * 1"
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [20261025, 20261031]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout official Wren CLI 0.4.0
+        uses: actions/checkout@v4
+        with:
+          repository: wren-lang/wren-cli
+          ref: 0.4.0
+          path: .official-wren-cli
+          submodules: recursive
+      - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
+      - run: moon update
+      - run: moon build --target native cmd/main
+      - name: Build official Wren CLI
+        run: make -C .official-wren-cli/projects/make
+      - name: Verify the reference executable
+        shell: pwsh
+        run: ./tools/verify-official-wren.ps1 -WrenExecutable .official-wren-cli/bin/wren_cli
+      - name: Run deterministic differential cases
+        shell: pwsh
+        run: >-
+          ./tools/fuzz-differential.ps1
+          -OfficialWren .official-wren-cli/bin/wren_cli
+          -Cases ${{ inputs.cases || 1000 }}
+          -Seed ${{ matrix.seed }}
+          -CorpusDirectory conformance/wren-0.4.0
+      - name: Upload minimized mismatch
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-failure-${{ matrix.seed }}
+          path: .tmp/fuzz-failures
+          if-no-files-found: warn
+          retention-days: 30

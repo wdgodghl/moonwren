@@ -9,7 +9,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-if (-not $MoonWren) { $MoonWren = Join-Path $projectRoot "_build/native/debug/build/cmd/main/main.exe" }
+if (-not $MoonWren) {
+  $MoonWren = @(
+    (Join-Path $projectRoot "_build/native/debug/build/cmd/main/main"),
+    (Join-Path $projectRoot "_build/native/debug/build/cmd/main/main.exe")
+  ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+}
 if (-not $FailureDirectory) { $FailureDirectory = Join-Path $projectRoot ".tmp/fuzz-failures" }
 foreach ($executable in @($OfficialWren, $MoonWren)) {
   if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Executable not found: $executable" }

@@ -1,7 +1,7 @@
 # Getting started
 
 This guide proves the shortest supported path from a clean MoonBit project to
-a running Wren program. MoonBit 0.10.16 or newer is required; release 0.9.2 is
+a running Wren program. MoonBit 0.10.16 or newer is required; release 0.9.3 is
 verified with `moonc 0.10.18+6c83a7f62`.
 
 ## Use MoonWren as a library
@@ -11,8 +11,12 @@ Create a MoonBit project and add the published package:
 ```text
 moon new moonwren-demo
 cd moonwren-demo
-moon add wdgodghl/moonwren@0.9.2
+moon add wdgodghl/moonwren@0.9.3
 ```
+
+`tools/check-published-package.ps1 -Version 0.9.3` reproduces this path from an
+unrelated temporary project and verifies that the dependency came from the
+registry rather than the repository checkout.
 
 Add `wdgodghl/moonwren` to the consumer package's `moon.pkg`, then call the
 library as `@moonwren`:
@@ -66,6 +70,16 @@ The native CLI contract is covered by `tools/check-cli-acceptance.ps1`,
 including imports, compile errors, runtime errors, missing files, and exit
 codes.
 
+To install the same CLI from Mooncakes without cloning this repository:
+
+```text
+moon install wdgodghl/moonwren/cmd/main@0.9.3
+main --eval "System.print(6 * 7)"
+```
+
+The current installed binary name is `main`. The package and command name are
+recorded explicitly because this is a pre-1.0 distribution detail.
+
 ## Choose the right embedding path
 
 - Use `run` for isolated configuration, rules, templates, and short scripts.
@@ -107,4 +121,7 @@ instead of process exit codes.
   resource exhaustion is returned as a diagnostic.
 - **Behavior differs from Wren:** reproduce it with the official 0.4.0 CLI and
   the commands in [`testing.md`](testing.md), then reduce it to a fixture.
+- **Browser playground is unavailable:** the public site is only supported
+  after the `Playground Pages` workflow succeeds; the deployment workflow runs
+  a real Chromium smoke test before reporting success.
 

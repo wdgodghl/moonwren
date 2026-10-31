@@ -1,5 +1,9 @@
 # MoonWren
 
+[中文简介](README.zh-CN.md) · [Independent validation](VALIDATION.md) ·
+[Mooncakes package](https://mooncakes.io/docs/wdgodghl/moonwren) ·
+[CI](https://github.com/wdgodghl/moonwren/actions/workflows/ci.yml)
+
 MoonWren is a Wren 0.4.0-compatible scripting language implementation written in
 MoonBit. It is designed as an embeddable interpreter with a small public API, a
 standalone command-line runner, and behavior-focused compatibility tests.
@@ -27,8 +31,18 @@ surface instead of silently expanding the compatibility claim.
 Add the published package to a MoonBit project:
 
 ```text
-moon add wdgodghl/moonwren@0.9.2
+moon add wdgodghl/moonwren@0.9.3
 ```
+
+Install the supported native command-line runner directly from Mooncakes:
+
+```text
+moon install wdgodghl/moonwren/cmd/main@0.9.3
+```
+
+The installed executable is currently named `main`; its process contract and
+exit categories are stable even though the distribution name may be improved
+before 1.0.
 
 Then import `wdgodghl/moonwren` from the consuming package's `moon.pkg` and use
 the library as `@moonwren`. The optional root-confined filesystem loader is in
@@ -57,6 +71,8 @@ input/output comparison cases are recorded in
   embedding example, expected output, and troubleshooting;
 - [`docs/project-boundary.md`](docs/project-boundary.md): supported contract,
   stability levels, security boundary, and explicit non-goals;
+- [`docs/public-api.md`](docs/public-api.md): supported and experimental API
+  surfaces plus the interface-change policy;
 - [`docs/testing.md`](docs/testing.md): test layers, exact commands, expected
   evidence, and what each gate does not prove;
 - [`docs/compatibility.md`](docs/compatibility.md): Wren language/core feature
@@ -65,6 +81,8 @@ input/output comparison cases are recorded in
   boundaries;
 - [`docs/embedding.md`](docs/embedding.md): persistent VM, handles, foreign
   bindings, cancellation, reload, and collection.
+- [`VALIDATION.md`](VALIDATION.md): the shortest independent release-review
+  path, starting from the published Mooncakes artifact.
 
 ## Optional Wren modules
 
@@ -84,7 +102,7 @@ System.print(Meta.compileExpression("20 + 22").call())
 
 ## Development
 
-The project requires MoonBit `0.10.16` or newer. Release `0.9.2` is verified
+The project requires MoonBit `0.10.16` or newer. Release `0.9.3` is verified
 with MoonBit `0.10.18+6c83a7f62`.
 
 ```text
@@ -96,8 +114,9 @@ moon run cmd/main
 ```
 
 The full command checks documentation links, release metadata, all MoonBit
-targets, the native CLI contract, the browser/Node SDK, performance smoke
-metrics, checked-in differential fixtures, and the official Wren 0.4.0 suite.
+targets, public API stability, repository hygiene, the native CLI contract,
+real Chromium/Firefox/WebKit behavior, coverage, performance smoke metrics,
+checked-in differential fixtures, and the official Wren 0.4.0 suite.
 See [`docs/testing.md`](docs/testing.md) for faster focused commands.
 
 Running the command without arguments executes the bundled summation example

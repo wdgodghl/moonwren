@@ -10,11 +10,16 @@ Every layer below answers a different question and is required before release.
 | Formatting and static checks | `moon fmt --check`; `moon check --target all --deny-warn` | Source is accepted without warnings on every supported MoonBit target. |
 | MoonBit tests | `moon test --target all --deny-warn` | 322 behavioral tests pass independently on wasm, wasm-gc, JavaScript, and native. |
 | Native CLI acceptance | `tools/check-cli-acceptance.ps1` | Real process output, imports, diagnostics, and exit codes match the documented CLI contract. |
-| Browser/Node smoke | `tools/build-web-demo.ps1`; `node web/sdk.test.mjs` | The generated JavaScript artifact can be consumed outside MoonBit. |
+| Browser/Node smoke | `tools/build-web-demo.ps1`; `node web/sdk.test.mjs` | The generated JavaScript artifact can be consumed by Node.js. |
+| Real browser acceptance | `tools/check-browser-e2e.ps1` | Chromium, Firefox, and WebKit execute the UI, diagnostics, sharing, examples, and module Worker contract. |
+| Published artifact | `tools/check-published-package.ps1 -Version <version>` | A repository-external project resolves the immutable Mooncakes package and exercises library, persistent VM, and installed CLI paths. |
 | Checked-in differential cases | `tools/check-conformance.ps1` | High-risk String and Fiber inputs match outputs captured from official Wren 0.4.0. |
+| Scheduled differential fuzzing | `tools/fuzz-differential.ps1` | Deterministic generated and corpus inputs match the official Wren CLI; minimized failures are retained as CI artifacts. |
 | Official upstream suite | `tools/check-official-suite.ps1 -WrenRoot <wren-0.4.0>` | All 779 adopted `language` and `core` cases pass; 22 upstream `skip`/`nontest` files are reported separately. |
 | Performance smoke | `tools/check-performance.ps1 -SmokeOnly` | Six benchmark metrics execute and broad AST/bytecode sanity ratios hold. |
 | Documentation and release metadata | `tools/check-doc-links.ps1`; `tools/check-release-metadata.ps1` | Local links resolve and the package, SDK, README, changelog, compiler floor, and CI pins agree. |
+| Public API and repository hygiene | `tools/check-public-api.ps1`; `tools/check-repository-hygiene.ps1` | Public symbols cannot drift silently and tracked files exclude common credentials, private paths, and transcripts. |
+| Coverage baseline | `tools/check-coverage.ps1` | The behavioral suite exercises at least 68% of instrumented source points; the report identifies remaining branch risk. |
 
 No layer substitutes for another. Unit tests do not prove the executable can be
 used, and the official suite does not prove MoonWren-specific embedding APIs.
@@ -32,7 +37,8 @@ From the repository root with an official Wren 0.4.0 checkout available:
 The command verifies the installed compiler floor, then runs every layer in the
 table. Use `-SkipOfficialSuite` only for an offline edit cycle. A release review
 must run without that switch, and CI independently checks out the pinned Wren
-tag.
+commit. `-SkipBrowserE2E` and `-SkipCoverage` are likewise edit-cycle options,
+not release-review options.
 
 ## Official-suite accounting
 
@@ -60,6 +66,7 @@ change, not routine dependency maintenance.
 
 - working tree contains only intended changes;
 - compiler is at least 0.10.16 and matches the CI pin used for verification;
+- CI verifies both the 0.10.16 floor and the current pinned toolchain;
 - the full local gate and GitHub CI pass;
 - package version, SDK version, README install command, and changelog agree;
 - compatibility counts and explicit exclusions remain accurate;
@@ -68,4 +75,8 @@ change, not routine dependency maintenance.
 - no credentials, personal data, local absolute paths, generated binaries, or
   chat transcripts are tracked;
 - Mooncakes dry-run succeeds before the immutable version is published.
+- after publication, the repository-external library and CLI acceptance passes;
+- a matching annotated Git tag, GitHub Release, and versioned release-evidence
+  file link the commit, Mooncakes package, CI, browser deployment, and known
+  limitations.
 

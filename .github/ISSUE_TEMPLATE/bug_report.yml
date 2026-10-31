@@ -1,0 +1,47 @@
+name: Reproducible bug report
+description: Report behavior inside MoonWren's documented support boundary
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, personal data, or private source code. Security-sensitive reports must follow SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: MoonWren version
+      placeholder: 0.9.2
+    validations:
+      required: true
+  - type: textarea
+    id: toolchain
+    attributes:
+      label: MoonBit toolchain
+      description: Paste the output of `moon version --all`.
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target
+      options: [wasm, wasm-gc, js, native, browser SDK, native CLI]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal Wren source and reproduction command
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

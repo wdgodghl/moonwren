@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.9.3 - 2026-10-31
+
+- add repository-external Mooncakes library and CLI acceptance;
+- add Chromium, Firefox, and WebKit UI and Worker end-to-end tests plus a
+  post-deployment Pages smoke test;
+- test the MoonBit 0.10.16 floor and native CLI behavior on Windows and macOS;
+- guard the public API, coverage baseline, repository hygiene, and release
+  evidence in automated quality gates;
+- run deterministic official-Wren differential fuzzing on a scheduled workflow;
+- add validation, security, contribution, support, release, API stability, and
+  Chinese quick-start documentation.
 
 ## 0.9.2 - 2026-10-30
 

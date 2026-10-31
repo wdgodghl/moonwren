@@ -1,8 +1,13 @@
 {
   "name": "@wdgodghl/moonwren",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Wren 0.4-compatible runtime compiled from MoonBit for browsers and Node.js",
   "type": "module",
+  "scripts": {
+    "test": "node sdk.test.mjs",
+    "test:browser": "playwright test",
+    "test:browser:deployed": "playwright test tests/deployed.spec.mjs"
+  },
   "exports": {
     ".": {
       "types": "./sdk.d.ts",
@@ -19,6 +24,9 @@
   "sideEffects": [
     "./moonwren.js"
   ],
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  },
   "license": "Apache-2.0",
   "repository": "https://github.com/wdgodghl/moonwren"
 }

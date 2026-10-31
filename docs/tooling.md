@@ -43,6 +43,10 @@ sorted `.wren` regression seeds. On mismatch the tool removes lines while the
 failure remains reproducible and saves the minimized source plus both outputs
 under `.tmp/fuzz-failures` (or `-FailureDirectory`).
 
+The `Differential Fuzzing` workflow runs two fixed seeds every week and on
+demand. Fixed seeds make every failure reproducible; a minimized failure must
+be promoted into the checked-in corpus before the underlying bug is closed.
+
 ## Performance regression checks
 
 ```powershell
@@ -69,8 +73,32 @@ This builds the JavaScript target, copies the ignored generated module to
 Serve the repository through a local static HTTP server and open that page.
 The script executes entirely in the browser with a fixed step budget. The UI
 includes runnable examples, Ctrl/Command+Enter execution, timing, reset, and
-URL-fragment share links. The manual `Playground Pages` GitHub Actions workflow
-builds and publishes the same static assets after repository Pages is enabled.
+URL-fragment share links. The `Playground Pages` GitHub Actions workflow builds
+and publishes the same static assets after repository Pages is enabled.
+
+Real browser acceptance is not inferred from Node.js. Install the locked web
+test dependencies and run:
+
+```text
+./tools/check-browser-e2e.ps1
+```
+
+The Playwright suite covers Chromium, Firefox, WebKit, the page UI, diagnostics,
+shared-source restoration, reset behavior, and the module Worker SDK. CI retains
+screenshots, traces, and the HTML report when a case fails.
+
+## Published package acceptance
+
+After an immutable Mooncakes version is published, verify it from outside the
+checkout:
+
+```text
+./tools/check-published-package.ps1 -Version 0.9.3
+```
+
+This check creates a temporary consumer, resolves the registry dependency,
+executes one-shot and persistent APIs, installs the CLI, and removes the
+temporary project after exact output comparison.
 
 ## Module deployment
 

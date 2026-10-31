@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: wren-lang/wren
-          ref: 0.4.0
+          ref: 4a18fc489f9ea3d253b20dd40f4cdad0d6bb40eb
           path: .official-wren
       - uses: hustcer/setup-moonbit@v1
         with:
@@ -29,6 +29,8 @@ jobs:
         run: |
           ./tools/check-doc-links.ps1
           ./tools/check-release-metadata.ps1
+          ./tools/check-repository-hygiene.ps1
+          ./tools/check-public-api.ps1
       - name: Check packages
         run: moon check --target all --deny-warn
       - name: Build packages
@@ -40,11 +42,24 @@ jobs:
         run: ./tools/check-cli-acceptance.ps1
       - name: Build browser playground
         run: moon build --target js cmd/web_demo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Test browser and Node SDK
         shell: pwsh
         run: |
           ./tools/build-web-demo.ps1
           node web/sdk.test.mjs
+      - name: Install browser test dependencies
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Run real browser acceptance
+        working-directory: web
+        run: npm run test:browser
       - name: Build performance benchmark
         run: moon build --target native --release cmd/benchmark
       - name: Run performance smoke gate
@@ -52,6 +67,9 @@ jobs:
         run: ./tools/check-performance.ps1 -SmokeOnly
       - name: Run tests
         run: moon test --target all --deny-warn
+      - name: Measure supported-path coverage
+        shell: pwsh
+        run: ./tools/check-coverage.ps1
       - name: Compare Wren 0.4.0 fixtures
         shell: pwsh
         run: ./tools/check-conformance.ps1
@@ -65,3 +83,47 @@ jobs:
           name: official-wren-conformance
           path: .tmp/official-wren-report.json
           if-no-files-found: warn
+      - name: Upload browser and coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-and-coverage-evidence
+          path: |
+            web/playwright-report
+            web/test-results
+            .tmp/coverage-summary.txt
+          if-no-files-found: warn
+
+  minimum-toolchain:
+    name: Minimum supported MoonBit 0.10.16
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.10.16
+          core-version: 0.10.16
+      - run: moon update
+      - run: moon check --target all --deny-warn
+      - run: moon build --target all
+      - run: moon test --target all --deny-warn
+
+  platform-acceptance:
+    name: Native acceptance (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hustcer/setup-moonbit@v1
+        with:
+          version: 0.10.18+6c83a7f62
+          core-version: 0.10.18+6c83a7f62
+      - run: moon update
+      - run: moon check --target native --deny-warn
+      - run: moon build --target native
+      - name: Run native CLI acceptance
+        shell: pwsh
+        run: ./tools/check-cli-acceptance.ps1

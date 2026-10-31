@@ -24,7 +24,7 @@ The following surfaces are supported and release-gated:
 | --- | --- |
 | One-shot library API | `run`, `run_with_loader`, `run_with_foreign_bindings`, and `run_modules` return structured output or diagnostics. |
 | Persistent embedding API | `Vm`, `VmLimits`, handles, loader callbacks, foreign bindings, cancellation, and explicit collection retain state across host calls. |
-| Native CLI | Runs one entry file with relative imports, supports `--eval`, writes program output and diagnostics, and uses documented exit codes. |
+| Native CLI | Runs one entry file with relative imports, supports `--eval`, writes program output and diagnostics, uses documented exit codes, and is installable from `wdgodghl/moonwren/cmd/main@<version>`. |
 | JavaScript SDK | The generated ES module exposes bounded one-shot evaluation in browsers and Node.js. |
 | Compatibility evidence | Checked-in fixtures and the adopted Wren 0.4.0 `language` and `core` suites must pass without accepted failures. |
 
@@ -48,6 +48,10 @@ compatibility claim:
 Their APIs may be refined between minor pre-1.0 releases. A release must keep
 their documented safety properties and tests accurate, but compatibility with
 an external protocol or another Wren implementation is not implied.
+
+The symbol-level stability assignment and interface-change procedure are in
+[`public-api.md`](public-api.md). The generated root interface is guarded by a
+reviewed snapshot hash so accidental public changes fail CI.
 
 ## Explicit non-goals
 
