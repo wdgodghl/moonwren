@@ -98,11 +98,15 @@ statement continuations. Suspension preserves lexical scopes and execution
 positions inside blocks, conditionals, `while`, and `for`, including repeated
 loop yields without replaying earlier side effects. A directly called function
 may suspend when the call is an expression statement, variable initializer, or
-return value. `Sequence.each` callbacks also preserve the callback and outer
-sequence position across repeated yields, covering the official full-coroutine
-example. User-defined constructors (including `super`), instance/static methods,
-getters, operators, subscript methods, sequence callbacks, and imported modules
-share the general continuation path. Transfers between workers form a non-local
+return value. Sequence callback continuations preserve both callback state and
+the outer iterator across repeated yields. This applies to `each`, `all`, `any`,
+predicate `count`, seeded and unseeded `reduce`, and lazy `map`/`where` when
+consumed by `toList`, `for`, `each`, a reduction, or composed `skip`/`take`
+views. Resumption retains reduce accumulators and values passed back into
+`Fiber.yield`, and does not replay completed output or side effects. User-defined
+constructors (including `super`), instance/static methods, getters, operators,
+subscript methods, sequence callbacks, and imported modules share the general
+continuation path. Transfers between workers form a non-local
 scheduling chain: each source
 stores its continuation, the target receives the transferred value, and a later
 transfer back resumes the saved expression. Transfers to the main Fiber return

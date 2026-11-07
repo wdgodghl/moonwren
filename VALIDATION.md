@@ -28,7 +28,7 @@ compares exact output. It does not use this checkout as a dependency.
 ```
 
 The command verifies formatting, static checks, public API stability, repository
-hygiene, 331 MoonBit tests on four targets, native process behavior, real
+hygiene, 335 MoonBit tests on four targets, native process behavior, real
 browsers, coverage, performance smoke tests, differential fixtures, and the
 official Wren suite.
 

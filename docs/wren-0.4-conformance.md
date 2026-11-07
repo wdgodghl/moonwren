@@ -72,6 +72,15 @@ The final suite also covers a yield reached through an instance method and a
 getter, and verifies that locals and side effects before the yield are not
 recreated on resume.
 
+The callback boundary is also checked at the sequence operations that retain
+additional state: seeded and unseeded `reduce` retain the accumulator and the
+value returned from `Fiber.yield`; lazy `map` and `where` retain their source
+iterator when materialized or traversed through composed `skip`/`take` views.
+The checked-in `fiber-reduce-suspension`, `fiber-lazy-map-suspension`, and
+`fiber-lazy-pipeline-suspension` fixtures record exact official Wren output.
+CI builds the pinned Wren 0.4.0 CLI and independently reproduces every `.out`
+file before accepting MoonWren's matching result.
+
 ## Explicit exclusions
 
 The compatibility claim includes Wren 0.4's optional `random` and `meta`

@@ -8,7 +8,7 @@ Every layer below answers a different question and is required before release.
 | Layer | Command | Evidence |
 | --- | --- | --- |
 | Formatting and static checks | `moon fmt --check`; `moon check --target all --deny-warn` | Source is accepted without warnings on every supported MoonBit target. |
-| MoonBit tests | `moon test --target all --deny-warn` | 331 behavioral tests pass independently on wasm, wasm-gc, JavaScript, and native, including persistent-VM combination invariants. |
+| MoonBit tests | `moon test --target all --deny-warn` | 335 behavioral tests pass independently on wasm, wasm-gc, JavaScript, and native, including persistent-VM combination invariants. |
 | Native CLI acceptance | `tools/check-cli-acceptance.ps1` | Real process output, imports, diagnostics, and exit codes match the documented CLI contract. |
 | Browser/Node smoke | `tools/build-web-demo.ps1`; `node web/sdk.test.mjs` | The generated JavaScript artifact can be consumed by Node.js. |
 | Real browser acceptance | `tools/check-browser-e2e.ps1` | Chromium, Firefox, and WebKit execute the UI, diagnostics, sharing, examples, and module Worker contract. |

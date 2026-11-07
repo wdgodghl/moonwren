@@ -271,6 +271,14 @@ See [`examples/fibers.wren`](examples/fibers.wren) for calls, transfers, nested
 control flow, completion state, and captured aborts. Worker-to-worker transfer
 chains preserve each suspended continuation until control returns to it.
 
+Sequence callbacks use the same continuation path. Suspension inside seeded or
+unseeded `reduce`, `each`, `all`, `any`, and predicate `count` preserves the
+outer iterator and accumulator. Lazy `map` and `where` callbacks remain
+resumable when consumed through `toList`, `for`, `each`, another reduction, or
+composed `skip`/`take` views. Completed callback output and side effects are not
+replayed after the Fiber resumes. The exact official-Wren comparisons are in
+[`conformance/wren-0.4.0`](conformance/wren-0.4.0).
+
 Multi-file programs use explicit imports. The CLI resolves relative module
 names from the importing file, automatically adds `.wren` when omitted, and
 executes every canonical module once:

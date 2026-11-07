@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- preserve Fiber suspension and resumed values through seeded and unseeded
+  `Sequence.reduce`, lazy `map`/`where` pipelines, `skip`/`take`, `toList`,
+  `each`, and `for` iteration without replaying completed callback effects;
+- add official Wren 0.4.0 output fixtures for reducing and materializing lazy
+  callbacks, and reproduce every fixture with a pinned official CLI in CI;
+- redistribute Wren's complete MIT copyright and permission notice alongside
+  the upstream tests and adapted optional-module reference behavior;
 - make differential fuzzing build the Wren 0.4.0 reference on current Linux,
   separate the latest harness from the tagged candidate checkout, and retain
   preflight failure summaries;
