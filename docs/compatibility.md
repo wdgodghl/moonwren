@@ -103,7 +103,10 @@ the outer iterator across repeated yields. This applies to `each`, `all`, `any`,
 predicate `count`, seeded and unseeded `reduce`, and lazy `map`/`where` when
 consumed by `toList`, `for`, `each`, a reduction, or composed `skip`/`take`
 views. Resumption retains reduce accumulators and values passed back into
-`Fiber.yield`, and does not replay completed output or side effects. User-defined
+`Fiber.yield`, and does not replay a completed portion of the same callback
+invocation. A downstream lazy view can still request an accepted upstream value
+again through Wren's iterator protocol; in that case an effectful `map`
+transformation is invoked again, matching official Wren. User-defined
 constructors (including `super`), instance/static methods, getters, operators,
 subscript methods, sequence callbacks, and imported modules share the general
 continuation path. Transfers between workers form a non-local

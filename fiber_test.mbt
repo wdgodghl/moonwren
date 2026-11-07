@@ -397,7 +397,8 @@ test "nested lazy transformations suspend through for iteration" {
     "}\n" +
     "while (!worker.isDone) System.print(worker.call())\n"
   expect_fiber_output(source, [
-    "map1", "where2", "map2", "where4", "map3", "where6", "map4", "where8", "6,8",
+    "map1", "where2", "map2", "where4", "map3", "where6", "map3", "map4", "where8",
+    "map4", "6,8",
   ])
 }
 

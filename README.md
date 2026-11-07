@@ -276,7 +276,10 @@ unseeded `reduce`, `each`, `all`, `any`, and predicate `count` preserves the
 outer iterator and accumulator. Lazy `map` and `where` callbacks remain
 resumable when consumed through `toList`, `for`, `each`, another reduction, or
 composed `skip`/`take` views. Completed callback output and side effects are not
-replayed after the Fiber resumes. The exact official-Wren comparisons are in
+replayed merely because the same callback invocation resumes. As in official
+Wren, a downstream lazy view may separately request an accepted upstream value
+through `iteratorValue`, which invokes an effectful `map` transformation again.
+The exact official-Wren comparisons are in
 [`conformance/wren-0.4.0`](conformance/wren-0.4.0).
 
 Multi-file programs use explicit imports. The CLI resolves relative module
