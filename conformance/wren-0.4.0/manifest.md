@@ -9,6 +9,9 @@
 | --- | --- | --- |
 | `string-byte-offsets.wren` | `string-byte-offsets.out` | exact match |
 | `fiber-callback-suspension.wren` | `fiber-callback-suspension.out` | exact match |
+| `fiber-reduce-suspension.wren` | `fiber-reduce-suspension.out` | exact match; accumulator and resumed values |
+| `fiber-lazy-map-suspension.wren` | `fiber-lazy-map-suspension.out` | exact match; lazy materialization and resumed output |
+| `fiber-lazy-pipeline-suspension.wren` | `fiber-lazy-pipeline-suspension.out` | exact match; nested map/where/skip/take and side effects |
 | `official-interpolation.wren` | `official-interpolation.out` | exact match; upstream `test/language/interpolation/interpolation.wren` |
 | `official-sequence-all.wren` | `official-sequence-all.out` | exact match; upstream `test/core/sequence/all.wren` |
 | `official-setter-instance.wren` | `official-setter-instance.out` | exact match; upstream `test/language/setter/instance.wren` |

@@ -14,6 +14,7 @@ Every layer below answers a different question and is required before release.
 | Real browser acceptance | `tools/check-browser-e2e.ps1` | Chromium, Firefox, and WebKit execute the UI, diagnostics, sharing, examples, and module Worker contract. |
 | Published artifact | `tools/check-published-package.ps1 -Version <version>` | A repository-external project resolves the immutable Mooncakes package and exercises library, persistent VM, and installed CLI paths. |
 | Checked-in differential cases | `tools/check-conformance.ps1` | High-risk String and Fiber inputs match outputs captured from official Wren 0.4.0. |
+| Official fixture reproduction | `tools/verify-official-wren.ps1 -WrenExecutable <wren-0.4.0-cli>` | Every checked-in expected output, including Fiber suspension in `reduce` and lazy sequence callbacks, is reproduced by the pinned official CLI on every CI run. |
 | Scheduled differential fuzzing | `tools/fuzz-differential.ps1` | Daily deterministic generated and corpus inputs match the official Wren CLI; seeds, time budgets, summaries, and minimized failures are retained as CI artifacts. |
 | Persistent VM soak | `tools/check-vm-soak.ps1` | 10,000 calls preserve cumulative state while temporary collections and foreign objects are reclaimed within a fixed reachable-object bound. CI uses `-Quick`; the daily workflow runs the full profile. |
 | Independent application | run `tools/check.ps1` in `moonwren-json-pipeline` | A separate project resolves MoonWren only from Mooncakes and processes JSONL through a persistent, bounded VM with host callbacks. |
