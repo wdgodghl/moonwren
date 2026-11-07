@@ -4816,22 +4816,6 @@ fn continue_fiber_sequence_advance(
           iterable, next, function_identifier, "reduce", value, count, span, context,
         )
       }
-      if name == "toList" {
-        match aggregate {
-          ListValue(identifier) => context.lists[identifier].items.push(value)
-          _ => abort("toList aggregate must be a List")
-        }
-        return execute_fiber_sequence_operation(
-          iterable,
-          next,
-          function_identifier,
-          name,
-          aggregate,
-          count + 1,
-          span,
-          context,
-        )
-      }
       let arguments = if name == "reduce" {
         [aggregate, value]
       } else {
@@ -4879,6 +4863,77 @@ fn execute_fiber_sequence_operation(
     span,
     context,
   )
+}
+
+///|
+priv enum FiberSequenceConsumer {
+  CountElements(Int32)
+  FindElement(Value)
+  JoinElements(String, String, Bool)
+  CollectElements(Int32)
+}
+
+///|
+fn consume_fiber_sequence(
+  iterable : Value,
+  initial_step : FiberIteratorStep,
+  initial_consumer : FiberSequenceConsumer,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  for step = initial_step, consumer = initial_consumer {
+    match step {
+      FiberIteratorFailed(issue) => return FiberExpressionFailed(issue)
+      FiberIteratorComplete => {
+        let result = match consumer {
+          CountElements(count) => Value::number(Double::from_int(count))
+          FindElement(_) => Value::bool(false)
+          JoinElements(_, text, _) => Value::string(text)
+          CollectElements(identifier) => Value::list(identifier)
+        }
+        return FiberExpressionReady(Literal(result, span))
+      }
+      FiberIteratorYielded(value, continuation) =>
+        return suspend_fiber_expression(
+          value,
+          fn(resumed) {
+            consume_fiber_sequence(
+              iterable,
+              continuation(resumed),
+              consumer,
+              span,
+              context,
+            )
+          },
+          span,
+          context,
+        )
+      FiberIteratorAdvanced(next, value) => {
+        let updated = match consumer {
+          CountElements(count) => CountElements(count + 1)
+          FindElement(target) =>
+            if value == target {
+              return FiberExpressionReady(Literal(Value::bool(true), span))
+            } else {
+              consumer
+            }
+          JoinElements(separator, text, first) => {
+            let prefix = if first { text } else { text + separator }
+            JoinElements(
+              separator,
+              prefix + runtime_value_to_text(value, context, 0),
+              false,
+            )
+          }
+          CollectElements(identifier) => {
+            context.lists[identifier].items.push(value)
+            consumer
+          }
+        }
+        continue advance_fiber_iterable(iterable, next, span, context), updated
+      }
+    }
+  }
 }
 
 ///|
@@ -4970,6 +5025,24 @@ fn prepare_evaluated_method_call(
         span,
         context,
       )
+    SequenceValue(_) => {
+      let consumer = match (name, arguments[:]) {
+        ("contains", [target]) => Some(FindElement(target))
+        ("join", []) => Some(JoinElements("", "", true))
+        ("join", [StringValue(separator)]) =>
+          Some(JoinElements(separator, "", true))
+        _ => None
+      }
+      if consumer is Some(consumer) {
+        return consume_fiber_sequence(
+          receiver,
+          advance_fiber_iterable(receiver, Value::null(), span, context),
+          consumer,
+          span,
+          context,
+        )
+      }
+    }
     _ => ()
   }
   if (name == "all" || name == "any" || name == "count" || name == "each") &&
@@ -5156,15 +5229,20 @@ fn prepare_evaluated_property_get(
   context : RuntimeContext,
 ) -> FiberExpressionStep {
   match receiver {
-    SequenceValue(_) if name == "toList" => {
-      let values = context.new_list([])
-      return execute_fiber_sequence_operation(
+    SequenceValue(_) if name == "count" || name == "toList" => {
+      let consumer = if name == "count" {
+        CountElements(0)
+      } else {
+        let values = context.new_list([])
+        match values {
+          ListValue(identifier) => CollectElements(identifier)
+          _ => abort("toList aggregate must be a List")
+        }
+      }
+      return consume_fiber_sequence(
         receiver,
-        Value::null(),
-        -1,
-        "toList",
-        values,
-        0,
+        advance_fiber_iterable(receiver, Value::null(), span, context),
+        consumer,
         span,
         context,
       )

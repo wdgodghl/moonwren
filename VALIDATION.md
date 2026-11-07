@@ -13,7 +13,7 @@ experimental surfaces, non-goals, and the security boundary.
 
 ```text
 moon view wdgodghl/moonwren
-./tools/check-published-package.ps1 -Version 0.9.5
+./tools/check-published-package.ps1 -Version 0.9.6
 ```
 
 The second command creates an unrelated project under the operating system's

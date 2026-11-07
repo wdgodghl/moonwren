@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.9.6 - 2026-11-07
+
+- preserve Fiber yields, resumed values, and iterator position when lazy
+  sequences are consumed by `join`, `contains`, or the `count` getter;
+- compare these operations with Wren 0.4.0, including empty sequences,
+  short-circuiting, and callback side effects before and after a yield.
+
 ## 0.9.5 - 2026-11-07
 
 - preserve Fiber suspension and resumed values through seeded and unseeded

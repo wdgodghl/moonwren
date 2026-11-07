@@ -76,6 +76,9 @@ The callback boundary is also checked at the sequence operations that retain
 additional state: seeded and unseeded `reduce` retain the accumulator and the
 value returned from `Fiber.yield`; lazy `map` and `where` retain their source
 iterator when materialized or traversed through composed `skip`/`take` views.
+The `fiber-lazy-consumers` fixture also covers lazy `join`, `contains`, and
+the `count` getter. It checks that `contains` stops on the first match and that
+the separator and partial result of `join` survive multiple suspensions.
 The checked-in `fiber-reduce-suspension`, `fiber-lazy-map-suspension`, and
 `fiber-lazy-pipeline-suspension` fixtures record exact official Wren output.
 CI builds the pinned Wren 0.4.0 CLI and independently reproduces every `.out`
