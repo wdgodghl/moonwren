@@ -567,4 +567,7 @@ in [`docs/real-application.md`](docs/real-application.md).
 
 MoonWren is licensed under Apache-2.0. The implementation uses the public Wren
 language documentation as a behavioral reference. See [`NOTICE`](NOTICE) for
-attribution and project-boundary details.
+attribution and project-boundary details. The complete MIT copyright and
+permission notice for redistributed Wren 0.4.0 test inputs and adapted
+reference portions is included at
+[`THIRD_PARTY_LICENSES/Wren-LICENSE.txt`](THIRD_PARTY_LICENSES/Wren-LICENSE.txt).
