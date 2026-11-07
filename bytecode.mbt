@@ -299,7 +299,6 @@ fn BytecodeBuilder::compile_expression(
     | SuperConstructorCall(_, span)
     | FunctionLiteral(_, _, span)
     | FiberCallResume(_, _, _, span)
-    | FiberExpressionResume(_, _, span)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, span) =>
       ignore(self.emit(EvaluateSemantic(expression), span))
   }

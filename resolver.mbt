@@ -334,7 +334,6 @@ fn Resolver::resolve_expression(self : Resolver, expression : Expr) -> Unit {
     FunctionLiteral(parameters, body, span) =>
       self.resolve_function(parameters, body, span)
     FiberCallResume(_, _, _, _)
-    | FiberExpressionResume(_, _, _)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, _) => ()
     Unary(_, value, _) | Grouping(value, _) => self.resolve_expression(value)
     Binary(left, _, right, _) => {

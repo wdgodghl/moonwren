@@ -4334,7 +4334,17 @@ fn suspend_fiber_expression(
     next
   }
   FiberExpressionYielded(value, fn(resumed) {
-    FiberExpressionResume(identifier, resumed, span)
+    FiberSequenceResume(
+      identifier,
+      resumed,
+      Value::null(),
+      Value::null(),
+      -1,
+      "$expression",
+      Value::null(),
+      0,
+      span,
+    )
   })
 }
 
@@ -5108,8 +5118,6 @@ fn prepare_fiber_expression(
   context : RuntimeContext,
 ) -> FiberExpressionStep {
   match expression {
-    FiberExpressionResume(identifier, input, span) =>
-      resume_stored_fiber_expression(identifier, input, span, context)
     FiberCallResume(identifier, input, result_override, span) =>
       resume_fiber_expression_call(
         identifier, input, result_override, span, context,
@@ -5125,10 +5133,14 @@ fn prepare_fiber_expression(
       count,
       span
     ) =>
-      resume_fiber_sequence_callback(
-        call_identifier, input, iterable, iterator, function_identifier, name, aggregate,
-        count, span, context,
-      )
+      if name == "$expression" {
+        resume_stored_fiber_expression(call_identifier, input, span, context)
+      } else {
+        resume_fiber_sequence_callback(
+          call_identifier, input, iterable, iterator, function_identifier, name,
+          aggregate, count, span, context,
+        )
+      }
     MethodCall(receiver, name, arguments, span) => {
       let prepared_receiver = match
         prepare_fiber_expression(receiver, environment, context) {
@@ -8705,7 +8717,6 @@ fn evaluate_expression_in(
 ) -> EvaluationResult {
   match expression {
     FiberCallResume(_, _, _, span)
-    | FiberExpressionResume(_, _, span)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, span) =>
       evaluation_error(
         InvalidFiberState,
