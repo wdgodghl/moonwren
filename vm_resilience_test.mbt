@@ -155,6 +155,67 @@ test "suspended Fiber survives GC and invokes host callbacks exactly once" {
 }
 
 ///|
+test "lazy sequence and reduce continuations survive GC between host resumes" {
+  let vm = @moonwren.Vm::new(
+    @moonwren.VmLimits::standard(100000),
+    resilience_no_modules,
+    [],
+    [],
+  )
+  let source =
+    #|var effects = 0
+    #|var worker = Fiber.new {
+    #|  var mapped = (1..3).map { |number|
+    #|    effects = effects + 1
+    #|    return Fiber.yield(number * 10)
+    #|  }.toList
+    #|  return mapped.reduce { |acc, number|
+    #|    effects = effects + 1
+    #|    return Fiber.yield(acc + number)
+    #|  }
+    #|}
+  match vm.interpret("main", source) {
+    @moonwren.ProgramCompleted(_, _) => ()
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+  let fiber = match vm.capture("main", "worker") {
+    @moonwren.VmHandleCreated(handle) => handle
+    @moonwren.VmHandleFailed(issue) => fail(issue.message)
+  }
+  let task = match vm.new_async_task(fiber) {
+    @moonwren.VmAsyncTaskCreated(value) => value
+    @moonwren.VmAsyncTaskCreateFailed(issue) => fail(issue.message)
+  }
+  let mut request = match vm.start_async(task, None) {
+    @moonwren.VmAsyncYielded(value, _) => {
+      assert_eq(value.value(), @moonwren.Value::number(10.0))
+      value
+    }
+    _ => fail("first map callback must yield")
+  }
+  let responses = [1.0, 2.0, 3.0, 30.0, 300.0]
+  let expected_yields = [20.0, 30.0, 3.0, 33.0]
+  for index = 0; index < responses.length(); index = index + 1 {
+    ignore(vm.collect_garbage())
+    match
+      vm.resume_async(task, request, @moonwren.Value::number(responses[index])) {
+      @moonwren.VmAsyncYielded(next, _) => {
+        assert_true(index < expected_yields.length())
+        assert_eq(next.value(), @moonwren.Value::number(expected_yields[index]))
+        request = next
+      }
+      @moonwren.VmAsyncCompleted(value, _) => {
+        assert_eq(index, responses.length() - 1)
+        assert_eq(value, @moonwren.Value::number(300.0))
+      }
+      @moonwren.VmAsyncFailed(issues, _) => fail(issues[0].message)
+    }
+  }
+  resilience_expect_number(vm.read("main", "effects"), 5.0)
+  vm.close()
+}
+
+///|
 test "failed hot reload leaves a suspended Fiber resumable" {
   let vm = @moonwren.Vm::new(
     @moonwren.VmLimits::standard(100000),

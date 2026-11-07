@@ -32,7 +32,7 @@ fn main {
 
 ## 验证状态
 
-- 335 个 MoonBit 行为测试分别运行于 wasm、wasm-gc、JavaScript 和 native，其中包括持久 VM、Fiber、热重载、GC 与宿主回调的组合不变量。
+- 336 个 MoonBit 行为测试分别运行于 wasm、wasm-gc、JavaScript 和 native，其中包括持久 VM、Fiber、热重载、GC 与宿主回调的组合不变量。
 - 官方 Wren 0.4.0 `language` 与 `core` 套件：779 通过、0 失败、22 个上游标记为 `skip`/`nontest`。
 - CI 还验证真实浏览器、Native CLI、核心执行路径覆盖率、公共 API 快照、仓库卫生、每日差分模糊测试和 10,000 次持久 VM 压力运行。
 - 独立的 `moonwren-json-pipeline` 小型应用只从 Mooncakes 安装 MoonWren，并验证真实 JSONL 规则处理、宿主回调、资源限制和长期 VM 状态。
