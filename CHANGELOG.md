@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.5 - 2026-11-07
+
 - preserve Fiber suspension and resumed values through seeded and unseeded
   `Sequence.reduce`, lazy `map`/`where` pipelines, `skip`/`take`, `toList`,
   `each`, and `for` iteration without replaying completed callback effects;
