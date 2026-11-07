@@ -63,6 +63,8 @@ pub(all) enum Expr {
   FunctionLiteral(Array[String], Array[Stmt], SourceSpan)
   // Internal continuation node used only while a Fiber is suspended in a call.
   FiberCallResume(Int32, Value, Value?, SourceSpan)
+  // Internal one-shot continuation for resumable runtime operations.
+  FiberExpressionResume(Int32, Value, SourceSpan)
   // Internal continuation for callback-driven Sequence operations.
   FiberSequenceResume(
     Int32,
@@ -107,6 +109,7 @@ pub fn Expr::span(self : Expr) -> SourceSpan {
     | SuperConstructorCall(_, span)
     | FunctionLiteral(_, _, span)
     | FiberCallResume(_, _, _, span)
+    | FiberExpressionResume(_, _, span)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, span)
     | Unary(_, _, span)
     | Binary(_, _, _, span)

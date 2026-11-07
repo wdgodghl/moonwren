@@ -327,6 +327,81 @@ test "fiber sequence predicates resume callback state" {
 }
 
 ///|
+test "fiber reduce callbacks preserve accumulator and resume position" {
+  let source = "var worker = Fiber.new {\n" +
+    "  var result = (1..3).reduce { |acc, n|\n" +
+    "    System.print(\"before %(acc),%(n)\")\n" +
+    "    var resumed = Fiber.yield(acc + n)\n" +
+    "    System.print(\"after %(resumed)\")\n" +
+    "    return resumed\n" +
+    "  }\n" +
+    "  return result\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call(30))\n" +
+    "System.print(worker.call(300))\n"
+  expect_fiber_output(source, [
+    "before 1,2", "3", "after 30", "before 30,3", "33", "after 300", "300",
+  ])
+}
+
+///|
+test "fiber seeded reduce callbacks resume without replaying effects" {
+  let source = "var effects = 0\n" +
+    "var worker = Fiber.new {\n" +
+    "  return [1, 2].reduce(10) { |acc, n|\n" +
+    "    effects = effects + 1\n" +
+    "    var resumed = Fiber.yield(acc + n)\n" +
+    "    return resumed\n" +
+    "  }\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call(20))\n" +
+    "System.print(worker.call(30))\n" +
+    "System.print(effects)\n"
+  expect_fiber_output(source, ["11", "22", "30", "2"])
+}
+
+///|
+test "lazy map callbacks resume while materializing toList" {
+  let source = "var worker = Fiber.new {\n" +
+    "  var result = (1..2).map { |n|\n" +
+    "    System.print(\"before %(n)\")\n" +
+    "    var resumed = Fiber.yield(n * 10)\n" +
+    "    System.print(\"after %(resumed)\")\n" +
+    "    return resumed\n" +
+    "  }.toList\n" +
+    "  return result.join(\",\")\n" +
+    "}\n" +
+    "System.print(worker.call())\n" +
+    "System.print(worker.call(100))\n" +
+    "System.print(worker.call(200))\n"
+  expect_fiber_output(source, [
+    "before 1", "10", "after 100", "before 2", "20", "after 200", "100,200",
+  ])
+}
+
+///|
+test "nested lazy transformations suspend through for iteration" {
+  let source = "var worker = Fiber.new {\n" +
+    "  var values = (1..4).map { |n|\n" +
+    "    Fiber.yield(\"map%(n)\")\n" +
+    "    return n * 2\n" +
+    "  }.where { |n|\n" +
+    "    Fiber.yield(\"where%(n)\")\n" +
+    "    return n > 4\n" +
+    "  }.skip(0).take(2)\n" +
+    "  var result = []\n" +
+    "  for (value in values) result.add(value)\n" +
+    "  return result.join(\",\")\n" +
+    "}\n" +
+    "while (!worker.isDone) System.print(worker.call())\n"
+  expect_fiber_output(source, [
+    "map1", "where2", "map2", "where4", "map3", "where6", "map4", "where8", "6,8",
+  ])
+}
+
+///|
 test "fibers suspend through constructors and super constructors" {
   let source = "class Base {\n" +
     "  construct new() { _base = Fiber.yield(\"base\") }\n" +

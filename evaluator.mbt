@@ -107,6 +107,14 @@ priv enum IteratorAdvanceResult {
 }
 
 ///|
+priv enum FiberIteratorStep {
+  FiberIteratorAdvanced(Value, Value)
+  FiberIteratorComplete
+  FiberIteratorYielded(Value, (Value) -> FiberIteratorStep)
+  FiberIteratorFailed(Diagnostic)
+}
+
+///|
 priv enum CollectedValuesResult {
   ValuesCollected(Array[Value])
   ValueCollectionFailed(Diagnostic)
@@ -124,6 +132,7 @@ priv struct RuntimeIterator {
   mut source_iterator : Value
   mut current : Value
   mut yielded : Int32
+  mut skipped : Int32
   mut started : Bool
   mut completed : Bool
   alive : Bool
@@ -198,6 +207,8 @@ priv struct RuntimeContext {
   mut gc_requested : Bool
   mut debugger : RuntimeDebugger?
   builtin_random_states : Array[BuiltinRandomState]
+  expression_resumes : Array[((Value) -> FiberExpressionStep)?]
+  free_expression_resumes : Array[Int32]
 }
 
 ///|
@@ -307,6 +318,8 @@ fn RuntimeContext::new_with_limits(
     gc_requested: false,
     debugger: None,
     builtin_random_states,
+    expression_resumes: [],
+    free_expression_resumes: [],
   }
 }
 
@@ -3841,6 +3854,401 @@ fn advance_sequence_iterator(
 }
 
 ///|
+fn complete_fiber_iterator(
+  iterator_identifier : Int32,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  context.iterators[iterator_identifier].completed = true
+  FiberIteratorComplete
+}
+
+///|
+fn continue_fiber_map_callback(
+  call_identifier : Int32,
+  input : Value,
+  iterator_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match resume_runtime_fiber(call_identifier, input, span, context) {
+    EvaluationFailed(issue) => FiberIteratorFailed(issue)
+    EvaluationSucceeded(mapped) =>
+      if context.fibers[call_identifier].state == 2 {
+        FiberIteratorYielded(mapped, fn(resumed) {
+          continue_fiber_map_callback(
+            call_identifier, resumed, iterator_identifier, span, context,
+          )
+        })
+      } else {
+        let iterator = context.iterators[iterator_identifier]
+        iterator.current = mapped
+        iterator.yielded = iterator.yielded + 1
+        FiberIteratorAdvanced(Value::iterator(iterator_identifier), mapped)
+      }
+  }
+}
+
+///|
+fn continue_fiber_map_source(
+  step : FiberIteratorStep,
+  iterator_identifier : Int32,
+  function_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
+    FiberIteratorComplete =>
+      complete_fiber_iterator(iterator_identifier, context)
+    FiberIteratorYielded(value, continuation) =>
+      FiberIteratorYielded(value, fn(resumed) {
+        continue_fiber_map_source(
+          continuation(resumed),
+          iterator_identifier,
+          function_identifier,
+          span,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, value) => {
+      context.iterators[iterator_identifier].source_iterator = next
+      let call_identifier = context.new_function_fiber(
+        function_identifier,
+        [value],
+        context.current_fiber,
+      )
+      continue_fiber_map_callback(
+        call_identifier,
+        Value::null(),
+        iterator_identifier,
+        span,
+        context,
+      )
+    }
+  }
+}
+
+///|
+fn continue_fiber_where_callback(
+  call_identifier : Int32,
+  input : Value,
+  iterator_identifier : Int32,
+  original : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match resume_runtime_fiber(call_identifier, input, span, context) {
+    EvaluationFailed(issue) => FiberIteratorFailed(issue)
+    EvaluationSucceeded(selected) =>
+      if context.fibers[call_identifier].state == 2 {
+        FiberIteratorYielded(selected, fn(resumed) {
+          continue_fiber_where_callback(
+            call_identifier, resumed, iterator_identifier, original, span, context,
+          )
+        })
+      } else if selected.is_truthy() {
+        let iterator = context.iterators[iterator_identifier]
+        iterator.current = original
+        iterator.yielded = iterator.yielded + 1
+        FiberIteratorAdvanced(Value::iterator(iterator_identifier), original)
+      } else {
+        advance_fiber_sequence_iterator(iterator_identifier, span, context)
+      }
+  }
+}
+
+///|
+fn continue_fiber_where_source(
+  step : FiberIteratorStep,
+  iterator_identifier : Int32,
+  function_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
+    FiberIteratorComplete =>
+      complete_fiber_iterator(iterator_identifier, context)
+    FiberIteratorYielded(value, continuation) =>
+      FiberIteratorYielded(value, fn(resumed) {
+        continue_fiber_where_source(
+          continuation(resumed),
+          iterator_identifier,
+          function_identifier,
+          span,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, value) => {
+      context.iterators[iterator_identifier].source_iterator = next
+      let call_identifier = context.new_function_fiber(
+        function_identifier,
+        [value],
+        context.current_fiber,
+      )
+      continue_fiber_where_callback(
+        call_identifier,
+        Value::null(),
+        iterator_identifier,
+        value,
+        span,
+        context,
+      )
+    }
+  }
+}
+
+///|
+fn continue_fiber_skip_source(
+  step : FiberIteratorStep,
+  iterator_identifier : Int32,
+  count : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
+    FiberIteratorComplete =>
+      complete_fiber_iterator(iterator_identifier, context)
+    FiberIteratorYielded(value, continuation) =>
+      FiberIteratorYielded(value, fn(resumed) {
+        continue_fiber_skip_source(
+          continuation(resumed),
+          iterator_identifier,
+          count,
+          span,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, value) => {
+      let iterator = context.iterators[iterator_identifier]
+      iterator.source_iterator = next
+      if iterator.skipped < count {
+        iterator.skipped = iterator.skipped + 1
+        let source = match
+          context.sequences[iterator.sequence_identifier].kind {
+          SequenceSkip(value, _) => value
+          _ => abort("invalid skip iterator")
+        }
+        continue_fiber_skip_source(
+          advance_fiber_iterable(
+            source,
+            iterator.source_iterator,
+            span,
+            context,
+          ),
+          iterator_identifier,
+          count,
+          span,
+          context,
+        )
+      } else {
+        iterator.current = value
+        iterator.yielded = iterator.yielded + 1
+        FiberIteratorAdvanced(Value::iterator(iterator_identifier), value)
+      }
+    }
+  }
+}
+
+///|
+fn continue_fiber_take_source(
+  step : FiberIteratorStep,
+  iterator_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
+    FiberIteratorComplete =>
+      complete_fiber_iterator(iterator_identifier, context)
+    FiberIteratorYielded(value, continuation) =>
+      FiberIteratorYielded(value, fn(resumed) {
+        continue_fiber_take_source(
+          continuation(resumed),
+          iterator_identifier,
+          span,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, value) => {
+      let iterator = context.iterators[iterator_identifier]
+      iterator.source_iterator = next
+      iterator.current = value
+      iterator.yielded = iterator.yielded + 1
+      FiberIteratorAdvanced(Value::iterator(iterator_identifier), value)
+    }
+  }
+}
+
+///|
+fn advance_fiber_sequence_iterator(
+  iterator_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  if iterator_identifier < 0 ||
+    iterator_identifier >= context.iterators.length() {
+    return FiberIteratorFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidOperand,
+        "sequence iterator is not available",
+        span,
+      ),
+    )
+  }
+  let iterator = context.iterators[iterator_identifier]
+  if iterator.completed {
+    return FiberIteratorComplete
+  }
+  let sequence_identifier = iterator.sequence_identifier
+  if sequence_identifier < 0 ||
+    sequence_identifier >= context.sequences.length() {
+    return FiberIteratorFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidOperand,
+        "sequence is not available",
+        span,
+      ),
+    )
+  }
+  match context.sequences[sequence_identifier].kind {
+    SequenceMap(source, function_identifier) =>
+      continue_fiber_map_source(
+        advance_fiber_iterable(source, iterator.source_iterator, span, context),
+        iterator_identifier,
+        function_identifier,
+        span,
+        context,
+      )
+    SequenceWhere(source, function_identifier) =>
+      continue_fiber_where_source(
+        advance_fiber_iterable(source, iterator.source_iterator, span, context),
+        iterator_identifier,
+        function_identifier,
+        span,
+        context,
+      )
+    SequenceSkip(source, count) =>
+      continue_fiber_skip_source(
+        advance_fiber_iterable(source, iterator.source_iterator, span, context),
+        iterator_identifier,
+        count,
+        span,
+        context,
+      )
+    SequenceTake(source, count) =>
+      if iterator.yielded >= count {
+        complete_fiber_iterator(iterator_identifier, context)
+      } else {
+        continue_fiber_take_source(
+          advance_fiber_iterable(
+            source,
+            iterator.source_iterator,
+            span,
+            context,
+          ),
+          iterator_identifier,
+          span,
+          context,
+        )
+      }
+    _ =>
+      match advance_sequence_iterator(iterator_identifier, span, context) {
+        EvaluationFailed(issue) => FiberIteratorFailed(issue)
+        EvaluationSucceeded(value) if !value.is_truthy() =>
+          FiberIteratorComplete
+        EvaluationSucceeded(next) =>
+          match
+            invoke_sequence_method(
+              sequence_identifier,
+              "iteratorValue",
+              [next],
+              span,
+              context,
+            ) {
+            EvaluationFailed(issue) => FiberIteratorFailed(issue)
+            EvaluationSucceeded(value) => FiberIteratorAdvanced(next, value)
+          }
+      }
+  }
+}
+
+///|
+fn advance_fiber_iterable(
+  iterable : Value,
+  iterator : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  match iterable {
+    SequenceValue(sequence_identifier) => {
+      let is_lazy_sequence = match context.sequences[sequence_identifier].kind {
+        SequenceMap(_, _)
+        | SequenceWhere(_, _)
+        | SequenceSkip(_, _)
+        | SequenceTake(_, _) => true
+        _ => false
+      }
+      if is_lazy_sequence {
+        let iterator_identifier = match iterator {
+          NullValue => {
+            let next = context.iterators.length()
+            context.iterators.push({
+              sequence_identifier,
+              source_iterator: Value::null(),
+              current: Value::null(),
+              yielded: 0,
+              skipped: 0,
+              started: false,
+              completed: false,
+              alive: true,
+            })
+            next
+          }
+          IteratorValue(existing) =>
+            if existing < 0 ||
+              existing >= context.iterators.length() ||
+              context.iterators[existing].sequence_identifier !=
+              sequence_identifier {
+              return FiberIteratorFailed(
+                Diagnostic::new(
+                  Runtime,
+                  InvalidOperand,
+                  "Sequence iterator does not belong to this sequence",
+                  span,
+                ),
+              )
+            } else {
+              existing
+            }
+          value =>
+            return FiberIteratorFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidOperand,
+                "Sequence iterator must be null or Iterator, received \{value.type_name()}",
+                span,
+              ),
+            )
+        }
+        return advance_fiber_sequence_iterator(
+          iterator_identifier, span, context,
+        )
+      }
+    }
+    _ => ()
+  }
+  match advance_iterable(iterable, iterator, span, context) {
+    IteratorAdvanceFailed(issue) => FiberIteratorFailed(issue)
+    IteratorComplete => FiberIteratorComplete
+    IteratorAdvanced(next, value) => FiberIteratorAdvanced(next, value)
+  }
+}
+
+///|
 fn collect_iterable_values(
   iterable : Value,
   span : SourceSpan,
@@ -3903,6 +4311,88 @@ priv enum FiberExpressionStep {
   FiberExpressionReady(Expr)
   FiberExpressionYielded(Value, (Value) -> Expr)
   FiberExpressionFailed(Diagnostic)
+}
+
+///|
+fn suspend_fiber_expression(
+  value : Value,
+  continuation : (Value) -> FiberExpressionStep,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  let identifier = if context.free_expression_resumes.length() > 0 {
+    match context.free_expression_resumes.pop() {
+      Some(reused) => {
+        context.expression_resumes[reused] = Some(continuation)
+        reused
+      }
+      None => abort("missing expression continuation slot")
+    }
+  } else {
+    let next = context.expression_resumes.length()
+    context.expression_resumes.push(Some(continuation))
+    next
+  }
+  FiberExpressionYielded(value, fn(resumed) {
+    FiberExpressionResume(identifier, resumed, span)
+  })
+}
+
+///|
+fn resume_stored_fiber_expression(
+  identifier : Int32,
+  input : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  if identifier < 0 || identifier >= context.expression_resumes.length() {
+    return FiberExpressionFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidFiberState,
+        "expression continuation is not available",
+        span,
+      ),
+    )
+  }
+  let continuation = match context.expression_resumes[identifier] {
+    Some(callback) => callback
+    None =>
+      return FiberExpressionFailed(
+        Diagnostic::new(
+          Runtime,
+          InvalidFiberState,
+          "expression continuation was already resumed",
+          span,
+        ),
+      )
+  }
+  context.expression_resumes[identifier] = None
+  context.free_expression_resumes.push(identifier)
+  continuation(input)
+}
+
+///|
+fn fiber_iterator_expression_step(
+  step : FiberIteratorStep,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberExpressionFailed(issue)
+    FiberIteratorComplete =>
+      FiberExpressionReady(Literal(Value::bool(false), span))
+    FiberIteratorAdvanced(next, _) => FiberExpressionReady(Literal(next, span))
+    FiberIteratorYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          fiber_iterator_expression_step(continuation(resumed), span, context)
+        },
+        span,
+        context,
+      )
+  }
 }
 
 ///|
@@ -4085,6 +4575,16 @@ fn finish_fiber_sequence_operation(
   count : Int32,
   span : SourceSpan,
 ) -> FiberExpressionStep {
+  if name == "reduce:first" {
+    return FiberExpressionFailed(
+      Diagnostic::new(
+        Runtime,
+        InvalidOperand,
+        "Sequence.reduce cannot reduce an empty sequence without a seed",
+        span,
+      ),
+    )
+  }
   FiberExpressionReady(
     Literal(
       if name == "count" {
@@ -4133,7 +4633,7 @@ fn resume_fiber_sequence_callback(
           iterator,
           function_identifier,
           name,
-          if name == "all" {
+          if name == "all" || name == "reduce" {
             result
           } else {
             aggregate
@@ -4152,9 +4652,9 @@ fn resume_fiber_sequence_callback(
 }
 
 ///|
-fn execute_fiber_sequence_operation(
+fn continue_fiber_sequence_advance(
+  step : FiberIteratorStep,
   iterable : Value,
-  iterator : Value,
   function_identifier : Int32,
   name : String,
   aggregate : Value,
@@ -4162,14 +4662,58 @@ fn execute_fiber_sequence_operation(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
-  match advance_iterable(iterable, iterator, span, context) {
-    IteratorAdvanceFailed(issue) => FiberExpressionFailed(issue)
-    IteratorComplete =>
+  match step {
+    FiberIteratorFailed(issue) => FiberExpressionFailed(issue)
+    FiberIteratorComplete =>
       finish_fiber_sequence_operation(name, aggregate, count, span)
-    IteratorAdvanced(next, value) => {
+    FiberIteratorYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          continue_fiber_sequence_advance(
+            continuation(resumed),
+            iterable,
+            function_identifier,
+            name,
+            aggregate,
+            count,
+            span,
+            context,
+          )
+        },
+        span,
+        context,
+      )
+    FiberIteratorAdvanced(next, value) => {
+      if name == "reduce:first" {
+        return execute_fiber_sequence_operation(
+          iterable, next, function_identifier, "reduce", value, count, span, context,
+        )
+      }
+      if name == "toList" {
+        match aggregate {
+          ListValue(identifier) => context.lists[identifier].items.push(value)
+          _ => abort("toList aggregate must be a List")
+        }
+        return execute_fiber_sequence_operation(
+          iterable,
+          next,
+          function_identifier,
+          name,
+          aggregate,
+          count + 1,
+          span,
+          context,
+        )
+      }
+      let arguments = if name == "reduce" {
+        [aggregate, value]
+      } else {
+        [value]
+      }
       let call_identifier = context.new_function_fiber(
         function_identifier,
-        [value],
+        arguments,
         context.current_fiber,
       )
       resume_fiber_sequence_callback(
@@ -4186,6 +4730,29 @@ fn execute_fiber_sequence_operation(
       )
     }
   }
+}
+
+///|
+fn execute_fiber_sequence_operation(
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int32,
+  name : String,
+  aggregate : Value,
+  count : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  continue_fiber_sequence_advance(
+    advance_fiber_iterable(iterable, iterator, span, context),
+    iterable,
+    function_identifier,
+    name,
+    aggregate,
+    count,
+    span,
+    context,
+  )
 }
 
 ///|
@@ -4270,6 +4837,15 @@ fn prepare_evaluated_method_call(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
+  match receiver {
+    SequenceValue(_) if name == "iterate" && arguments.length() == 1 =>
+      return fiber_iterator_expression_step(
+        advance_fiber_iterable(receiver, arguments[0], span, context),
+        span,
+        context,
+      )
+    _ => ()
+  }
   if (name == "all" || name == "any" || name == "count" || name == "each") &&
     arguments.length() == 1 {
     match arguments[0] {
@@ -4280,6 +4856,31 @@ fn prepare_evaluated_method_call(
           function_identifier,
           name,
           Value::bool(name == "all"),
+          0,
+          span,
+          context,
+        )
+      _ => ()
+    }
+  }
+  if name == "reduce" && (arguments.length() == 1 || arguments.length() == 2) {
+    let function_position = arguments.length() - 1
+    match arguments[function_position] {
+      FunctionValue(function_identifier) =>
+        return execute_fiber_sequence_operation(
+          receiver,
+          Value::null(),
+          function_identifier,
+          if arguments.length() == 1 {
+            "reduce:first"
+          } else {
+            "reduce"
+          },
+          if arguments.length() == 1 {
+            Value::null()
+          } else {
+            arguments[0]
+          },
           0,
           span,
           context,
@@ -4428,6 +5029,22 @@ fn prepare_evaluated_property_get(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
+  match receiver {
+    SequenceValue(_) if name == "toList" => {
+      let values = context.new_list([])
+      return execute_fiber_sequence_operation(
+        receiver,
+        Value::null(),
+        -1,
+        "toList",
+        values,
+        0,
+        span,
+        context,
+      )
+    }
+    _ => ()
+  }
   let resolved = match receiver {
     InstanceValue(identifier) =>
       if identifier >= 0 && identifier < context.instances.length() {
@@ -4491,6 +5108,8 @@ fn prepare_fiber_expression(
   context : RuntimeContext,
 ) -> FiberExpressionStep {
   match expression {
+    FiberExpressionResume(identifier, input, span) =>
+      resume_stored_fiber_expression(identifier, input, span, context)
     FiberCallResume(identifier, input, result_override, span) =>
       resume_fiber_expression_call(
         identifier, input, result_override, span, context,
@@ -5092,18 +5711,28 @@ fn resume_fiber_each_callback(
 }
 
 ///|
-fn execute_fiber_each(
+fn continue_fiber_each_advance(
+  step : FiberIteratorStep,
   iterable : Value,
-  iterator : Value,
   function_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberStatementStep {
-  match advance_iterable(iterable, iterator, span, context) {
-    IteratorAdvanceFailed(issue) => FiberStatementFailed(issue)
-    IteratorComplete =>
+  match step {
+    FiberIteratorFailed(issue) => FiberStatementFailed(issue)
+    FiberIteratorComplete =>
       FiberStatementCompleted(StatementCompleted(Value::null()))
-    IteratorAdvanced(next, value) => {
+    FiberIteratorYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        continue_fiber_each_advance(
+          continuation(resumed),
+          iterable,
+          function_identifier,
+          span,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, value) => {
       let call_identifier = context.new_function_fiber(
         function_identifier,
         [value],
@@ -5120,6 +5749,23 @@ fn execute_fiber_each(
       )
     }
   }
+}
+
+///|
+fn execute_fiber_each(
+  iterable : Value,
+  iterator : Value,
+  function_identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  continue_fiber_each_advance(
+    advance_fiber_iterable(iterable, iterator, span, context),
+    iterable,
+    function_identifier,
+    span,
+    context,
+  )
 }
 
 ///|
@@ -5699,30 +6345,60 @@ fn execute_fiber_for_iteration(
   environment : Environment,
   context : RuntimeContext,
 ) -> FiberStatementStep {
-  let next = match
-    invoke_method(iterable, "iterate", [iterator], span, context) {
-    EvaluationFailed(issue) => return FiberStatementFailed(issue)
-    EvaluationSucceeded(value) if !value.is_truthy() =>
-      return FiberStatementCompleted(StatementCompleted(last))
-    EvaluationSucceeded(value) => value
-  }
-  let item = match
-    invoke_method(iterable, "iteratorValue", [next], span, context) {
-    EvaluationFailed(issue) => return FiberStatementFailed(issue)
-    EvaluationSucceeded(value) => value
-  }
-  ignore(environment.assign(name, item))
-  continue_fiber_for(
-    execute_fiber_statement(body, environment, context),
+  continue_fiber_for_advance(
+    advance_fiber_iterable(iterable, iterator, span, context),
     name,
     iterable,
-    next,
     body,
     span,
     last,
     environment,
     context,
   )
+}
+
+///|
+fn continue_fiber_for_advance(
+  step : FiberIteratorStep,
+  name : String,
+  iterable : Value,
+  body : Stmt,
+  span : SourceSpan,
+  last : Value,
+  environment : Environment,
+  context : RuntimeContext,
+) -> FiberStatementStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberStatementFailed(issue)
+    FiberIteratorComplete => FiberStatementCompleted(StatementCompleted(last))
+    FiberIteratorYielded(value, continuation) =>
+      FiberStatementYielded(value, fn(resumed) {
+        continue_fiber_for_advance(
+          continuation(resumed),
+          name,
+          iterable,
+          body,
+          span,
+          last,
+          environment,
+          context,
+        )
+      })
+    FiberIteratorAdvanced(next, item) => {
+      ignore(environment.assign(name, item))
+      continue_fiber_for(
+        execute_fiber_statement(body, environment, context),
+        name,
+        iterable,
+        next,
+        body,
+        span,
+        last,
+        environment,
+        context,
+      )
+    }
+  }
 }
 
 ///|
@@ -6484,6 +7160,7 @@ fn invoke_sequence_method(
         source_iterator: Value::null(),
         current: Value::null(),
         yielded: 0,
+        skipped: 0,
         started: false,
         completed: false,
         alive: true,
@@ -8028,6 +8705,7 @@ fn evaluate_expression_in(
 ) -> EvaluationResult {
   match expression {
     FiberCallResume(_, _, _, span)
+    | FiberExpressionResume(_, _, span)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, span) =>
       evaluation_error(
         InvalidFiberState,
@@ -9426,6 +10104,7 @@ fn collect_runtime_garbage(
         source_iterator: Value::null(),
         current: Value::null(),
         yielded: 0,
+        skipped: 0,
         started: false,
         completed: true,
         alive: false,

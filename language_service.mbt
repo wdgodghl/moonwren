@@ -203,6 +203,7 @@ fn collect_expression_symbols(
     | FieldGet(_, _)
     | StaticFieldGet(_, _)
     | FiberCallResume(_, _, _, _)
+    | FiberExpressionResume(_, _, _)
     | FiberSequenceResume(_, _, _, _, _, _, _, _, _) => ()
   }
 }
