@@ -13,6 +13,7 @@
 | `fiber-lazy-map-suspension.wren` | `fiber-lazy-map-suspension.out` | exact match; lazy materialization and resumed output |
 | `fiber-lazy-pipeline-suspension.wren` | `fiber-lazy-pipeline-suspension.out` | exact match; nested map/where/skip/take and side effects |
 | `fiber-lazy-consumers.wren` | `fiber-lazy-consumers.out` | exact match; join accumulation, contains short-circuit, and count across yields |
+| `fiber-iterator-protocol.wren` | `fiber-iterator-protocol.out` | exact match; user-defined iteration, inherited consumers, and streaming output |
 | `official-interpolation.wren` | `official-interpolation.out` | exact match; upstream `test/language/interpolation/interpolation.wren` |
 | `official-sequence-all.wren` | `official-sequence-all.out` | exact match; upstream `test/core/sequence/all.wren` |
 | `official-setter-instance.wren` | `official-setter-instance.out` | exact match; upstream `test/language/setter/instance.wren` |

@@ -34,7 +34,7 @@ implemented here does not make a separate protocol, ABI, or performance claim.
 | Functions and closures | Implemented | Expression/block bodies, arity, `return`, recursion and captured cells |
 | Classes | Implemented | Members, inheritance, declaring-class fields, attributes, overriding, `this` and `super` |
 | Fibers | Implemented | Full coroutine semantics across calls, callbacks, constructors and module imports |
-| Modules | Implemented | Imports, aliases, isolated scopes, partial initialization for cycles, caching and loader API |
+| Modules | Implemented | Imports, aliases, isolated scopes, caching and loader API. A missing export during a cycle identifies both modules. Valid cycles reuse partial initialization. |
 | Foreign methods | Implemented | Instance/static methods and getters, canonical module binding, values and structured host failures |
 | Foreign classes | Implemented | Host allocation handles, handle-aware methods, mixed Wren methods and deterministic shutdown finalization |
 

@@ -1175,6 +1175,46 @@ test "circular imports reuse partially initialized modules" {
 }
 
 ///|
+test "a missing export in an active import cycle identifies both modules" {
+  let modules = [
+    @moonwren.ModuleSource::new("a", "import \"b\"\n"),
+    @moonwren.ModuleSource::new("b", "import \"a\" for missing\n"),
+  ]
+  match @moonwren.run_modules("a", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) =>
+      fail("missing cyclic export should fail")
+    @moonwren.ProgramFailed(issues, _) => {
+      assert_eq(issues[0].code, @moonwren.UndefinedExport)
+      assert_eq(issues[0].source_name, "b")
+      assert_true(issues[0].message.contains("circular import of 'a' from 'b'"))
+      assert_true(issues[0].message.contains("'missing'"))
+    }
+  }
+}
+
+///|
+test "a suspended module import retains the importing frame on failure" {
+  let modules = [
+    @moonwren.ModuleSource::new(
+      "main",
+      "var task = Fiber.new {\n  import \"worker\"\n}\n" +
+      "System.print(task.call())\ntask.call()\n",
+    ),
+    @moonwren.ModuleSource::new(
+      "worker", "Fiber.yield(\"loaded\")\nFiber.abort(\"module failure\")\n",
+    ),
+  ]
+  match @moonwren.run_modules("main", modules, 100000) {
+    @moonwren.ProgramCompleted(_, _) => fail("the resumed module should fail")
+    @moonwren.ProgramFailed(issues, output) => {
+      assert_eq(output, ["loaded"], msg=issues[0].render("main"))
+      assert_eq(issues[0].source_name, "worker", msg=issues[0].render("main"))
+      assert_true(issues[0].render("main").contains("import \"worker\""))
+    }
+  }
+}
+
+///|
 test "module parse failures retain the imported source name" {
   let modules = [
     @moonwren.ModuleSource::new("main", "import \"broken.wren\"\n"),

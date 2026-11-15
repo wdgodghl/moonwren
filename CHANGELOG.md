@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.7 - 2026-11-15
+
+- resume Fibers through user-defined iterators, sequence consumers, sort
+  comparisons, and nested collection formatting;
+- preserve Wren iterator timing, comparator order, and streaming output;
+- identify missing exports in circular imports and preserve import frames
+  when a suspended module fails after resuming.
+
 ## 0.9.6 - 2026-11-07
 
 - preserve Fiber yields, resumed values, and iterator position when lazy

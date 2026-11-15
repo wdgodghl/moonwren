@@ -403,6 +403,83 @@ test "nested lazy transformations suspend through for iteration" {
 }
 
 ///|
+test "Fiber resumes user iteration, list sorting and streaming output" {
+  let source =
+    #|class Pair is Sequence {
+    #|  construct new() {}
+    #|  iterate(previous) {
+    #|    if (previous == 2) return false
+    #|    var next = previous ? previous + 1 : 1
+    #|    Fiber.yield(next)
+    #|    return next
+    #|  }
+    #|  iteratorValue(index) { Fiber.yield(index * 10) }
+    #|}
+    #|class Label {
+    #|  construct new() {}
+    #|  toString {
+    #|    Fiber.yield("format")
+    #|    return "!"
+    #|  }
+    #|}
+    #|var work = Fiber.new {
+    #|  if (Pair.new().isEmpty) Fiber.abort("unexpected empty sequence")
+    #|  var items = [3]
+    #|  items.addAll(Pair.new())
+    #|  items.sort { |left, right|
+    #|    Fiber.yield("compare %(left) %(right)")
+    #|    return left < right
+    #|  }
+    #|  var mapped = items.map { |item| "%(item)" }
+    #|  var iterator = mapped.iterate(null)
+    #|  if (mapped.isEmpty) Fiber.abort("unexpected empty sequence")
+    #|  var guarded = items.map { |item| Fiber.abort("unexpected transformation") }
+    #|  if (guarded.skip(1).isEmpty) Fiber.abort("unexpected empty skip")
+    #|  if (!guarded.skip(3).isEmpty) Fiber.abort("unexpected nonempty skip")
+    #|  if (guarded.take(1).isEmpty) Fiber.abort("unexpected empty take")
+    #|  if (!guarded.take(0).isEmpty) Fiber.abort("unexpected nonempty take")
+    #|  if (mapped.iteratorValue(iterator) != "1") Fiber.abort("wrong value")
+    #|  System.writeAll(mapped)
+    #|  System.print(Label.new())
+    #|  return items
+    #|}
+    #|System.print(work.call())
+    #|System.print(work.call())
+    #|System.print(work.call())
+    #|System.print(work.call(1))
+    #|System.print(work.call())
+    #|System.print(work.call(2))
+    #|System.print(work.call())
+    #|System.print(work.call())
+    #|System.print(work.call())
+  expect_fiber_output(source, [
+    "1", "1", "10", "2", "20", "compare 3 2", "compare 1 2", "123format", "!", "[1, 2, 3]",
+  ])
+}
+
+///|
+test "Fiber resumes nested collection formatting without replay" {
+  let source =
+    #|class Label {
+    #|  construct new() {}
+    #|  toString {
+    #|    System.print("before")
+    #|    var value = Fiber.yield("format")
+    #|    return value
+    #|  }
+    #|}
+    #|var worker = Fiber.new {
+    #|  System.print([Label.new(), {"key": [Label.new()]}])
+    #|}
+    #|System.print(worker.call())
+    #|System.print(worker.call("first"))
+    #|worker.call("second")
+  expect_fiber_output(source, [
+    "before", "format", "before", "format", "[first, {key: [second]}]",
+  ])
+}
+
+///|
 test "fibers suspend through constructors and super constructors" {
   let source = "class Base {\n" +
     "  construct new() { _base = Fiber.yield(\"base\") }\n" +

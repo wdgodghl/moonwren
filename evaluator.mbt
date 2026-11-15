@@ -3772,22 +3772,14 @@ fn advance_sequence_iterator(
         iterator.yielded = iterator.yielded + 1
         EvaluationSucceeded(Value::iterator(iterator_identifier))
       }
-    SequenceMap(source, function_identifier) =>
-      match advance_iterable(source, iterator.source_iterator, span, context) {
-        IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
-        IteratorComplete => complete()
-        IteratorAdvanced(next, value) => {
-          iterator.source_iterator = next
-          match invoke_function(function_identifier, [value], span, context) {
-            EvaluationFailed(issue) => EvaluationFailed(issue)
-            EvaluationSucceeded(mapped) => {
-              iterator.current = mapped
-              iterator.yielded = iterator.yielded + 1
-              EvaluationSucceeded(Value::iterator(iterator_identifier))
-            }
-          }
-        }
-      }
+    SequenceMap(source, _) =>
+      invoke_method(
+        source,
+        "iterate",
+        [iterator.source_iterator],
+        span,
+        context,
+      )
     SequenceWhere(source, function_identifier) => {
       while true {
         match
@@ -3800,7 +3792,6 @@ fn advance_sequence_iterator(
               EvaluationFailed(issue) => return EvaluationFailed(issue)
               EvaluationSucceeded(selected) =>
                 if selected.is_truthy() {
-                  iterator.current = value
                   iterator.yielded = iterator.yielded + 1
                   return EvaluationSucceeded(
                     Value::iterator(iterator_identifier),
@@ -3813,42 +3804,54 @@ fn advance_sequence_iterator(
       complete()
     }
     SequenceSkip(source, count) => {
-      if !iterator.started {
-        iterator.started = true
-        for skip_index = 0; skip_index < count; skip_index = skip_index + 1 {
-          match
-            advance_iterable(source, iterator.source_iterator, span, context) {
-            IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
-            IteratorComplete => return complete()
-            IteratorAdvanced(next, _) => iterator.source_iterator = next
-          }
-        }
-      }
-      match advance_iterable(source, iterator.source_iterator, span, context) {
-        IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
-        IteratorComplete => complete()
-        IteratorAdvanced(next, value) => {
-          iterator.source_iterator = next
-          iterator.current = value
-          iterator.yielded = iterator.yielded + 1
-          EvaluationSucceeded(Value::iterator(iterator_identifier))
+      let skipped = if iterator.started { 0 } else { count }
+      iterator.started = true
+      for index = 0; ; index = index + 1 {
+        match
+          invoke_method(
+            source,
+            "iterate",
+            [iterator.source_iterator],
+            span,
+            context,
+          ) {
+          EvaluationFailed(issue) => return EvaluationFailed(issue)
+          EvaluationSucceeded(next) =>
+            if !next.is_truthy() {
+              iterator.completed = true
+              return EvaluationSucceeded(next)
+            } else {
+              iterator.source_iterator = next
+              if index == skipped {
+                return EvaluationSucceeded(Value::iterator(iterator_identifier))
+              }
+            }
         }
       }
     }
     SequenceTake(source, count) =>
       if iterator.yielded >= count {
-        complete()
+        iterator.completed = true
+        EvaluationSucceeded(Value::null())
       } else {
         match
-          advance_iterable(source, iterator.source_iterator, span, context) {
-          IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
-          IteratorComplete => complete()
-          IteratorAdvanced(next, value) => {
-            iterator.source_iterator = next
-            iterator.current = value
-            iterator.yielded = iterator.yielded + 1
-            EvaluationSucceeded(Value::iterator(iterator_identifier))
-          }
+          invoke_method(
+            source,
+            "iterate",
+            [iterator.source_iterator],
+            span,
+            context,
+          ) {
+          EvaluationFailed(issue) => EvaluationFailed(issue)
+          EvaluationSucceeded(next) =>
+            if !next.is_truthy() {
+              iterator.completed = true
+              EvaluationSucceeded(next)
+            } else {
+              iterator.source_iterator = next
+              iterator.yielded = iterator.yielded + 1
+              EvaluationSucceeded(Value::iterator(iterator_identifier))
+            }
         }
       }
   }
@@ -3967,34 +3970,67 @@ fn read_fiber_iterator_value(
         iterator_identifier >= 0 &&
         iterator_identifier < context.iterators.length() {
         let state = context.iterators[iterator_identifier]
-        match context.sequences[sequence_identifier].kind {
-          SequenceMap(_, function_identifier) => {
-            let call_identifier = context.new_function_fiber(
-              function_identifier,
-              [state.source_current],
-              context.current_fiber,
-            )
-            return continue_fiber_iterator_value_callback(
-              call_identifier,
-              Value::null(),
-              iterator,
-              span,
-              context,
-            )
+        if state.sequence_identifier == sequence_identifier {
+          match context.sequences[sequence_identifier].kind {
+            SequenceMap(_, function_identifier) => {
+              let call_identifier = context.new_function_fiber(
+                function_identifier,
+                [state.source_current],
+                context.current_fiber,
+              )
+              return continue_fiber_iterator_value_callback(
+                call_identifier,
+                Value::null(),
+                iterator,
+                span,
+                context,
+              )
+            }
+            SequenceWhere(source, _)
+            | SequenceSkip(source, _)
+            | SequenceTake(source, _) =>
+              return read_fiber_iterator_value(
+                source,
+                state.source_iterator,
+                span,
+                context,
+              )
+            _ => ()
           }
-          SequenceWhere(source, _)
-          | SequenceSkip(source, _)
-          | SequenceTake(source, _) =>
-            return read_fiber_iterator_value(
-              source,
-              state.source_iterator,
-              span,
-              context,
-            )
-          _ => ()
         }
       }
     _ => ()
+  }
+  if iterable is SequenceValue(identifier) &&
+    context.sequences[identifier].kind is SequenceMap(_, _) {
+    return continue_fiber_protocol_call(
+      prepare_evaluated_method_call(
+        iterable,
+        "iteratorValue",
+        [iterator],
+        span,
+        context,
+      ),
+      iterable,
+      Some(iterator),
+      span,
+      context,
+    )
+  }
+  if iterable is InstanceValue(_) {
+    return continue_fiber_protocol_call(
+      prepare_evaluated_method_call(
+        iterable,
+        "iteratorValue",
+        [iterator],
+        span,
+        context,
+      ),
+      iterable,
+      Some(iterator),
+      span,
+      context,
+    )
   }
   match invoke_method(iterable, "iteratorValue", [iterator], span, context) {
     EvaluationFailed(issue) => FiberIteratorFailed(issue)
@@ -4035,7 +4071,7 @@ fn continue_fiber_where_callback(
   call_identifier : Int32,
   input : Value,
   iterator_identifier : Int32,
-  original : Value,
+  position_only : Bool,
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberIteratorStep {
@@ -4045,11 +4081,18 @@ fn continue_fiber_where_callback(
       if context.fibers[call_identifier].state == 2 {
         FiberIteratorYielded(selected, fn(resumed) {
           continue_fiber_where_callback(
-            call_identifier, resumed, iterator_identifier, original, span, context,
+            call_identifier, resumed, iterator_identifier, position_only, span, context,
           )
         })
       } else if selected.is_truthy() {
         let iterator = context.iterators[iterator_identifier]
+        if position_only {
+          iterator.yielded = iterator.yielded + 1
+          return FiberIteratorAdvanced(
+            Value::iterator(iterator_identifier),
+            Value::null(),
+          )
+        }
         let source = match
           context.sequences[iterator.sequence_identifier].kind {
           SequenceWhere(value, _) => value
@@ -4067,7 +4110,12 @@ fn continue_fiber_where_callback(
           context,
         )
       } else {
-        advance_fiber_sequence_iterator(iterator_identifier, span, context)
+        advance_fiber_sequence_iterator(
+          iterator_identifier,
+          span,
+          context,
+          position_only~,
+        )
       }
   }
 }
@@ -4079,6 +4127,7 @@ fn continue_fiber_where_source(
   function_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
+  position_only : Bool,
 ) -> FiberIteratorStep {
   match step {
     FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
@@ -4092,6 +4141,7 @@ fn continue_fiber_where_source(
           function_identifier,
           span,
           context,
+          position_only,
         )
       })
     FiberIteratorAdvanced(next, value) => {
@@ -4105,7 +4155,7 @@ fn continue_fiber_where_source(
         call_identifier,
         Value::null(),
         iterator_identifier,
-        value,
+        position_only,
         span,
         context,
       )
@@ -4120,6 +4170,7 @@ fn continue_fiber_skip_source(
   count : Int32,
   span : SourceSpan,
   context : RuntimeContext,
+  position_only : Bool,
 ) -> FiberIteratorStep {
   match step {
     FiberIteratorFailed(issue) => FiberIteratorFailed(issue)
@@ -4133,20 +4184,20 @@ fn continue_fiber_skip_source(
           count,
           span,
           context,
+          position_only,
         )
       })
-    FiberIteratorAdvanced(next, value) => {
+    FiberIteratorAdvanced(next, _) => {
       let iterator = context.iterators[iterator_identifier]
       iterator.source_iterator = next
+      let source = match context.sequences[iterator.sequence_identifier].kind {
+        SequenceSkip(value, _) => value
+        _ => abort("invalid skip iterator")
+      }
       if iterator.skipped < count {
         iterator.skipped = iterator.skipped + 1
-        let source = match
-          context.sequences[iterator.sequence_identifier].kind {
-          SequenceSkip(value, _) => value
-          _ => abort("invalid skip iterator")
-        }
         continue_fiber_skip_source(
-          advance_fiber_iterable(
+          advance_fiber_position(
             source,
             iterator.source_iterator,
             span,
@@ -4156,11 +4207,21 @@ fn continue_fiber_skip_source(
           count,
           span,
           context,
+          position_only,
+        )
+      } else if position_only {
+        iterator.yielded = iterator.yielded + 1
+        FiberIteratorAdvanced(
+          Value::iterator(iterator_identifier),
+          Value::null(),
         )
       } else {
-        iterator.current = value
-        iterator.yielded = iterator.yielded + 1
-        FiberIteratorAdvanced(Value::iterator(iterator_identifier), value)
+        continue_fiber_where_selected(
+          read_fiber_iterator_value(source, next, span, context),
+          iterator_identifier,
+          span,
+          context,
+        )
       }
     }
   }
@@ -4201,6 +4262,7 @@ fn advance_fiber_sequence_iterator(
   iterator_identifier : Int32,
   span : SourceSpan,
   context : RuntimeContext,
+  position_only~ : Bool = false,
 ) -> FiberIteratorStep {
   if iterator_identifier < 0 ||
     iterator_identifier >= context.iterators.length() {
@@ -4245,26 +4307,37 @@ fn advance_fiber_sequence_iterator(
         function_identifier,
         span,
         context,
+        position_only,
       )
     SequenceSkip(source, count) =>
       continue_fiber_skip_source(
-        advance_fiber_iterable(source, iterator.source_iterator, span, context),
+        advance_fiber_position(source, iterator.source_iterator, span, context),
         iterator_identifier,
         count,
         span,
         context,
+        position_only,
       )
     SequenceTake(source, count) =>
       if iterator.yielded >= count {
         complete_fiber_iterator(iterator_identifier, context)
       } else {
         continue_fiber_take_source(
-          advance_fiber_iterable(
-            source,
-            iterator.source_iterator,
-            span,
-            context,
-          ),
+          if position_only {
+            advance_fiber_position(
+              source,
+              iterator.source_iterator,
+              span,
+              context,
+            )
+          } else {
+            advance_fiber_iterable(
+              source,
+              iterator.source_iterator,
+              span,
+              context,
+            )
+          },
           iterator_identifier,
           span,
           context,
@@ -4292,13 +4365,115 @@ fn advance_fiber_sequence_iterator(
 }
 
 ///|
+fn continue_fiber_protocol_call(
+  step : FiberExpressionStep,
+  iterable : Value,
+  iterator : Value?,
+  span : SourceSpan,
+  context : RuntimeContext,
+  position_only~ : Bool = false,
+) -> FiberIteratorStep {
+  match step {
+    FiberExpressionFailed(issue) => FiberIteratorFailed(issue)
+    FiberExpressionYielded(value, continuation) =>
+      FiberIteratorYielded(value, fn(resumed) {
+        continue_fiber_protocol_call(
+          prepare_fiber_expression(
+            continuation(resumed),
+            Environment::new(),
+            context,
+          ),
+          iterable,
+          iterator,
+          span,
+          context,
+          position_only~,
+        )
+      })
+    FiberExpressionReady(Literal(value, _)) =>
+      match iterator {
+        Some(next) => FiberIteratorAdvanced(next, value)
+        None =>
+          if !value.is_truthy() {
+            FiberIteratorComplete
+          } else if position_only {
+            FiberIteratorAdvanced(value, Value::null())
+          } else {
+            read_fiber_iterator_value(iterable, value, span, context)
+          }
+      }
+    FiberExpressionReady(_) => abort("iterator call must produce a value")
+  }
+}
+
+///|
+fn advance_fiber_position(
+  iterable : Value,
+  previous : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberIteratorStep {
+  if iterable is SequenceValue(identifier) {
+    match context.sequences[identifier].kind {
+      SequenceMap(source, _) =>
+        return advance_fiber_position(source, previous, span, context)
+      SequenceSkip(_, _) | SequenceTake(_, _) | SequenceWhere(_, _) =>
+        return advance_fiber_iterable(
+          iterable,
+          previous,
+          span,
+          context,
+          position_only=true,
+        )
+      _ => ()
+    }
+  }
+  continue_fiber_protocol_call(
+    if iterable is InstanceValue(_) {
+      prepare_evaluated_method_call(
+        iterable,
+        "iterate",
+        [previous],
+        span,
+        context,
+      )
+    } else {
+      match invoke_method(iterable, "iterate", [previous], span, context) {
+        EvaluationSucceeded(token) => FiberExpressionReady(Literal(token, span))
+        EvaluationFailed(issue) => FiberExpressionFailed(issue)
+      }
+    },
+    iterable,
+    None,
+    span,
+    context,
+    position_only=true,
+  )
+}
+
+///|
 fn advance_fiber_iterable(
   iterable : Value,
   iterator : Value,
   span : SourceSpan,
   context : RuntimeContext,
+  position_only~ : Bool = false,
 ) -> FiberIteratorStep {
   match iterable {
+    InstanceValue(_) =>
+      return continue_fiber_protocol_call(
+        prepare_evaluated_method_call(
+          iterable,
+          "iterate",
+          [iterator],
+          span,
+          context,
+        ),
+        iterable,
+        None,
+        span,
+        context,
+      )
     SequenceValue(sequence_identifier) => {
       let is_lazy_sequence = match context.sequences[sequence_identifier].kind {
         SequenceMap(_, _)
@@ -4351,7 +4526,10 @@ fn advance_fiber_iterable(
             )
         }
         return advance_fiber_sequence_iterator(
-          iterator_identifier, span, context,
+          iterator_identifier,
+          span,
+          context,
+          position_only~,
         )
       }
     }
@@ -4503,17 +4681,262 @@ fn fiber_iterator_expression_step(
   step : FiberIteratorStep,
   span : SourceSpan,
   context : RuntimeContext,
+  read_value~ : Bool = false,
 ) -> FiberExpressionStep {
   match step {
     FiberIteratorFailed(issue) => FiberExpressionFailed(issue)
     FiberIteratorComplete =>
       FiberExpressionReady(Literal(Value::bool(false), span))
-    FiberIteratorAdvanced(next, _) => FiberExpressionReady(Literal(next, span))
+    FiberIteratorAdvanced(next, value) =>
+      FiberExpressionReady(Literal(if read_value { value } else { next }, span))
     FiberIteratorYielded(value, continuation) =>
       suspend_fiber_expression(
         value,
         fn(resumed) {
-          fiber_iterator_expression_step(continuation(resumed), span, context)
+          fiber_iterator_expression_step(
+            continuation(resumed),
+            span,
+            context,
+            read_value~,
+          )
+        },
+        span,
+        context,
+      )
+  }
+}
+
+///|
+fn prepare_fiber_display(
+  value : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+  ancestors : Array[Value],
+) -> FiberExpressionStep {
+  if ancestors.contains(value) {
+    return FiberExpressionReady(
+      Literal(
+        Value::string(
+          match value {
+            ListValue(_) => "[...]"
+            MapValue(_) => "{...}"
+            _ => value.to_text()
+          },
+        ),
+        span,
+      ),
+    )
+  }
+  let parts : Array[Value] = []
+  match value {
+    ListValue(identifier) => {
+      parts.push(Value::string("["))
+      for item in context.lists[identifier].items {
+        if parts.length() > 1 {
+          parts.push(Value::string(", "))
+        }
+        parts.push(item)
+      }
+      parts.push(Value::string("]"))
+    }
+    MapValue(identifier) => {
+      parts.push(Value::string("{"))
+      for entry in context.maps[identifier].entries {
+        if parts.length() > 1 {
+          parts.push(Value::string(", "))
+        }
+        parts.push(entry.key)
+        parts.push(Value::string(": "))
+        parts.push(entry.value)
+      }
+      parts.push(Value::string("}"))
+    }
+    MapEntryValue(identifier) => {
+      let entry = context.map_entries[identifier]
+      parts.push(entry.key)
+      parts.push(Value::string(":"))
+      parts.push(entry.value)
+    }
+    InstanceValue(_) | ClassValue(_) =>
+      return prepare_evaluated_property_get(value, "toString", span, context)
+    StringValue(_) | RawStringValue(_) =>
+      return FiberExpressionReady(Literal(value, span))
+    _ =>
+      return FiberExpressionReady(
+        Literal(Value::string(runtime_value_to_text(value, context, 0)), span),
+      )
+  }
+  let path = ancestors.copy()
+  path.push(value)
+  format_fiber_display_parts(
+    parts,
+    0,
+    Value::string(""),
+    None,
+    span,
+    context,
+    path,
+  )
+}
+
+///|
+fn format_fiber_display_parts(
+  parts : Array[Value],
+  start : Int32,
+  prefix : Value,
+  pending : FiberExpressionStep?,
+  span : SourceSpan,
+  context : RuntimeContext,
+  ancestors : Array[Value],
+) -> FiberExpressionStep {
+  for index = start, text = prefix, result = pending {
+    if index >= parts.length() {
+      return FiberExpressionReady(Literal(text, span))
+    }
+    let part = match result {
+      Some(step) => step
+      None => prepare_fiber_display(parts[index], span, context, ancestors)
+    }
+    match part {
+      FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+      FiberExpressionReady(Literal(value, _)) =>
+        match evaluate_binary_values(Add, text, value, span, context) {
+          EvaluationFailed(issue) => return FiberExpressionFailed(issue)
+          EvaluationSucceeded(next) => continue index + 1, next, None
+        }
+      FiberExpressionReady(_) => abort("display part must produce a value")
+      FiberExpressionYielded(value, continuation) =>
+        return suspend_fiber_expression(
+          value,
+          fn(input) {
+            format_fiber_display_parts(
+              parts,
+              index,
+              text,
+              Some(
+                prepare_fiber_expression(
+                  continuation(input),
+                  Environment::new(),
+                  context,
+                ),
+              ),
+              span,
+              context,
+              ancestors,
+            )
+          },
+          span,
+          context,
+        )
+    }
+  }
+}
+
+///|
+fn finish_fiber_print(
+  step : FiberExpressionStep,
+  object : Value,
+  newline : Bool,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match step {
+    FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+    FiberExpressionReady(Literal(formatted, _)) => {
+      let text = match formatted {
+        StringValue(text) => text
+        RawStringValue(bytes) => string_display_from_bytes(bytes)
+        _ => "[invalid toString]"
+      }
+      if context.write_output(text, newline) {
+        FiberExpressionReady(Literal(object, span))
+      } else {
+        FiberExpressionFailed(
+          Diagnostic::new(
+            Runtime,
+            ExecutionLimit,
+            "captured output limit exceeded",
+            span,
+          ),
+        )
+      }
+    }
+    FiberExpressionReady(_) => abort("toString must produce a value")
+    FiberExpressionYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          finish_fiber_print(
+            prepare_fiber_expression(
+              continuation(resumed),
+              Environment::new(),
+              context,
+            ),
+            object,
+            newline,
+            span,
+            context,
+          )
+        },
+        span,
+        context,
+      )
+  }
+}
+
+///|
+fn finish_fiber_emptiness(
+  step : FiberExpressionStep,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match step {
+    FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+    FiberExpressionReady(Literal(token, _)) =>
+      FiberExpressionReady(Literal(Value::bool(!token.is_truthy()), span))
+    FiberExpressionReady(_) => abort("iterate must produce a value")
+    FiberExpressionYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          finish_fiber_emptiness(
+            prepare_fiber_expression(
+              continuation(resumed),
+              Environment::new(),
+              context,
+            ),
+            span,
+            context,
+          )
+        },
+        span,
+        context,
+      )
+  }
+}
+
+///|
+fn prepare_fiber_mapped_value(
+  step : FiberIteratorStep,
+  mapper : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match step {
+    FiberIteratorFailed(issue) => FiberExpressionFailed(issue)
+    FiberIteratorComplete => FiberExpressionReady(Literal(Value::null(), span))
+    FiberIteratorAdvanced(_, value) =>
+      start_fiber_expression_call(mapper, [value], None, span, context)
+    FiberIteratorYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          prepare_fiber_mapped_value(
+            continuation(resumed),
+            mapper,
+            span,
+            context,
+          )
         },
         span,
         context,
@@ -4871,6 +5294,9 @@ priv enum FiberSequenceConsumer {
   FindElement(Value)
   JoinElements(String, String, Bool)
   CollectElements(Int32)
+  AppendElements(Int32, Value)
+  WriteElements(Bool)
+  TestEmpty
 }
 
 ///|
@@ -4890,6 +5316,21 @@ fn consume_fiber_sequence(
           FindElement(_) => Value::bool(false)
           JoinElements(_, text, _) => Value::string(text)
           CollectElements(identifier) => Value::list(identifier)
+          AppendElements(_, source) => source
+          TestEmpty => Value::bool(true)
+          WriteElements(newline) => {
+            if newline && !context.write_output("", true) {
+              return FiberExpressionFailed(
+                Diagnostic::new(
+                  Runtime,
+                  ExecutionLimit,
+                  "captured output limit exceeded",
+                  span,
+                ),
+              )
+            }
+            Value::null()
+          }
         }
         return FiberExpressionReady(Literal(result, span))
       }
@@ -4909,14 +5350,50 @@ fn consume_fiber_sequence(
           context,
         )
       FiberIteratorAdvanced(next, value) => {
+        if (
+            value is InstanceValue(_) ||
+            value is ClassValue(_) ||
+            value is ListValue(_) ||
+            value is MapValue(_) ||
+            value is MapEntryValue(_)
+          ) &&
+          (consumer is JoinElements(_, _, _) || consumer is WriteElements(_)) {
+          return consume_fiber_element_result(
+            prepare_fiber_display(value, span, context, []),
+            iterable,
+            next,
+            consumer,
+            span,
+            context,
+          )
+        }
         let updated = match consumer {
+          TestEmpty =>
+            return FiberExpressionReady(Literal(Value::bool(false), span))
           CountElements(count) => CountElements(count + 1)
-          FindElement(target) =>
+          FindElement(target) => {
+            if instance_has_method(target, "==", 1, context) {
+              return consume_fiber_element_result(
+                prepare_evaluated_method_call(
+                  target,
+                  "==",
+                  [value],
+                  span,
+                  context,
+                ),
+                iterable,
+                next,
+                consumer,
+                span,
+                context,
+              )
+            }
             if value == target {
               return FiberExpressionReady(Literal(Value::bool(true), span))
             } else {
               consumer
             }
+          }
           JoinElements(separator, text, first) => {
             let prefix = if first { text } else { text + separator }
             JoinElements(
@@ -4925,13 +5402,258 @@ fn consume_fiber_sequence(
               false,
             )
           }
-          CollectElements(identifier) => {
+          CollectElements(identifier) | AppendElements(identifier, _) => {
             context.lists[identifier].items.push(value)
+            consumer
+          }
+          WriteElements(_) => {
+            if !context.write_output(
+                runtime_value_to_text(value, context, 0),
+                false,
+              ) {
+              return FiberExpressionFailed(
+                Diagnostic::new(
+                  Runtime,
+                  ExecutionLimit,
+                  "captured output limit exceeded",
+                  span,
+                ),
+              )
+            }
             consumer
           }
         }
         continue advance_fiber_iterable(iterable, next, span, context), updated
       }
+    }
+  }
+}
+
+///|
+fn consume_fiber_element_result(
+  step : FiberExpressionStep,
+  iterable : Value,
+  next : Value,
+  consumer : FiberSequenceConsumer,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  match step {
+    FiberExpressionFailed(issue) => FiberExpressionFailed(issue)
+    FiberExpressionReady(Literal(value, _)) => {
+      if consumer is FindElement(_) {
+        return if value.is_truthy() {
+          FiberExpressionReady(Literal(Value::bool(true), span))
+        } else {
+          consume_fiber_sequence(
+            iterable,
+            advance_fiber_iterable(iterable, next, span, context),
+            consumer,
+            span,
+            context,
+          )
+        }
+      }
+      let formatted = if value is StringValue(_) || value is RawStringValue(_) {
+        value
+      } else {
+        Value::string("[invalid toString]")
+      }
+      consume_fiber_sequence(
+        iterable,
+        FiberIteratorAdvanced(next, formatted),
+        consumer,
+        span,
+        context,
+      )
+    }
+    FiberExpressionReady(_) => abort("toString must produce a value")
+    FiberExpressionYielded(value, continuation) =>
+      suspend_fiber_expression(
+        value,
+        fn(resumed) {
+          consume_fiber_element_result(
+            prepare_fiber_expression(
+              continuation(resumed),
+              Environment::new(),
+              context,
+            ),
+            iterable,
+            next,
+            consumer,
+            span,
+            context,
+          )
+        },
+        span,
+        context,
+      )
+  }
+}
+
+///|
+fn compare_list_elements(
+  left : Value,
+  right : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> EvaluationResult {
+  match (left, right) {
+    (StringValue(a), StringValue(b)) => EvaluationSucceeded(Value::bool(a < b))
+    _ => evaluate_binary_values(LessThan, left, right, span, context)
+  }
+}
+
+///|
+fn sort_fiber_list(
+  list : Value,
+  items : Array[Value],
+  comparer : Int32?,
+  ranges : Array[(Int32, Int32)],
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  while ranges.pop() is Some((low, high)) {
+    if low < high {
+      if high >= items.length() {
+        return FiberExpressionFailed(
+          Diagnostic::new(
+            Runtime,
+            InvalidOperand,
+            "List changed length while sorting",
+            span,
+          ),
+        )
+      }
+      return partition_fiber_list(
+        list,
+        items,
+        comparer,
+        ranges,
+        low,
+        high,
+        low,
+        low,
+        items[high],
+        None,
+        span,
+        context,
+      )
+    }
+  }
+  FiberExpressionReady(Literal(list, span))
+}
+
+///|
+fn partition_fiber_list(
+  list : Value,
+  items : Array[Value],
+  comparer : Int32?,
+  ranges : Array[(Int32, Int32)],
+  low : Int32,
+  high : Int32,
+  scan : Int32,
+  boundary : Int32,
+  pivot : Value,
+  pending : FiberExpressionStep?,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> FiberExpressionStep {
+  for index = scan, position = boundary, result = pending {
+    if high >= items.length() {
+      return FiberExpressionFailed(
+        Diagnostic::new(
+          Runtime,
+          InvalidOperand,
+          "List changed length while sorting",
+          span,
+        ),
+      )
+    }
+    if index == high {
+      let previous = items[position]
+      items[position] = items[high]
+      items[high] = previous
+      ranges.push((position + 1, high))
+      ranges.push((low, position - 1))
+      return sort_fiber_list(list, items, comparer, ranges, span, context)
+    }
+    let step = match result {
+      Some(step) => step
+      None =>
+        match comparer {
+          Some(identifier) =>
+            start_fiber_expression_call(
+              identifier,
+              [items[index], pivot],
+              None,
+              span,
+              context,
+            )
+          None => {
+            let item = items[index]
+            if instance_has_method(item, "<", 1, context) {
+              prepare_evaluated_method_call(item, "<", [pivot], span, context)
+            } else {
+              match compare_list_elements(item, pivot, span, context) {
+                EvaluationSucceeded(value) =>
+                  FiberExpressionReady(Literal(value, span))
+                EvaluationFailed(issue) => FiberExpressionFailed(issue)
+              }
+            }
+          }
+        }
+    }
+    match step {
+      FiberExpressionFailed(issue) => return FiberExpressionFailed(issue)
+      FiberExpressionYielded(value, continuation) =>
+        return suspend_fiber_expression(
+          value,
+          fn(resumed) {
+            partition_fiber_list(
+              list,
+              items,
+              comparer,
+              ranges,
+              low,
+              high,
+              index,
+              position,
+              pivot,
+              Some(
+                prepare_fiber_expression(
+                  continuation(resumed),
+                  Environment::new(),
+                  context,
+                ),
+              ),
+              span,
+              context,
+            )
+          },
+          span,
+          context,
+        )
+      FiberExpressionReady(Literal(before, _)) => {
+        if before.is_truthy() {
+          if high >= items.length() {
+            return FiberExpressionFailed(
+              Diagnostic::new(
+                Runtime,
+                InvalidOperand,
+                "List changed length while sorting",
+                span,
+              ),
+            )
+          }
+          let previous = items[position]
+          items[position] = items[index]
+          items[index] = previous
+          continue index + 1, position + 1, None
+        }
+        continue index + 1, position, None
+      }
+      FiberExpressionReady(_) => abort("sort comparer must produce a value")
     }
   }
 }
@@ -5018,34 +5740,142 @@ fn prepare_evaluated_method_call(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
-  match receiver {
-    SequenceValue(_) if name == "iterate" && arguments.length() == 1 =>
-      return fiber_iterator_expression_step(
-        advance_fiber_iterable(receiver, arguments[0], span, context),
+  if receiver is SequenceValue(identifier) &&
+    arguments.length() == 1 &&
+    context.sequences[identifier].kind is SequenceMap(source, mapper) {
+    if name == "iterate" {
+      return prepare_evaluated_method_call(
+        source, name, arguments, span, context,
+      )
+    }
+    if name == "iteratorValue" {
+      return prepare_fiber_mapped_value(
+        read_fiber_iterator_value(source, arguments[0], span, context),
+        mapper,
         span,
         context,
       )
-    SequenceValue(_) => {
-      let consumer = match (name, arguments[:]) {
-        ("contains", [target]) => Some(FindElement(target))
-        ("join", []) => Some(JoinElements("", "", true))
-        ("join", [StringValue(separator)]) =>
-          Some(JoinElements(separator, "", true))
-        _ => None
-      }
-      if consumer is Some(consumer) {
-        return consume_fiber_sequence(
-          receiver,
-          advance_fiber_iterable(receiver, Value::null(), span, context),
-          consumer,
-          span,
-          context,
-        )
-      }
     }
+  }
+  match receiver {
+    ListValue(identifier) if name == "sort" && arguments.is_empty() => {
+      let items = context.lists[identifier].items
+      return sort_fiber_list(
+        receiver,
+        items,
+        None,
+        [(0, items.length() - 1)],
+        span,
+        context,
+      )
+    }
+    SystemValue if (name == "print" || name == "write") &&
+      arguments[:] is [object] =>
+      return finish_fiber_print(
+        prepare_fiber_display(object, span, context, []),
+        object,
+        name == "print",
+        span,
+        context,
+      )
+    ListValue(identifier) if name == "sort" &&
+      arguments[:] is [FunctionValue(comparer)] => {
+      let items = context.lists[identifier].items
+      return sort_fiber_list(
+        receiver,
+        items,
+        Some(comparer),
+        [(0, items.length() - 1)],
+        span,
+        context,
+      )
+    }
+    SystemValue if (name == "printAll" || name == "writeAll") &&
+      arguments.length() == 1 =>
+      return consume_fiber_sequence(
+        arguments[0],
+        advance_fiber_iterable(arguments[0], Value::null(), span, context),
+        WriteElements(name == "printAll"),
+        span,
+        context,
+      )
+    ListValue(identifier) if name == "addAll" &&
+      arguments.length() == 1 &&
+      arguments[0] != receiver =>
+      return consume_fiber_sequence(
+        arguments[0],
+        advance_fiber_iterable(arguments[0], Value::null(), span, context),
+        AppendElements(identifier, arguments[0]),
+        span,
+        context,
+      )
+    SequenceValue(identifier) if name == "iterate" && arguments.length() == 1 => {
+      if context.sequences[identifier].kind is SequenceTake(_, count) {
+        let reached_limit = match arguments[0] {
+          NullValue => count == 0
+          IteratorValue(token) =>
+            token >= 0 &&
+            token < context.iterators.length() &&
+            context.iterators[token].sequence_identifier == identifier &&
+            context.iterators[token].yielded >= count
+          _ => false
+        }
+        if reached_limit {
+          return FiberExpressionReady(Literal(Value::null(), span))
+        }
+      }
+      return fiber_iterator_expression_step(
+        advance_fiber_position(receiver, arguments[0], span, context),
+        span,
+        context,
+      )
+    }
+    SequenceValue(_) if name == "iteratorValue" && arguments.length() == 1 =>
+      return fiber_iterator_expression_step(
+        read_fiber_iterator_value(receiver, arguments[0], span, context),
+        span,
+        context,
+        read_value=true,
+      )
     _ => ()
   }
-  if (name == "all" || name == "any" || name == "count" || name == "each") &&
+  let uses_sequence_methods = match receiver {
+    InstanceValue(identifier) =>
+      context.classes[context.instances[identifier].class_identifier].inherits_sequence &&
+      !instance_has_method(receiver, name, arguments.length(), context)
+    ListValue(_)
+    | RangeValue(_, _, _)
+    | SequenceValue(_)
+    | StringValue(_)
+    | RawStringValue(_)
+    | MapValue(_) => true
+    _ => false
+  }
+  if uses_sequence_methods &&
+    (
+      receiver is InstanceValue(_) ||
+      receiver is SequenceValue(_) ||
+      receiver is ListValue(_)
+    ) {
+    let consumer = match (name, arguments[:]) {
+      ("contains", [target]) => Some(FindElement(target))
+      ("join", []) => Some(JoinElements("", "", true))
+      ("join", [StringValue(separator)]) =>
+        Some(JoinElements(separator, "", true))
+      _ => None
+    }
+    if consumer is Some(consumer) {
+      return consume_fiber_sequence(
+        receiver,
+        advance_fiber_iterable(receiver, Value::null(), span, context),
+        consumer,
+        span,
+        context,
+      )
+    }
+  }
+  if uses_sequence_methods &&
+    (name == "all" || name == "any" || name == "count" || name == "each") &&
     arguments.length() == 1 {
     match arguments[0] {
       FunctionValue(function_identifier) =>
@@ -5062,7 +5892,9 @@ fn prepare_evaluated_method_call(
       _ => ()
     }
   }
-  if name == "reduce" && (arguments.length() == 1 || arguments.length() == 2) {
+  if uses_sequence_methods &&
+    name == "reduce" &&
+    (arguments.length() == 1 || arguments.length() == 2) {
     let function_position = arguments.length() - 1
     match arguments[function_position] {
       FunctionValue(function_identifier) =>
@@ -5228,26 +6060,69 @@ fn prepare_evaluated_property_get(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberExpressionStep {
-  match receiver {
-    SequenceValue(_) if name == "count" || name == "toList" => {
-      let consumer = if name == "count" {
-        CountElements(0)
-      } else {
-        let values = context.new_list([])
-        match values {
-          ListValue(identifier) => CollectElements(identifier)
-          _ => abort("toList aggregate must be a List")
-        }
+  if name == "toString" &&
+    (
+      receiver is ListValue(_) ||
+      receiver is MapValue(_) ||
+      receiver is MapEntryValue(_)
+    ) {
+    return prepare_fiber_display(receiver, span, context, [])
+  }
+  let uses_sequence_getters = match receiver {
+    SequenceValue(_) => true
+    InstanceValue(identifier) =>
+      context.classes[context.instances[identifier].class_identifier].inherits_sequence &&
+      !receiver_has_getter(receiver, name, context)
+    _ => false
+  }
+  if uses_sequence_getters && name == "isEmpty" {
+    // Map's iterator tokens come from its source. Checking emptiness must not
+    // evaluate its transformation.
+    let mut source = receiver
+    while source is SequenceValue(identifier) {
+      match context.sequences[identifier].kind {
+        SequenceMap(inner, _) => source = inner
+        _ => break
       }
-      return consume_fiber_sequence(
-        receiver,
-        advance_fiber_iterable(receiver, Value::null(), span, context),
-        consumer,
+    }
+    if source is InstanceValue(_) {
+      return finish_fiber_emptiness(
+        prepare_evaluated_method_call(
+          source,
+          "iterate",
+          [Value::null()],
+          span,
+          context,
+        ),
         span,
         context,
       )
     }
-    _ => ()
+    return consume_fiber_sequence(
+      source,
+      advance_fiber_position(source, Value::null(), span, context),
+      TestEmpty,
+      span,
+      context,
+    )
+  }
+  if uses_sequence_getters && (name == "count" || name == "toList") {
+    let consumer = if name == "count" {
+      CountElements(0)
+    } else {
+      let values = context.new_list([])
+      match values {
+        ListValue(identifier) => CollectElements(identifier)
+        _ => abort("toList aggregate must be a List")
+      }
+    }
+    return consume_fiber_sequence(
+      receiver,
+      advance_fiber_iterable(receiver, Value::null(), span, context),
+      consumer,
+      span,
+      context,
+    )
   }
   let resolved = match receiver {
     InstanceValue(identifier) =>
@@ -5560,7 +6435,28 @@ fn prepare_fiber_expression(
                 EvaluationSucceeded(value) => value
               }
               let name = binary_method_name(operator)
-              if name != "" && instance_has_method(left_value, name, 1, context) {
+              if operator == Add && left_value is ListValue(identifier) {
+                let copy = context.new_list(
+                  context.lists[identifier].items.copy(),
+                )
+                let consumer = match copy {
+                  ListValue(copy_identifier) => CollectElements(copy_identifier)
+                  _ => abort("concatenation requires a List")
+                }
+                consume_fiber_sequence(
+                  right_value,
+                  advance_fiber_iterable(
+                    right_value,
+                    Value::null(),
+                    span,
+                    context,
+                  ),
+                  consumer,
+                  span,
+                  context,
+                )
+              } else if name != "" &&
+                instance_has_method(left_value, name, 1, context) {
                 prepare_evaluated_method_call(
                   left_value,
                   name,
@@ -5887,120 +6783,30 @@ fn prepare_fiber_expression(
 }
 
 ///|
-fn resume_fiber_each_callback(
-  call_identifier : Int32,
-  input : Value,
-  iterable : Value,
-  iterator : Value,
-  function_identifier : Int32,
+fn undefined_module_export(
+  specifier : String,
+  name : String,
+  module_environment : Environment,
   span : SourceSpan,
   context : RuntimeContext,
-) -> FiberStatementStep {
-  match resume_runtime_fiber(call_identifier, input, span, context) {
-    EvaluationFailed(issue) => FiberStatementFailed(issue)
-    EvaluationSucceeded(value) => {
-      let call_fiber = context.fibers[call_identifier]
-      if call_fiber.state == 2 {
-        FiberStatementYielded(value, fn(resumed) {
-          resume_fiber_each_callback(
-            call_identifier, resumed, iterable, iterator, function_identifier, span,
-            context,
-          )
-        })
-      } else {
-        execute_fiber_each(
-          iterable, iterator, function_identifier, span, context,
-        )
-      }
-    }
-  }
-}
-
-///|
-fn continue_fiber_each_advance(
-  step : FiberIteratorStep,
-  iterable : Value,
-  function_identifier : Int32,
-  span : SourceSpan,
-  context : RuntimeContext,
-) -> FiberStatementStep {
-  match step {
-    FiberIteratorFailed(issue) => FiberStatementFailed(issue)
-    FiberIteratorComplete =>
-      FiberStatementCompleted(StatementCompleted(Value::null()))
-    FiberIteratorYielded(value, continuation) =>
-      FiberStatementYielded(value, fn(resumed) {
-        continue_fiber_each_advance(
-          continuation(resumed),
-          iterable,
-          function_identifier,
-          span,
-          context,
-        )
-      })
-    FiberIteratorAdvanced(next, value) => {
-      let call_identifier = context.new_function_fiber(
-        function_identifier,
-        [value],
-        context.current_fiber,
-      )
-      resume_fiber_each_callback(
-        call_identifier,
-        Value::null(),
-        iterable,
-        next,
-        function_identifier,
+) -> Diagnostic {
+  for module_value in context.modules {
+    if module_value.state == 0 &&
+      physical_equal(module_value.environment, module_environment) {
+      return Diagnostic::new(
+        Runtime,
+        UndefinedExport,
+        "circular import of '\{specifier}' from '\{context.current_source}': '\{name}' is unavailable while initializing '\{module_value.name}'",
         span,
-        context,
-      )
+      ).with_source(context.current_source)
     }
   }
-}
-
-///|
-fn execute_fiber_each(
-  iterable : Value,
-  iterator : Value,
-  function_identifier : Int32,
-  span : SourceSpan,
-  context : RuntimeContext,
-) -> FiberStatementStep {
-  continue_fiber_each_advance(
-    advance_fiber_iterable(iterable, iterator, span, context),
-    iterable,
-    function_identifier,
+  Diagnostic::new(
+    Runtime,
+    UndefinedExport,
+    "module '\{specifier}' does not define '\{name}'",
     span,
-    context,
-  )
-}
-
-///|
-fn prepare_fiber_each_call(
-  receiver : Expr,
-  callback : Expr,
-  span : SourceSpan,
-  environment : Environment,
-  context : RuntimeContext,
-) -> FiberStatementStep? {
-  let iterable = match evaluate_expression_in(receiver, environment, context) {
-    EvaluationFailed(issue) => return Some(FiberStatementFailed(issue))
-    EvaluationSucceeded(value) => value
-  }
-  let function_identifier = match
-    evaluate_expression_in(callback, environment, context) {
-    EvaluationFailed(issue) => return Some(FiberStatementFailed(issue))
-    EvaluationSucceeded(FunctionValue(identifier)) => identifier
-    EvaluationSucceeded(_) => return None
-  }
-  Some(
-    execute_fiber_each(
-      iterable,
-      Value::null(),
-      function_identifier,
-      span,
-      context,
-    ),
-  )
+  ).with_source(context.current_source)
 }
 
 ///|
@@ -6017,12 +6823,13 @@ fn bind_imported_values(
       Some(value) => value
       None =>
         return FiberStatementFailed(
-          Diagnostic::new(
-            Runtime,
-            UndefinedExport,
-            "module '\{specifier}' does not define '\{binding.name}'",
+          undefined_module_export(
+            specifier,
+            binding.name,
+            module_environment,
             span,
-          ).with_source(context.current_source),
+            context,
+          ),
         )
     }
     if environment.has_current(binding.local_name) {
@@ -6053,12 +6860,15 @@ fn continue_fiber_module(
   span : SourceSpan,
   context : RuntimeContext,
 ) -> FiberStatementStep {
+  let import_frame = CallFrame::new("import \"\{specifier}\"", importer, span)
   match step {
     FiberStatementReady => abort("module statement was not executed")
     FiberStatementFailed(issue) => {
       context.modules[module_index].state = 2
       context.current_source = importer
-      FiberStatementFailed(issue)
+      FiberStatementFailed(
+        issue.with_source(module_name).with_frame(import_frame),
+      )
     }
     FiberStatementYielded(value, continuation) => {
       context.current_source = importer
@@ -6090,7 +6900,9 @@ fn continue_fiber_module(
         StatementFailed(issue) => {
           context.modules[module_index].state = 2
           context.current_source = importer
-          FiberStatementFailed(issue)
+          FiberStatementFailed(
+            issue.with_source(module_name).with_frame(import_frame),
+          )
         }
         StatementReturned(_, return_span) => {
           context.modules[module_index].state = 2
@@ -6129,7 +6941,11 @@ fn prepare_fiber_import(
   context : RuntimeContext,
 ) -> FiberStatementStep {
   let importer = context.current_source
-  let (module_name, source) = match (context.loader)(importer, specifier) {
+  let loaded = match optional_module_source(specifier) {
+    Some(source) => ModuleLoaded(specifier, source)
+    None => (context.loader)(importer, specifier)
+  }
+  let (module_name, source) = match loaded {
     ModuleLoadFailed(message) =>
       return FiberStatementFailed(
         Diagnostic::new(Runtime, ModuleNotFound, message, span).with_source(
@@ -6260,22 +7076,6 @@ fn prepare_fiber_statement(
   match statement {
     ImportStatement(specifier, bindings, span) =>
       prepare_fiber_import(specifier, bindings, span, environment, context)
-    ExpressionStatement(MethodCall(receiver, "each", arguments, call_span), _) => {
-      if arguments.length() == 1 {
-        match
-          prepare_fiber_each_call(
-            receiver,
-            arguments[0],
-            call_span,
-            environment,
-            context,
-          ) {
-          Some(step) => return step
-          None => ()
-        }
-      }
-      FiberStatementReady
-    }
     ExpressionStatement(expression, span) =>
       match prepare_fiber_expression(expression, environment, context) {
         FiberExpressionReady(prepared) =>
@@ -7151,8 +7951,19 @@ fn invoke_sequence_operation(
           IteratorComplete => break
           IteratorAdvanced(next, value) => {
             iterator = next
-            if value == arguments[0] {
-              return EvaluationSucceeded(Value::bool(true))
+            match
+              evaluate_binary_values(
+                EqualTo,
+                arguments[0],
+                value,
+                span,
+                context,
+              ) {
+              EvaluationFailed(issue) => return EvaluationFailed(issue)
+              EvaluationSucceeded(equal) =>
+                if equal.is_truthy() {
+                  return EvaluationSucceeded(Value::bool(true))
+                }
             }
           }
         }
@@ -7334,6 +8145,16 @@ fn invoke_sequence_method(
       span,
     )
   }
+  if context.sequences[identifier].kind is SequenceMap(source, mapper) {
+    if name == "iterate" {
+      return invoke_method(source, name, arguments, span, context)
+    }
+    return match invoke_method(source, name, arguments, span, context) {
+      EvaluationFailed(issue) => EvaluationFailed(issue)
+      EvaluationSucceeded(value) =>
+        invoke_function(mapper, [value], span, context)
+    }
+  }
   if name == "iteratorValue" {
     return match arguments[0] {
       IteratorValue(iterator_identifier) =>
@@ -7348,7 +8169,20 @@ fn invoke_sequence_method(
             span,
           )
         } else {
-          EvaluationSucceeded(context.iterators[iterator_identifier].current)
+          let state = context.iterators[iterator_identifier]
+          match context.sequences[identifier].kind {
+            SequenceWhere(source, _)
+            | SequenceSkip(source, _)
+            | SequenceTake(source, _) =>
+              invoke_method(
+                source,
+                "iteratorValue",
+                [state.source_iterator],
+                span,
+                context,
+              )
+            _ => EvaluationSucceeded(state.current)
+          }
         }
       value =>
         evaluation_error(
@@ -7551,41 +8385,55 @@ fn invoke_list_method(
           _ => return invalid_function_argument("List", name, span)
         }
       }
-      for index = 1; index < items.length(); index = index + 1 {
-        let mut position = index
-        while position > 0 {
-          let before = match comparer {
-            Some(identifier) =>
-              match
-                invoke_function(
-                  identifier,
-                  [items[position], items[position - 1]],
-                  span,
-                  context,
-                ) {
-                EvaluationFailed(issue) => return EvaluationFailed(issue)
-                EvaluationSucceeded(value) => value.is_truthy()
-              }
-            None =>
-              match (items[position], items[position - 1]) {
-                (NumberValue(left), NumberValue(right)) => left < right
-                (StringValue(left), StringValue(right)) => left < right
-                (left, right) =>
-                  return evaluation_error(
-                    InvalidOperand,
-                    "List.sort cannot compare \{left.type_name()} and \{right.type_name()}",
-                    span,
-                  )
-              }
-          }
-          if !before {
-            break
-          }
-          let temporary = items[position]
-          items[position] = items[position - 1]
-          items[position - 1] = temporary
-          position = position - 1
+      let ranges = [(0, items.length() - 1)]
+      while ranges.pop() is Some((low, high)) {
+        if low >= high {
+          continue
         }
+        if high >= items.length() {
+          return evaluation_error(
+            InvalidOperand,
+            "List changed length while sorting",
+            span,
+          )
+        }
+        let pivot = items[high]
+        let mut position = low
+        for index = low; index < high; index = index + 1 {
+          let comparison = match comparer {
+            Some(function_identifier) =>
+              invoke_function(
+                function_identifier,
+                [items[index], pivot],
+                span,
+                context,
+              )
+            None => compare_list_elements(items[index], pivot, span, context)
+          }
+          match comparison {
+            EvaluationFailed(issue) => return EvaluationFailed(issue)
+            EvaluationSucceeded(before) => {
+              if high >= items.length() {
+                return evaluation_error(
+                  InvalidOperand,
+                  "List changed length while sorting",
+                  span,
+                )
+              }
+              if before.is_truthy() {
+                let previous = items[position]
+                items[position] = items[index]
+                items[index] = previous
+                position = position + 1
+              }
+            }
+          }
+        }
+        let previous = items[position]
+        items[position] = items[high]
+        items[high] = previous
+        ranges.push((position + 1, high))
+        ranges.push((low, position - 1))
       }
       EvaluationSucceeded(Value::list(identifier))
     }
@@ -8216,24 +9064,30 @@ fn invoke_method(
             span,
           )
         }
-        match collect_iterable_values(arguments[0], span, context) {
-          ValueCollectionFailed(issue) => EvaluationFailed(issue)
-          ValuesCollected(values) => {
-            let mut text = ""
-            for value in values {
-              text = text + runtime_value_to_text(value, context, 0)
-            }
-            if context.write_output(text, name == "printAll") {
-              EvaluationSucceeded(Value::null())
-            } else {
-              evaluation_error(
-                ExecutionLimit,
-                "captured output limit exceeded",
-                span,
-              )
+        let iterable = arguments[0]
+        for iterator = Value::null() {
+          match advance_iterable(iterable, iterator, span, context) {
+            IteratorAdvanceFailed(issue) => return EvaluationFailed(issue)
+            IteratorComplete => break
+            IteratorAdvanced(next, value) => {
+              if !context.write_output(
+                  runtime_value_to_text(value, context, 0),
+                  false,
+                ) {
+                return evaluation_error(
+                  ExecutionLimit,
+                  "captured output limit exceeded",
+                  span,
+                )
+              }
+              continue next
             }
           }
         }
+        if name == "printAll" {
+          ignore(context.write_output("", true))
+        }
+        EvaluationSucceeded(Value::null())
       } else if name == "gc" {
         if arguments.length() != 0 {
           invalid_collection_arity("System", name, 0, arguments.length(), span)
@@ -8365,10 +9219,11 @@ fn read_sequence_property(
     )
   }
   if name == "isEmpty" {
-    return match advance_iterable(receiver, Value::null(), span, context) {
-      IteratorAdvanceFailed(issue) => EvaluationFailed(issue)
-      IteratorComplete => EvaluationSucceeded(Value::bool(true))
-      IteratorAdvanced(_, _) => EvaluationSucceeded(Value::bool(false))
+    return match
+      invoke_method(receiver, "iterate", [Value::null()], span, context) {
+      EvaluationFailed(issue) => EvaluationFailed(issue)
+      EvaluationSucceeded(token) =>
+        EvaluationSucceeded(Value::bool(!token.is_truthy()))
     }
   }
   match collect_iterable_values(receiver, span, context) {
@@ -9689,12 +10544,13 @@ fn execute_statement_in(
               Some(value) => value
               None =>
                 return StatementFailed(
-                  Diagnostic::new(
-                    Runtime,
-                    UndefinedExport,
-                    "module '\{specifier}' does not define '\{binding.name}'",
+                  undefined_module_export(
+                    specifier,
+                    binding.name,
+                    module_environment,
                     span,
-                  ).with_source(context.current_source),
+                    context,
+                  ),
                 )
             }
             if environment.has_current(binding.local_name) {

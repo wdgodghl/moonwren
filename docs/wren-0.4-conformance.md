@@ -79,6 +79,13 @@ iterator when materialized or traversed through composed `skip`/`take` views.
 The `fiber-lazy-consumers` fixture also covers lazy `join`, `contains`, and
 the `count` getter. It checks that `contains` stops on the first match and that
 the separator and partial result of `join` survive multiple suspensions.
+The `fiber-iterator-protocol` fixture compares yields from user-defined
+`iterate` and `iteratorValue` methods, inherited sequence operations, a
+`List.sort` comparator, and callbacks reached through output formatting. It
+also checks that obtaining iterator tokens, skipping elements, and testing
+emptiness defer lazy transformations until a value is read. It covers a
+filter whose predicate must read the mapped value, and runs the skip case
+both inside a Fiber and at module scope.
 The checked-in `fiber-reduce-suspension`, `fiber-lazy-map-suspension`, and
 `fiber-lazy-pipeline-suspension` fixtures record exact official Wren output.
 CI builds the pinned Wren 0.4.0 CLI and independently reproduces every `.out`

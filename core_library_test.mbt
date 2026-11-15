@@ -197,6 +197,27 @@ test "List custom sort invokes a two argument comparer" {
 }
 
 ///|
+test "List sort matches Wren comparator order and dispatches custom less-than" {
+  let source =
+    #|class Rank {
+    #|  construct new(value) { _value = value }
+    #|  value { _value }
+    #|  <(other) { _value < other.value }
+    #|}
+    #|var values = [3, 1, 2]
+    #|values.sort { |left, right|
+    #|  System.print("%(left) %(right)")
+    #|  return left < right
+    #|}
+    #|System.print(values)
+    #|System.print(Fiber.new { [2, 1].sort() }.call())
+    #|var ranks = [Rank.new(2), Rank.new(1)]
+    #|ranks.sort()
+    #|System.print(ranks[0].value)
+  expect_core_output(source, ["3 2", "1 2", "[1, 2, 3]", "[1, 2]", "1"])
+}
+
+///|
 test "Sequence predicates aggregation and joining work on builtins" {
   let source = "var even = Fn.new { |n| n % 2 == 0 }\n" +
     "System.print((1..4).all(even))\n" +
@@ -262,6 +283,17 @@ test "System write and aggregate output preserve line boundaries" {
     "System.printAll([1, 2, 3])\n" +
     "System.gc()\n"
   expect_core_output(source, ["ab3c", "123"])
+}
+
+///|
+test "System.printAll writes each element before evaluating the next" {
+  let source =
+    #|var values = [1, 2].map { |value|
+    #|  System.print("map %(value)")
+    #|  return value
+    #|}
+    #|System.printAll(values)
+  expect_core_output(source, ["map 1", "1map 2", "2"])
 }
 
 ///|

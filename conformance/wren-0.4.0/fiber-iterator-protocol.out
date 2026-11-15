@@ -1,0 +1,39 @@
+0
+[10, 20]
+10,20
+2
+false
+[10, 20, 10, 20]
+[0, 10, 20]
+false
+false
+true
+false
+true
+true
+false
+11
+11
+null
+label
+[label, {first: [label]}]
+nested [label]
+label,label
+label
+true
+42
+43
+[1, 2, 3]
+[1, 2, 3]
+valuevalue
+iterate 1|value 1|iterate 2|value 2|iterate 1|value 1|iterate 2|value 2|iterate 1|value 1|iterate 2|value 2|iterate 1|iterate 1|value 1|iterate 2|value 2|iterate 1|value 1|iterate 2|value 2|predicate 1|predicate 2|format predicate input|token ready|explicit map|limited token ready|explicit map|format label|format label|format label|format label|format label|format label|format label|match 1|match 2|custom each|custom each|compare 3 2|compare 1 2|rank 3 2|rank 1 2|map 1|map 2|done
+false
+[]
+printAll element 1
+1printAll element 2
+2
+compare at module scope 3 2
+compare at module scope 1 2
+[1, 2, 3]
+[2, 3]
+[2, 3]
