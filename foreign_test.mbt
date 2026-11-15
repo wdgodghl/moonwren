@@ -282,6 +282,106 @@ test "foreign classes allocate host handles and expose them to methods" {
 }
 
 ///|
+test "a resumed imported sequence callback preserves the foreign failure and caller" {
+  let events : Array[String] = []
+  let received : Array[(Int32, @moonwren.Value)] = []
+  let counter = @moonwren.ForeignClassBinding::new(
+    "lib",
+    "Counter",
+    fn(_) {
+      events.push("allocate")
+      @moonwren.ForeignAllocationSucceeded(42)
+    },
+    fn(_) { events.push("finalize") },
+  )
+  let fail_method = @moonwren.ForeignMethodBinding::new_for_foreign_class(
+    "lib",
+    "Counter",
+    "fail(_)",
+    fn(handle, arguments) {
+      received.push((handle, arguments[0]))
+      events.push("fail")
+      @moonwren.ForeignCallFailed("host stopped")
+    },
+  )
+  let loader = fn(_, name) {
+    if name == "lib" {
+      @moonwren.ModuleLoaded(
+        "lib",
+        "foreign class Counter {\n  construct new() {}\n  foreign fail(value)\n}\n" +
+        "var work = Fn.new {\n  var counter = Counter.new()\n" +
+        "  return [1].map { |n|\n    var input = Fiber.yield(n)\n" +
+        "    return counter.fail(input)\n  }.toList\n}\n",
+      )
+    } else {
+      @moonwren.ModuleLoadFailed("unexpected import")
+    }
+  }
+  let source =
+    #|import "lib" for work
+    #|var worker = Fiber.new { work.call() }
+    #|System.print(worker.call())
+    #|worker.call("resume")
+  match
+    @moonwren.run_with_foreign_bindings(
+      "main",
+      source,
+      100000,
+      loader,
+      [fail_method],
+      [counter],
+    ) {
+    @moonwren.ProgramCompleted(_, _) => fail("foreign failure must propagate")
+    @moonwren.ProgramFailed(issues, output) => {
+      let issue = issues[0]
+      assert_eq(output, ["1"])
+      assert_eq(issue.code, @moonwren.ForeignCallFailed)
+      assert_eq(issue.source_name, "lib")
+      assert_eq(issue.span.line(), 9)
+      assert_true(issue.message.contains("host stopped"))
+      assert_true(
+        issue.render("main").contains("(main:2:"),
+        msg=issue.render("main"),
+      )
+      assert_eq(events, ["allocate", "fail", "finalize"])
+      assert_eq(received, [(42, @moonwren.Value::string("resume"))])
+    }
+  }
+}
+
+///|
+test "Fiber.try exposes the host abort message as a Wren string" {
+  let binding = @moonwren.ForeignMethodBinding::new(
+    "main",
+    "Host",
+    true,
+    "stop()",
+    fn(_, _) { @moonwren.ForeignCallFailed("host stopped") },
+  )
+  let source =
+    #|class Host { foreign static stop() }
+    #|var worker = Fiber.new {
+    #|  Fiber.yield("ready")
+    #|  Host.stop()
+    #|}
+    #|System.print(worker.call())
+    #|System.print(worker.try())
+    #|System.print(worker.error)
+  match
+    @moonwren.run_with_foreign_methods(
+      "main",
+      source,
+      100000,
+      no_foreign_modules,
+      [binding],
+    ) {
+    @moonwren.ProgramCompleted(_, output) =>
+      assert_eq(output, ["ready", "host stopped", "host stopped"])
+    @moonwren.ProgramFailed(issues, _) => fail(issues[0].message)
+  }
+}
+
+///|
 test "foreign class binding and allocation failures are structured" {
   let source = "foreign class Resource { construct open() {} }\n"
   match

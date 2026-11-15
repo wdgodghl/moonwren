@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.9.8 - 2026-11-15
+
+- preserve the original value passed to `Fiber.abort` in `Fiber.try()` and
+  `Fiber.error`;
+- preserve caller frames when an imported function or a resumed sequence
+  callback fails, including errors raised by a foreign method;
+- expose the original host abort message to Wren while retaining structured
+  diagnostics for failures that reach the embedding API.
+
 ## 0.9.7 - 2026-11-15
 
 - resume Fibers through user-defined iterators, sequence consumers, sort

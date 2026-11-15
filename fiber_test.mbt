@@ -80,6 +80,28 @@ test "Fiber.suspend pauses with null and accepts a resume value" {
 }
 
 ///|
+test "Fiber.try preserves an abort object's identity across a nested call" {
+  let source =
+    #|var payload = ["abort"]
+    #|var worker = Fiber.new {
+    #|  var helper = Fn.new { Fiber.abort(payload) }
+    #|  helper.call()
+    #|}
+    #|System.print(Object.same(worker.try(), payload))
+    #|System.print(Object.same(worker.error, payload))
+    #|class Marker {
+    #|  construct new() {}
+    #|  toString { Fiber.abort("must not format an abort payload") }
+    #|}
+    #|var marker = Marker.new()
+    #|var marked = Fiber.new { Fiber.abort(marker) }
+    #|System.print(Object.same(marked.try(), marker))
+    #|var broken = Fiber.new { 1.noSuchMethod() }
+    #|System.print(broken.try() is String)
+  expect_fiber_output(source, ["true", "true", "true", "true"])
+}
+
+///|
 test "Fiber.abort null is a no-op" {
   let source = "var fiber = Fiber.new {\n Fiber.abort(null)\n return 42\n}\n" +
     "System.print(fiber.call())\n"

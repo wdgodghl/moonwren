@@ -22,6 +22,7 @@ priv struct Closure {
   body : Array[Stmt]
   environment : Environment
   source_name : String
+  callable : String
   alive : Bool
 }
 
@@ -204,6 +205,7 @@ priv struct RuntimeContext {
   mut current_fiber : Int32
   mut transfer_target : Int32
   mut transferred_to_main : Bool
+  mut script_abort : Value?
   mut terminate_main : Bool
   mut gc_requested : Bool
   mut debugger : RuntimeDebugger?
@@ -315,6 +317,7 @@ fn RuntimeContext::new_with_limits(
     current_fiber: 0,
     transfer_target: -1,
     transferred_to_main: false,
+    script_abort: None,
     terminate_main: false,
     gc_requested: false,
     debugger: None,
@@ -345,6 +348,7 @@ fn RuntimeContext::begin_operation(self : RuntimeContext) -> Unit {
   self.output_line_open = false
   self.output_characters = 0
   self.transferred_to_main = false
+  self.script_abort = None
   self.terminate_main = false
 }
 
@@ -1802,12 +1806,14 @@ fn finish_foreign_context_call(
   context : RuntimeContext,
 ) -> EvaluationResult {
   match result {
-    ForeignContextAborted(message) =>
+    ForeignContextAborted(message) => {
+      context.script_abort = Some(Value::string(message))
       evaluation_error(
         ForeignCallFailed,
         "foreign method \{owner.name}.\{signature} failed: \{message}",
         span,
       )
+    }
     ForeignContextReturned(value) =>
       match materialize_foreign_value(value, context) {
         Ok(value) => EvaluationSucceeded(value)
@@ -1883,6 +1889,7 @@ fn compile_meta_closure(
     body,
     environment: environment.capture(),
     source_name: context.current_source,
+    callable: "Fn.call",
     alive: true,
   })
   EvaluationSucceeded(Value::function(identifier))
@@ -2022,12 +2029,14 @@ fn invoke_foreign_method(
       }
       return match call_result {
         ForeignCallSucceeded(value) => EvaluationSucceeded(value)
-        ForeignCallFailed(message) =>
+        ForeignCallFailed(message) => {
+          context.script_abort = Some(Value::string(message))
           evaluation_error(
             ForeignCallFailed,
             "foreign method \{owner.name}.\{signature} failed: \{message}",
             span,
           )
+        }
       }
     }
   }
@@ -5010,6 +5019,7 @@ fn method_call_closure(
     body: resolved.declaration.body,
     environment,
     source_name: owner.source_name,
+    callable: "\{owner.name}.\{resolved.declaration.name}",
     alive: true,
   })
   Some(identifier)
@@ -7536,19 +7546,41 @@ fn restore_fiber_caller(
 }
 
 ///|
+fn fiber_failure_value(issue : Diagnostic, context : RuntimeContext) -> Value {
+  if issue.code == FiberAborted || issue.code == ForeignCallFailed {
+    if context.script_abort is Some(value) {
+      return value
+    }
+  }
+  Value::string(issue.message)
+}
+
+///|
 fn abort_runtime_fiber(
   identifier : Int32,
   issue : Diagnostic,
   previous_fiber : Int32,
   previous_source : String,
+  call_span : SourceSpan,
   context : RuntimeContext,
 ) -> EvaluationResult {
   let fiber = context.fibers[identifier]
   fiber.state = 4
-  fiber.error = Value::string(issue.message)
+  fiber.error = fiber_failure_value(issue, context)
   fiber.pending = None
   restore_fiber_caller(context, previous_fiber, previous_source)
-  EvaluationFailed(issue)
+  let closure = context.closures[fiber.function_identifier]
+  trace_call_failure(
+    EvaluationFailed(issue),
+    closure.source_name,
+    if fiber.is_call_frame {
+      closure.callable
+    } else {
+      "Fiber"
+    },
+    previous_source,
+    call_span,
+  )
 }
 
 ///|
@@ -7653,7 +7685,7 @@ fn resume_runtime_fiber(
     match step {
       FiberStatementFailed(issue) =>
         return abort_runtime_fiber(
-          identifier, issue, previous_fiber, previous_source, context,
+          identifier, issue, previous_fiber, previous_source, span, context,
         )
       FiberStatementYielded(value, continuation) => {
         fiber.pending = Some(continuation)
@@ -7682,6 +7714,7 @@ fn resume_runtime_fiber(
               ),
               previous_fiber,
               previous_source,
+              span,
               context,
             )
           StatementContinued(continue_span) =>
@@ -7695,11 +7728,12 @@ fn resume_runtime_fiber(
               ),
               previous_fiber,
               previous_source,
+              span,
               context,
             )
           StatementFailed(issue) =>
             return abort_runtime_fiber(
-              identifier, issue, previous_fiber, previous_source, context,
+              identifier, issue, previous_fiber, previous_source, span, context,
             )
         }
     }
@@ -7783,7 +7817,9 @@ fn invoke_fiber_method(
         }
         EvaluationFailed(issue) =>
           if name == "try" {
-            EvaluationSucceeded(Value::string(issue.message))
+            let error = fiber_failure_value(issue, context)
+            context.script_abort = None
+            EvaluationSucceeded(error)
           } else {
             EvaluationFailed(issue)
           }
@@ -8730,12 +8766,15 @@ fn invoke_core_class_method(
       } else {
         match arguments[0] {
           NullValue => EvaluationSucceeded(Value::null())
-          value =>
-            evaluation_error(
-              FiberAborted,
-              runtime_value_to_text(value, context, 0),
-              span,
-            )
+          value => {
+            let message = match value {
+              StringValue(text) => text
+              RawStringValue(bytes) => string_display_from_bytes(bytes)
+              _ => "[error object]"
+            }
+            context.script_abort = Some(value)
+            evaluation_error(FiberAborted, message, span)
+          }
         }
       }
     (FiberClass, "yield") | (FiberClass, "suspend") => {
@@ -10060,6 +10099,7 @@ fn evaluate_expression_in(
         body,
         environment: environment.capture(),
         source_name: context.current_source,
+        callable: "Fn.call",
         alive: true,
       })
       EvaluationSucceeded(Value::function(identifier))
@@ -11108,6 +11148,7 @@ fn collect_runtime_garbage(
         body: [],
         environment: Environment::new(),
         source_name: "<collected>",
+        callable: "Fn.call",
         alive: false,
       }
       reclaimed_objects = reclaimed_objects + 1
