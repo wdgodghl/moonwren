@@ -204,6 +204,7 @@ priv struct RuntimeContext {
   should_cancel : () -> Bool
   mut current_fiber : Int32
   mut transfer_target : Int32
+  mut transfer_error_span : SourceSpan?
   mut transferred_to_main : Bool
   mut script_abort : Value?
   mut terminate_main : Bool
@@ -316,6 +317,7 @@ fn RuntimeContext::new_with_limits(
     should_cancel,
     current_fiber: 0,
     transfer_target: -1,
+    transfer_error_span: None,
     transferred_to_main: false,
     script_abort: None,
     terminate_main: false,
@@ -348,6 +350,7 @@ fn RuntimeContext::begin_operation(self : RuntimeContext) -> Unit {
   self.output_line_open = false
   self.output_characters = 0
   self.transferred_to_main = false
+  self.transfer_error_span = None
   self.script_abort = None
   self.terminate_main = false
 }
@@ -6291,31 +6294,38 @@ fn prepare_fiber_expression(
           }
           FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
         }
-        FiberValue(target) if name == "transfer" && context.current_fiber != 0 => {
-          if target == context.current_fiber {
-            let value = if argument_values.length() == 0 {
-              Value::null()
-            } else {
-              argument_values[0]
-            }
-            return FiberExpressionReady(Literal(value, span))
-          }
-          if argument_values.length() > 1 {
+        FiberValue(target) if (name == "transfer" || name == "transferError") &&
+          context.current_fiber != 0 => {
+          if argument_values.length() > 1 ||
+            (name == "transferError" && argument_values.is_empty()) {
             return FiberExpressionFailed(
               Diagnostic::new(
                 Runtime,
                 InvalidArity,
-                "Fiber.transfer expects zero or one argument",
+                "Fiber.\{name} expects \{if name == "transfer" { "zero or one" } else { "one" }} argument",
                 span,
               ),
             )
           }
-          context.transfer_target = target
-          let yielded = if argument_values.length() == 0 {
+          if transfer_target_issue(target, span, context) is Some(issue) {
+            return FiberExpressionFailed(issue)
+          }
+          let yielded = if argument_values.is_empty() {
             Value::null()
           } else {
             argument_values[0]
           }
+          let is_error = name == "transferError" && yielded != Value::null()
+          if target == context.current_fiber {
+            if is_error {
+              return FiberExpressionFailed(
+                transfer_fiber_error(target, yielded, span, context),
+              )
+            }
+            return FiberExpressionReady(Literal(yielded, span))
+          }
+          context.transfer_target = target
+          context.transfer_error_span = if is_error { Some(span) } else { None }
           FiberExpressionYielded(yielded, fn(resumed) { Literal(resumed, span) })
         }
         _ =>
@@ -7742,6 +7752,50 @@ fn resume_runtime_fiber(
 }
 
 ///|
+fn transfer_target_issue(
+  identifier : Int32,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> Diagnostic? {
+  let message = if identifier < 0 || identifier >= context.fibers.length() {
+    "fiber is not available in this runtime"
+  } else if identifier == 0 {
+    return None
+  } else {
+    match context.fibers[identifier].state {
+      3 => "Cannot transfer to a finished fiber."
+      4 => "Cannot transfer to an aborted fiber."
+      _ => return None
+    }
+  }
+  Some(Diagnostic::new(Runtime, InvalidFiberState, message, span))
+}
+
+///|
+fn fiber_abort_message(value : Value) -> String {
+  match value {
+    StringValue(text) => text
+    RawStringValue(bytes) => string_display_from_bytes(bytes)
+    _ => "[error object]"
+  }
+}
+
+///|
+fn transfer_fiber_error(
+  identifier : Int32,
+  value : Value,
+  span : SourceSpan,
+  context : RuntimeContext,
+) -> Diagnostic {
+  let fiber = context.fibers[identifier]
+  fiber.state = 4
+  fiber.error = value
+  fiber.pending = None
+  context.script_abort = Some(value)
+  Diagnostic::new(Runtime, FiberAborted, fiber_abort_message(value), span)
+}
+
+///|
 fn invoke_fiber_method(
   identifier : Int32,
   name : String,
@@ -7835,18 +7889,17 @@ fn invoke_fiber_method(
           span,
         )
       }
-      if identifier == 0 {
-        return evaluation_error(
-          FiberAborted,
-          runtime_value_to_text(arguments[0], context, 0),
-          span,
+      if transfer_target_issue(identifier, span, context) is Some(issue) {
+        return EvaluationFailed(issue)
+      }
+      if arguments[0] == Value::null() {
+        return invoke_fiber_method(
+          identifier, "transfer", arguments, span, context,
         )
       }
-      let fiber = context.fibers[identifier]
-      fiber.state = 4
-      fiber.error = arguments[0]
-      fiber.pending = None
-      EvaluationSucceeded(arguments[0])
+      EvaluationFailed(
+        transfer_fiber_error(identifier, arguments[0], span, context),
+      )
     }
     _ =>
       evaluation_error(
@@ -7869,11 +7922,18 @@ fn resume_fiber_transfer_chain(
   context.transferred_to_main = false
   while true {
     context.transfer_target = -1
+    context.transfer_error_span = None
     let result = resume_runtime_fiber(target, transferred, span, context)
     match result {
       EvaluationFailed(issue) => return EvaluationFailed(issue)
       EvaluationSucceeded(value) => {
         let next = context.transfer_target
+        if next >= 0 && context.transfer_error_span is Some(error_span) {
+          context.transfer_error_span = None
+          return EvaluationFailed(
+            transfer_fiber_error(next, value, error_span, context),
+          )
+        }
         if next == 0 {
           context.transferred_to_main = true
           return EvaluationSucceeded(value)
@@ -8767,11 +8827,7 @@ fn invoke_core_class_method(
         match arguments[0] {
           NullValue => EvaluationSucceeded(Value::null())
           value => {
-            let message = match value {
-              StringValue(text) => text
-              RawStringValue(bytes) => string_display_from_bytes(bytes)
-              _ => "[error object]"
-            }
+            let message = fiber_abort_message(value)
             context.script_abort = Some(value)
             evaluation_error(FiberAborted, message, span)
           }

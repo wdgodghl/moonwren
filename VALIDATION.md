@@ -13,7 +13,7 @@ experimental surfaces, non-goals, and the security boundary.
 
 ```text
 moon view wdgodghl/moonwren
-./tools/check-published-package.ps1 -Version 0.9.8
+./tools/check-published-package.ps1 -Version 0.9.9
 ```
 
 The second command creates an unrelated project under the operating system's
@@ -28,7 +28,7 @@ compares exact output. It does not use this checkout as a dependency.
 ```
 
 The command verifies formatting, static checks, public API stability, repository
-hygiene, 345 MoonBit tests on four targets, native process behavior, real
+hygiene, 347 MoonBit tests on four targets, native process behavior, real
 browsers, coverage, performance smoke tests, differential fixtures, and the
 official Wren suite.
 

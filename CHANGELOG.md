@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.9 - 2026-11-15
+
+- transfer control and the original error value through `Fiber.transferError`,
+  retaining the sender's continuation and allowing a protected target to
+  catch the value;
+- handle `transferError(null)` as a normal transfer and reject transfers to
+  finished or aborted Fibers.
+
 ## 0.9.8 - 2026-11-15
 
 - preserve the original value passed to `Fiber.abort` in `Fiber.try()` and

@@ -109,12 +109,50 @@ test "Fiber.abort null is a no-op" {
 }
 
 ///|
-test "transferError marks a target fiber as aborted" {
-  let source = "var fiber = Fiber.new { 42 }\n" +
+test "transferError from the root aborts without executing either continuation" {
+  let source = "var fiber = Fiber.new { System.print(42) }\n" +
     "fiber.transferError(\"cancelled\")\n" +
-    "System.print(fiber.error)\n" +
-    "System.print(fiber.isDone)\n"
-  expect_fiber_output(source, ["cancelled", "true"])
+    "System.print(\"unreachable\")\n"
+  match @moonwren.run(source) {
+    @moonwren.ProgramCompleted(_, _) => fail("transferError must abort")
+    @moonwren.ProgramFailed(issues, output) => {
+      assert_eq(output, [])
+      assert_eq(issues[0].code, @moonwren.FiberAborted)
+      assert_eq(issues[0].message, "cancelled")
+    }
+  }
+}
+
+///|
+test "transferError delivers the original value to a suspended try target" {
+  let source =
+    #|var payload = []
+    #|var guarded = null
+    #|var sender = Fiber.new {
+    #|  guarded.transferError(payload)
+    #|  System.print("unreachable sender")
+    #|}
+    #|guarded = Fiber.new {
+    #|  sender.transfer()
+    #|  System.print("unreachable guarded")
+    #|}
+    #|System.print(Object.same(guarded.try(), payload))
+    #|System.print(Object.same(guarded.error, payload))
+    #|System.print(guarded.isDone)
+    #|System.print(sender.isDone)
+  expect_fiber_output(source, ["true", "true", "true", "false"])
+}
+
+///|
+test "transferError(null) resumes the target as a transfer" {
+  let source =
+    #|var root = Fiber.current
+    #|var target = Fiber.new { |input|
+    #|  System.print(input)
+    #|  root.transfer("back")
+    #|}
+    #|System.print(target.transferError(null))
+  expect_fiber_output(source, ["null", "back"])
 }
 
 ///|

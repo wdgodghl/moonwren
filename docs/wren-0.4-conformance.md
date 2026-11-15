@@ -109,6 +109,9 @@ custom `toString`. The foreign-binding tests exercise a resumed sequence
 callback that calls an imported foreign class method, verifying the host
 argument, source location, caller frame, and finalization.
 
+The `fiber-transfer-error` fixture checks error delivery to a protected Fiber,
+object identity, resumption of the sender, and the behavior of a null payload.
+
 Cases under `conformance/wren-0.4.0` contain a Wren input and the output
 captured from the official 0.4.0 CLI. `tools/check-conformance.ps1` runs the
 same inputs through MoonWren and compares their output byte-for-byte. When an

@@ -10,6 +10,7 @@
 | `string-byte-offsets.wren` | `string-byte-offsets.out` | exact match |
 | `fiber-callback-suspension.wren` | `fiber-callback-suspension.out` | exact match |
 | `fiber-abort-value.wren` | `fiber-abort-value.out` | exact match; abort payload identity across nested calls |
+| `fiber-transfer-error.wren` | `fiber-transfer-error.out` | exact match; error transfer, protected target, sender resumption and null payload |
 | `fiber-reduce-suspension.wren` | `fiber-reduce-suspension.out` | exact match; accumulator and resumed values |
 | `fiber-lazy-map-suspension.wren` | `fiber-lazy-map-suspension.out` | exact match; lazy materialization and resumed output |
 | `fiber-lazy-pipeline-suspension.wren` | `fiber-lazy-pipeline-suspension.out` | exact match; nested map/where/skip/take and side effects |
